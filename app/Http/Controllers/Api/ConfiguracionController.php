@@ -89,6 +89,7 @@ class ConfiguracionController extends Controller
     {
         try {
             $configuracion = Configuraciones::all();
+            Log::info($configuracion);
             return response()->json([
                 'success' => true,
                 'data' => $configuracion

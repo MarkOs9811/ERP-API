@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Scopes\EmpresaScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
@@ -31,4 +32,21 @@ class Compra extends Model
     {
         return $this->belongsTo(CuentasPorPagar::class, 'idCuentaPorPagar', 'id');
     }
+     protected static function booted()
+    {
+        
+        static::addGlobalScope(new EmpresaScope);
+
+        static::creating(function ($compra) {
+            $user = auth()->user();
+
+            if ($user) {
+                if (empty($compra->idEmpresa)) {
+                    $compra->idEmpresa = $user->idEmpresa;
+                }
+            }
+        });
+    }
+
+    
 }

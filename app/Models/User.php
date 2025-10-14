@@ -82,5 +82,20 @@ class User extends Authenticatable
     {
         static::addGlobalScope(new SedeScope);
         static::addGlobalScope(new EmpresaScope);
+        
+        static::creating(function ($venta) {
+            $user = auth()->user();
+
+            if ($user) {
+                if (empty($venta->idSede)) {
+                    $venta->idSede = $user->idSede;
+                }
+
+                if (empty($venta->idEmpresa)) {
+                    $venta->idEmpresa = $user->idEmpresa;
+                }
+            }
+        });
+    
     }
 }
