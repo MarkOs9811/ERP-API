@@ -84,12 +84,9 @@ Route::get('/cajas2', [CajaController::class, 'getCajas']);
 Route::post('/asistencia/ingreso', [AsistenciasController::class, 'ingreso']);
 Route::post('/asistencia/salida', [AsistenciasController::class, 'salida']);
 
-<<<<<<< HEAD
-=======
 // RUTA DE PRUEBA SIN AUTH
 Route::get('/comprasAll', [ComprasController::class, 'getCompras']);
 
->>>>>>> d5d86d5717d598bfc6c339f6074115e331c1f2ea
 Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     // RUTAS PARA ATENDER UN PEDIDO POR CHAT
