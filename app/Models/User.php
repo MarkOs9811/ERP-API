@@ -5,6 +5,7 @@ namespace App\Models;
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 
 use App\Models\Scopes\SedeScope;
+use App\Models\Scopes\EmpresaScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -80,5 +81,20 @@ class User extends Authenticatable
     protected static function booted()
     {
         static::addGlobalScope(new SedeScope);
+        static::addGlobalScope(new EmpresaScope);
+
+        static::creating(function ($venta) {
+            $user = auth()->user();
+
+            if ($user) {
+                if (empty($venta->idSede)) {
+                    $venta->idSede = $user->idSede;
+                }
+
+                if (empty($venta->idEmpresa)) {
+                    $venta->idEmpresa = $user->idEmpresa;
+                }
+            }
+        });
     }
 }
