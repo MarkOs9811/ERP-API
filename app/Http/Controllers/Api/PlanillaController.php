@@ -4,6 +4,7 @@ namespace App\Http\Controllers\api;
 
 use App\Http\Controllers\Controller;
 use App\Models\AdelantoSueldo;
+use App\Models\AjustesPlanilla;
 use App\Models\Asistencia;
 use App\Models\Bonificacione;
 use App\Models\CuentasContables;
@@ -16,6 +17,7 @@ use App\Models\EmpleadoBonificacione;
 use App\Models\EmpleadoDeduccione;
 use App\Models\HoraExtras;
 use App\Models\LibroDiario;
+use App\Models\Pago;
 use App\Models\Persona;
 use App\Models\Provincia;
 use App\Models\TipoContrato;
@@ -201,15 +203,9 @@ class PlanillaController extends Controller
         }
     }
 
-
-
     public function getPlanilla($idCargo = null)
     {
         try {
-            // Validar si el ID de cargo es numérico (si se recibe)
-            if ($idCargo !== null && !is_numeric($idCargo)) {
-                throw new \InvalidArgumentException('El ID de cargo debe ser numérico');
-            }
 
             // Consulta base con eager loading
             $query = User::with([
@@ -261,7 +257,7 @@ class PlanillaController extends Controller
                         'email' => $user->email,
                     ],
                 ];
-            })->filter(); // elimina los nulos
+            })->filter();
 
             return response()->json([
                 'success' => true,
@@ -276,8 +272,53 @@ class PlanillaController extends Controller
             ], 500);
         }
     }
+    public function getEmpleadoPerfil($idEmpleado)
+    {
+        try {
+            $usuario = User::with(
+                'empleado.persona',
+                'empleado.cargo',
+                'empleado.area',
+                'empleado.contrato',
+                'empleado.horario'
+            )->find($idEmpleado);
 
+            if (!$usuario || !$usuario->empleado) {
+                return response()->json(['success' => false, 'message' => 'Empleado no encontrado'], 404);
+            }
+            $empleado = $usuario->empleado;
 
+            if (!$empleado) {
+                return null; // Evita errores si algún usuario no tiene empleado asociado
+            }
+
+            $diasTrabajados = $empleado->asistencias
+                ->filter(fn($a) => Carbon::parse($a->fechaEntrada)->isSameMonth(now()))
+                ->count();
+
+            $porcentajeDiasTrabajados = min(100, ($diasTrabajados / 30) * 100);
+
+            $vacaciones = Vacacione::where('idUsuario', $usuario->id)->whereYear('fecha_inicio', Carbon::now()->year)->get();
+
+            // LAS BONIFICACIONES VIENES DE LA RELACION DE EMPLEADO CON BONIFICACIONES, ESTA EN TABLA PIVOT empleado_bonificaciones
+            $bonificaciones = $empleado->bonificaciones()->where('estado', 1)->get();
+            $deducciones = $empleado->deducciones()->where('estado', 1)->get();
+
+            $data = [
+                'usuario' => $usuario,
+                'dias_trabajados' => $diasTrabajados,
+                'porcentaje_dias_trabajados' => $porcentajeDiasTrabajados,
+                'vacaciones' => $porcentajeDiasTrabajados,
+                'vacacionesContados' => $vacaciones,
+                'bonificaciones' => $bonificaciones,
+                'deducciones' => $deducciones,
+            ];
+
+            return response()->json(['success' => true, 'data' => $data], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'error' . $e->getMessage()], 500);
+        }
+    }
     public function getTipoContrato()
     {
         try {
@@ -886,5 +927,212 @@ class PlanillaController extends Controller
             Log::error('Error al vender días de vacaciones: ' . $e->getMessage());
             return response()->json(['success' => false, 'error' => 'Ocurrió un error al vender la vacación. Detalles: ' . $e->getMessage()], 500);
         }
+    }
+
+    public function generarPagosMensuales()
+    {
+        // Obtener el día de pago registrado en la tabla AjustesPlanilla
+        $ajustes = AjustesPlanilla::first();
+        $diaPago = $ajustes ? $ajustes->diaPago : null;
+
+        // Obtener el mes y año actual
+        $mesActual = Carbon::now()->month;
+        $anioActual = Carbon::now()->year;
+
+        // Verificar si hoy es el día de pago registrado
+        if (Carbon::now()->day != $diaPago) {
+            return response()->json(["success" => "false", 'message' => 'Hoy no es el día de pago establecido.'], 400);
+        }
+
+        DB::beginTransaction();
+        try {
+            // Verificar si ya se generaron pagos para el mes anterior
+            $mesAnterior = Carbon::now()->subMonth()->month;
+            $anioAnterior = Carbon::now()->subMonth()->year;
+
+            $pagosMesAnterior = Pago::whereMonth('fecha_pago', $mesAnterior)
+                ->whereYear('fecha_pago', $anioAnterior)
+                ->exists();
+
+            $mesParaCalcular = $pagosMesAnterior ? $mesActual : $mesAnterior;
+            $anioParaCalcular = $pagosMesAnterior ? $anioActual : $anioAnterior;
+
+            $empleados = Empleado::with([
+                'cargo',
+                'asistencias' => function ($query) use ($mesParaCalcular, $anioParaCalcular) {
+                    $query->whereMonth('fechaEntrada', $mesParaCalcular)
+                        ->whereYear('fechaEntrada', $anioParaCalcular);
+                },
+                'bonificaciones',
+                'deducciones'
+            ])->get();
+
+            $pagoTotales = 0;
+            foreach ($empleados as $empleado) {
+                // Verificar si ya existe un pago para el mes en cuestión
+                $pagoExistente = Pago::where('idEmpleado', $empleado->id)
+                    ->whereMonth('fecha_pago', $mesParaCalcular)
+                    ->whereYear('fecha_pago', $anioParaCalcular)
+                    ->exists();
+
+                if ($pagoExistente) {
+                    continue;
+                }
+
+                // Filtrar asistencias del mes a calcular
+                $asistenciasDelMes = $empleado->asistencias;
+
+                // Verificar si el empleado tiene al menos un día trabajado
+                if ($asistenciasDelMes->count() == 0) {
+                    continue; // No registrar pago si no hay días trabajados
+                }
+
+                foreach ($asistenciasDelMes as $asistencia) {
+                    if (is_null($asistencia->fechaSalida) || is_null($asistencia->horaSalida)) {
+                        DB::rollBack();
+                        return response()->json(["success" => "false", 'error' => 'Todavía existen empleados sin marcar hora de salida.'], 400);
+                    }
+                }
+
+                $totalDiasTrabajados = $asistenciasDelMes->count();
+                $totalHorasTrabajadas = $totalDiasTrabajados * 8;
+
+                $salarioBase = $empleado->cargo->salario;
+                $pagoPorHora = $empleado->cargo->pagoPorHoras;
+
+                $salarioTotal = round($pagoPorHora * $totalHorasTrabajadas, 2);
+
+                // Calcular el total de bonificaciones
+                $totalBonificaciones = $empleado->bonificaciones->sum('monto');
+
+                // Calcular el total de deducciones sumando los porcentajes
+                $totalDeduccionesPorcentajes = $empleado->deducciones->sum('porcentaje');
+
+                // Asegúrate de que las deducciones no sean negativas
+                $totalDeducciones = round($salarioTotal * $totalDeduccionesPorcentajes, 2);
+
+                // Verificar que las deducciones no sean mayores que el salario base
+                if ($totalDeducciones > $salarioTotal) {
+                    $totalDeducciones = $salarioTotal; // Ajustar deducción a máximo salario base
+                }
+
+                $usuario = User::where('idEmpleado', $empleado->id)->first();
+
+                // Calcular horas extras
+                $horasExtras = HoraExtras::where('idUsuario', $usuario->id)
+                    ->whereMonth('fecha', $mesParaCalcular)
+                    ->whereYear('fecha', $anioParaCalcular)
+                    ->get();
+
+                $totalPagoHorasExtras = $horasExtras->sum('pagoTotal');
+
+                // Calcular adelantos de sueldo
+                $adelantosSueldo = AdelantoSueldo::where('idUsuario', $usuario->id)
+                    ->where('estado', 1)
+                    ->whereMonth('fecha', $mesParaCalcular)
+                    ->whereYear('fecha', $anioParaCalcular)
+                    ->sum('monto');
+
+                // Calcular vacaciones (días vendidos y días utilizados)
+                $vacaciones = Vacacione::where('idUsuario', $usuario->id)
+                    ->whereYear('fecha_inicio', $anioParaCalcular)
+                    ->where('estadoPagado', 0) // Filtrar por estadoPagado = 0
+                    ->first();
+
+                $diasVacacionesUtilizados = 0;
+                $diasVacacionesVendidos = 0;
+
+                if ($vacaciones) {
+                    $diasVacacionesUtilizados = $vacaciones->dias_utilizados ?? 0;
+                    $diasVacacionesVendidos = $vacaciones->dias_vendidos ?? 0;
+
+                    // Calcular el pago por días vendidos
+                    $pagoPorDiasVendidos = round(($salarioBase / 30) * $diasVacacionesVendidos, 2);
+
+                    // Actualizar el estado de pagado a 1 después del cálculo
+                    $vacaciones->estadoPagado = 1; // Marcar como pagado
+                    $vacaciones->save(); // Guardar los cambios
+                } else {
+                    $pagoPorDiasVendidos = 0;
+                }
+
+
+                // Calcular salario neto
+                $salarioNeto = $salarioTotal + $totalBonificaciones - $totalDeducciones + $totalPagoHorasExtras - $adelantosSueldo + $pagoPorDiasVendidos;
+
+                // Crear registro de pago
+                $pago = new Pago();
+                $pago->idEmpleado = $empleado->id;
+                $pago->fecha_pago = Carbon::create($anioParaCalcular, $mesParaCalcular, $diaPago);
+                $pago->salario_base = $salarioTotal;
+                $pago->deducciones = $totalDeducciones;
+                $pago->bonificaciones = $totalBonificaciones;
+                $pago->salario_neto = round($salarioNeto, 2);
+                $pago->horas_extras = round($totalPagoHorasExtras, 2);
+                $pago->adelantoSueldo = round($adelantosSueldo, 2);
+                $pago->dias_vendidos = $diasVacacionesVendidos;
+                $pago->dias_utilizados = $diasVacacionesUtilizados;
+                $pago->save();
+
+                $pagoTotales += round($salarioNeto, 2);
+            }
+
+            $this->RegistrarTransaccion($pagoTotales);
+
+            DB::commit();
+
+            return response()->json(["success" => "true", 'message' => 'Pagos generados exitosamente.'], 200);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Error al generar los pagos: ' . $e->getMessage());
+            return response()->json(["success" => "false", 'message' => 'Error al generar los pagos: ' . $e->getMessage()], 500);
+        }
+    }
+    // Función auxiliar para determinar la acción según el tipo de cuenta y la ubicación (DEBE o HABER)
+    private function determinarAccion($tipoCuenta, $ubicacion)
+    {
+        if ($tipoCuenta === 'activo') {
+            return $ubicacion === 'debe' ? 'aumento' : 'disminucion';
+        } elseif ($tipoCuenta === 'pasivo' || $tipoCuenta === 'patrimonio neto') {
+            return $ubicacion === 'debe' ? 'disminucion' : 'aumento';
+        } elseif ($tipoCuenta === 'gasto') { // Nuevo tipo de cuenta para gastos
+            return $ubicacion === 'debe' ? 'aumento' : 'desconocido';
+        } else {
+            return 'desconocido';
+        }
+    }
+
+    // Método para registrar la transacción
+    private function RegistrarTransaccion($pagoTotales)
+    {
+        // Crear registro en libro_diarios
+        $libroDiario = new LibroDiario();
+        $libroDiario->idUsuario = Auth::id();
+        $libroDiario->fecha = now(); // Fecha actual
+        $libroDiario->estado = 0; // Estado inicial
+        $libroDiario->descripcion = "Pago de Planilla";
+        $libroDiario->save();
+
+        // Obtener la cuenta contable para Sueldos y Salarios
+        $cuentaContableDebe = CuentasContables::where('codigo', '6211')->first(); // 6211 Sueldos y Salarios
+        $cuentaContableHaber = CuentasContables::where('codigo', '101')->first(); // 101 Caja y Bancos
+
+        // Registrar detalle en el DEBE para Gasto de Sueldos y Salarios
+        $detalleDebe = new DetalleLibro();
+        $detalleDebe->idLibroDiario = $libroDiario->id;
+        $detalleDebe->idCuenta = $cuentaContableDebe->id;
+        $detalleDebe->tipo = 'debe';
+        $detalleDebe->accion = $this->determinarAccion($cuentaContableDebe->tipo, 'debe');
+        $detalleDebe->monto = $pagoTotales;
+        $detalleDebe->save();
+
+        // Registrar detalle en el HABER para la salida de Caja
+        $detalleHaber = new DetalleLibro();
+        $detalleHaber->idLibroDiario = $libroDiario->id;
+        $detalleHaber->idCuenta = $cuentaContableHaber->id;
+        $detalleHaber->tipo = 'haber';
+        $detalleHaber->accion = $this->determinarAccion($cuentaContableHaber->tipo, 'haber');
+        $detalleHaber->monto = $pagoTotales;
+        $detalleHaber->save();
     }
 }
