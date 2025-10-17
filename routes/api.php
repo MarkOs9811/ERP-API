@@ -174,6 +174,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     // RUTAS PARA ALMACEN
     Route::get('/almacen', [AlmacenController::class, 'showAlmacen']);
+    Route::put('/almacen/{id}', [AlmacenController::class, 'acualizarProducto']);
     Route::post('/almacen/save', [AlmacenController::class, 'saveAlmacen']);
     Route::post('/almacen/eliminar/{id}', [AlmacenController::class, 'eliminarActivo']);
     Route::post('/almacen/activar/{id}', [AlmacenController::class, 'activarActivo']);

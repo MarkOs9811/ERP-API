@@ -19,6 +19,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule; // Agregar esta línea
+
 
 class AlmacenController extends Controller
 {
@@ -191,7 +193,91 @@ class AlmacenController extends Controller
             return response()->json(['error' => false, 'message' => 'Error al procesar la solicitud: ' . $e->getMessage()], 500);
         }
     }
-    /**
+
+   
+
+    public function acualizarProducto(Request $request, $id)
+    {
+        try {
+            // Validar datos recibidos
+            $validator = Validator::make($request->all(), [
+                'nombre' => [
+                    'required',
+                    'string',
+                    'max:255',
+                    // Validar único excepto el producto actual
+                    Rule::unique('almacens')->ignore($id)->where(function ($query) use ($request) {
+                        return $query->where('marca', $request->marca)
+                                    ->where('presentacion', $request->presentacion);
+                    })
+                ],
+                'marca' => 'required|string|max:255',
+                'cantidad' => 'required|numeric|min:0',
+                'precioUnit' => 'required|numeric|min:0',
+                'unidad' => 'required|exists:unidad_medidas,id', // Validar que exista en la tabla unidad_medidas
+                'categoria' => 'required|exists:categorias,id', // Validar que exista en la tabla categorias
+                'proveedor' => 'required|exists:proveedores,id', // Validar que exista en la tabla proveedores
+                'presentacion' => 'required|string|max:255',
+                'fecha_vencimiento' => [
+                    'required',
+                    'date',
+                    'after:today' // La fecha debe ser posterior a hoy
+                ],
+                'registro_sanitario' => 'required|string|max:50'
+            ], [
+                'nombre.unique' => 'Ya existe un producto con el mismo nombre, marca y presentación',
+                'unidad.exists' => 'La unidad de medida seleccionada no existe',
+                'categoria.exists' => 'La categoría seleccionada no existe',
+                'proveedor.exists' => 'El proveedor seleccionado no existe',
+                'fecha_vencimiento.after' => 'La fecha de vencimiento debe ser posterior a hoy'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Error de validación',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            // Buscar el producto
+            $producto = Almacen::find($id);
+            if (!$producto) {
+                return response()->json([
+                    'success' => false, 
+                    'message' => 'Producto no encontrado'
+                ], 404);
+            }
+
+            // Actualizar los datos del producto
+            $producto->nombre = $request->nombre;
+            $producto->marca = $request->marca;
+            $producto->cantidad = $request->cantidad;
+            $producto->precioUnit = $request->precioUnit;
+            $producto->idUnidadMedida = $request->unidad;
+            $producto->idCategoria = $request->categoria;
+            $producto->idProveedor = $request->proveedor;
+            $producto->presentacion = $request->presentacion;
+            $producto->fecha_vencimiento = $request->fecha_vencimiento;
+            $producto->registro_sanitario = $request->registro_sanitario;
+
+            // Guardar los cambios
+            $producto->save();
+            
+            return response()->json([
+                'success' => true, 
+                'message' => 'Producto actualizado correctamente',
+                'data' => $producto
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al actualizar el producto: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+        /**
      * Método privado para generar un código de producto único.
      */
     private function generateUniqueProductCode()
