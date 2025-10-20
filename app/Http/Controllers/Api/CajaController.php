@@ -179,7 +179,7 @@ class CajaController extends Controller
         try {
 
             // Buscar el registro de caja
-            $registroCaja = registrosCajas::where('idCaja', $id)
+            $registroCaja = registrosCajas::with('usuario.empleado.persona')->where('idCaja', $id)
                 ->whereNull('fechaCierre')
                 ->whereNull('horaCierre')
                 ->orderBy('created_at', 'desc')
@@ -250,6 +250,7 @@ class CajaController extends Controller
                 'detallesVenta' => $detallesVenta,
                 'totalVenta' => $totalVentas,
                 'montoInicial' => $montoInicial,
+                'datosRegistroCaja' => $registroCaja,
                 'message' => 'Datos obtenidos correctamente'
             ];
 

@@ -27,23 +27,11 @@ class AlmacenController extends Controller
     public function showAlmacen(Request $request)
     {
         try {
-            $perPage = $request->input('limit', 20);
-            $page = $request->input('page', 1);
 
-            $query = Almacen::with('categoria', 'unidad', 'proveedor')
-                ->orderBy('id', 'DESC');
-
-            $results = $query->paginate($perPage, ['*'], 'page', $page);
-
+            $almacen = Almacen::with('categoria', 'unidad', 'proveedor')->orderBy('id', 'DESC')->get();
             return response()->json([
                 'success' => true,
-                'data' => $results->items(),
-                'meta' => [
-                    'current_page' => $results->currentPage(),
-                    'last_page' => $results->lastPage(),
-                    'per_page' => $results->perPage(),
-                    'total' => $results->total()
-                ]
+                'data' => $almacen,
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
@@ -194,7 +182,7 @@ class AlmacenController extends Controller
         }
     }
 
-   
+
 
     public function acualizarProducto(Request $request, $id)
     {
@@ -208,7 +196,7 @@ class AlmacenController extends Controller
                     // Validar único excepto el producto actual
                     Rule::unique('almacens')->ignore($id)->where(function ($query) use ($request) {
                         return $query->where('marca', $request->marca)
-                                    ->where('presentacion', $request->presentacion);
+                            ->where('presentacion', $request->presentacion);
                     })
                 ],
                 'marca' => 'required|string|max:255',
@@ -244,7 +232,7 @@ class AlmacenController extends Controller
             $producto = Almacen::find($id);
             if (!$producto) {
                 return response()->json([
-                    'success' => false, 
+                    'success' => false,
                     'message' => 'Producto no encontrado'
                 ], 404);
             }
@@ -263,13 +251,12 @@ class AlmacenController extends Controller
 
             // Guardar los cambios
             $producto->save();
-            
+
             return response()->json([
-                'success' => true, 
+                'success' => true,
                 'message' => 'Producto actualizado correctamente',
                 'data' => $producto
             ]);
-
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -277,7 +264,7 @@ class AlmacenController extends Controller
             ], 500);
         }
     }
-        /**
+    /**
      * Método privado para generar un código de producto único.
      */
     private function generateUniqueProductCode()
