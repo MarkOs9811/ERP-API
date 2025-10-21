@@ -7,6 +7,7 @@ use App\Models\Caja;
 use App\Models\Mesa;
 use App\Models\registrosCajas;
 use App\Models\Venta;
+use App\Traits\EmpresaSedeValidation;
 use Carbon\Carbon;
 use Google\Service\Compute\Rule;
 use Illuminate\Http\Request;
@@ -17,7 +18,7 @@ use Illuminate\Support\Facades\Validator;
 
 class CajaController extends Controller
 {
-
+    use EmpresaSedeValidation;
     // FUNCION PARA OBTENER LAS CAJAS POR SEDE
     public function getCajas()
     {
@@ -34,6 +35,7 @@ class CajaController extends Controller
     public function saveCaja(Request $request)
     {
         try {
+            Log::info($request);
             // Validación
             $validator = Validator::make($request->all(), [
                 'nombreCaja' => [
@@ -41,13 +43,18 @@ class CajaController extends Controller
                     'string',
                     'max:50',
                     'regex:/^[A-Za-z0-9\s]+$/',
-                    'unique:cajas,nombreCaja'
+                    $this->uniqueEmpresaSede('cajas', 'nombreCaja'),
                 ],
-                'sedes' => 'required|exists:sedes,id',
-            ]);
 
+            ]);
+            Log::info('📦 Datos recibidos:', $request->all());
+            Log::info('🔍 Resultado validación:', [
+                'fails' => $validator->fails(),
+                'errors' => $validator->errors()->toArray(),
+            ]);
             // Si falla la validación
             if ($validator->fails()) {
+                Log::info('❌ Errores de validación:', $validator->errors()->first());
                 return response()->json([
                     'success' => false,
                     'message' => $validator->errors()->first()
@@ -58,7 +65,6 @@ class CajaController extends Controller
             $caja = new Caja();
             $caja->nombreCaja = $request->nombreCaja;
             $caja->estadoCaja = 0;
-            $caja->idSede = $request->sedes;
             $caja->estado = 1; // por defecto activa
             $caja->save();
 
@@ -89,9 +95,9 @@ class CajaController extends Controller
                     'string',
                     'max:50',
                     'regex:/^[A-Za-z0-9\s]+$/',
-                    "unique:cajas,nombreCaja,{$caja->id},id",
+                    $this->uniqueEmpresaSede('cajas', 'nombreCaja', $caja->id),
                 ],
-                'sedes' => 'required|exists:sedes,id',
+
             ]);
 
             // Si falla la validación
@@ -104,7 +110,7 @@ class CajaController extends Controller
 
             // Actualizar campos
             $caja->nombreCaja = $request->nombreCaja;
-            $caja->idSede = $request->sedes;
+
             $caja->save();
 
             return response()->json([
@@ -341,7 +347,6 @@ class CajaController extends Controller
             ], 500);
         }
     }
-
 
     public function suspenderCaja($id, Request $request)
     {
