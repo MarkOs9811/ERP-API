@@ -5,15 +5,19 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Inventario;
 use Illuminate\Http\Request;
+use App\Traits\EmpresaSedeValidation;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+
 use Illuminate\Validation\ValidationException;
 
 class InventarioController extends Controller
 {
+    use EmpresaSedeValidation;
     public function getInventario()
     {
         try {
-            $inventario = Inventario::with('categoria', 'unidad')->get();
+            $inventario = Inventario::orderBy('id','desc')->with('categoria', 'unidad')->get();
             return response()->json(['success' => true, 'data' => $inventario, 'message' => 'Inventario obtenido'], 200);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
@@ -24,11 +28,22 @@ class InventarioController extends Controller
         try {
             // Buscar inventario
             $inventario = Inventario::findOrFail($id);
-
+            Log::info("DATOS inventario", $request->all());
             // Validar datos
             $request->validate([
-                'nombre'       => 'required|string|max:255',
-                'marca'        => 'nullable|string',
+                'nombre' => [
+                    'required',
+                    'string',
+                    'max:255',
+                    // Aquí aplicas tu regla personalizada
+                    $this->uniqueEmpresaSede('inventarios', 'nombre', $id),
+                ],
+                 'marca' => [
+                    'nullable',
+                    'string',
+                    'max:255',
+                    $this->uniqueEmpresaSede('inventarios', 'marca', $id),
+                ],
                 'descripcion'  => 'nullable|string',
                 'precio'       => 'required|numeric',
                 'stock'        => 'required|integer',

@@ -4,11 +4,15 @@ namespace App\Http\Controllers\api;
 
 use App\Http\Controllers\Controller;
 use App\Models\MetodoPago;
+use App\Traits\EmpresaValidation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
 class AjusteVentasController extends Controller
 {
+
+    use EmpresaValidation;
+
     public function getMetodosPagosAll()
     {
         try {
@@ -22,7 +26,12 @@ class AjusteVentasController extends Controller
     public function guardarMetodoPago(Request $request)
     {
         $request->validate([
-            'nombre' => 'required|string|unique:metodo_pagos,nombre|max:255',
+            'nombre' => [
+                'required',
+                'string',
+                'max:255',
+                $this->uniqueEmpresa('metodo_pagos','nombre'),
+            ]
         ]);
 
         try {

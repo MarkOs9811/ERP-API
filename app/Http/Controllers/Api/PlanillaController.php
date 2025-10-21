@@ -206,7 +206,6 @@ class PlanillaController extends Controller
     public function getPlanilla($idCargo = null)
     {
         try {
-
             // Consulta base con eager loading
             $query = User::with([
                 'empleado.persona',

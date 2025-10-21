@@ -24,13 +24,10 @@ class Proveedore extends Model
 
         static::addGlobalScope(new EmpresaScope);
 
-
         static::creating(function ($venta) {
             $user = auth()->user();
 
             if ($user) {
-
-
                 if (empty($venta->idEmpresa)) {
                     $venta->idEmpresa = $user->idEmpresa;
                 }

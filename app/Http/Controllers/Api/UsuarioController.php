@@ -8,10 +8,12 @@ use App\Models\Empleado;
 use App\Models\Permiso;
 use App\Models\Persona;
 use App\Models\Role;
+use App\Models\Sede;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 
@@ -229,6 +231,48 @@ class UsuarioController extends Controller
             return response()->json(['success' => false, 'message' => 'Hubo un error al actualizar el usuario.'], 500);
         }
     }
+
+    public function cambiarSede(Request $request)
+    {
+        try {
+            $idSede = $request->idSede;
+            $usuario = Auth::user();
+            $sede = Sede::find($idSede);
+
+            if (!$sede) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'La sede seleccionada no existe.'
+                ], 404);
+            }
+
+            if ($sede->idEmpresa !== $usuario->idEmpresa) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No puedes cambiarte a una sede de otra empresa.'
+                ], 403);
+            }
+
+            $usuario->update(['idSede' => $idSede]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'El cambio de sede se realizó correctamente.',
+                'nombreSede' => $sede->nombre,
+            ], 200);
+
+        } catch (\Exception $e) {
+            \Log::error('Error al cambiar de sede: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ocurrió un error al intentar cambiar la sede.'
+            ], 500);
+        }
+    }
+
+
+
+
 
     public function eliminarUsuario($id)
     {

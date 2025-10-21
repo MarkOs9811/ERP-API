@@ -171,6 +171,8 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::post('/usuarios/eliminar/{id}', [UsuarioController::class, 'eliminarUsuario']);
     Route::post('/usuarios/activar/{id}', [UsuarioController::class, 'activarUsuario']);
     Route::get('/usuarios/estadisticas', [UsuarioController::class, 'estadisticas']);
+    Route::post('/usuario/cambiar-sede', [UsuarioController::class, 'cambiarSede']);
+
 
     // RUTAS PARA ALMACEN
     Route::get('/almacen', [AlmacenController::class, 'showAlmacen']);

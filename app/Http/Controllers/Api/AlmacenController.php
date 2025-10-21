@@ -12,6 +12,7 @@ use App\Models\Inventario;
 use App\Models\Kardex;
 use App\Models\Movimiento;
 use App\Models\UnidadMedida;
+use App\Traits\EmpresaSedeValidation;
 use DragonCode\Contracts\Cashier\Auth\Auth;
 use Illuminate\Console\View\Components\Alert;
 use Illuminate\Http\Request;
@@ -24,6 +25,7 @@ use Illuminate\Validation\Rule; // Agregar esta línea
 
 class AlmacenController extends Controller
 {
+    use EmpresaSedeValidation;
     public function showAlmacen(Request $request)
     {
         try {
@@ -193,13 +195,14 @@ class AlmacenController extends Controller
                     'required',
                     'string',
                     'max:255',
-                    // Validar único excepto el producto actual
-                    Rule::unique('almacens')->ignore($id)->where(function ($query) use ($request) {
-                        return $query->where('marca', $request->marca)
-                            ->where('presentacion', $request->presentacion);
-                    })
+                    $this->uniqueEmpresaSede('almacens','nombre',$id),
                 ],
-                'marca' => 'required|string|max:255',
+                'marca' => [
+                    'required',
+                    'string',
+                    'max:255',
+                    $this->uniqueEmpresaSede('almacens','marca',$id),
+                ],
                 'cantidad' => 'required|numeric|min:0',
                 'precioUnit' => 'required|numeric|min:0',
                 'unidad' => 'required|exists:unidad_medidas,id', // Validar que exista en la tabla unidad_medidas
