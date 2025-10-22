@@ -35,112 +35,79 @@ class FinanzasController extends Controller
     public function getInformes()
     {
         try {
-            // Obtener el total de pagos de empleados por mes
-            $pagosEmpleados = DB::table('pagos')
-                ->select(DB::raw('MONTH(fecha_pago) as mes'), DB::raw('SUM(salario_neto) as total'))
-                ->whereYear('fecha_pago', now()->year)
+            $year = now()->year;
+
+            // Total de pagos de empleados por mes
+            $pagosEmpleados = Pago::selectRaw('MONTH(fecha_pago) as mes, SUM(salario_neto) as total')
+                ->whereYear('fecha_pago', $year)
                 ->groupBy('mes')
                 ->pluck('total', 'mes')
                 ->toArray();
 
-            // Obtener ventas por mes
-            $ventasPorMes = DB::table('ventas')
-                ->select(DB::raw('MONTH(fechaVenta) as mes'), DB::raw('SUM(total) as total'))
-                ->whereYear('fechaVenta', now()->year)
+            // Ventas por mes
+            $ventasPorMes = Venta::selectRaw('MONTH(fechaVenta) as mes, SUM(total) as total')
+                ->whereYear('fechaVenta', $year)
                 ->where('estado', 1)
                 ->groupBy('mes')
                 ->pluck('total', 'mes')
                 ->toArray();
+
             Log::info('Ventas por mes:', ['ventasPorMes' => $ventasPorMes]);
-            // Obtener cuentas por cobrar por mes
-            $cuentasPorCobrar = DB::table('cuotas')
-                ->select(DB::raw('MONTH(cuotas.fecha_pagada) as mes'), DB::raw('SUM(cuotas.monto) as total'))
-                ->whereYear('cuotas.fecha_pagada', now()->year)
+
+            // Cuentas por cobrar por mes
+            $cuentasPorCobrar = Cuota::selectRaw('MONTH(fecha_pagada) as mes, SUM(monto) as total')
+                ->whereYear('fecha_pagada', $year)
                 ->where('estado', 'pagado')
                 ->groupBy('mes')
                 ->pluck('total', 'mes')
                 ->toArray();
 
-            // Obtener cuotas por pagar por mes 
-            $cuotasPorPagar = DB::table('cuotas_por_pagars')
-                ->select(DB::raw('MONTH(fecha_pagado) as mes'), DB::raw('SUM(cuotas_por_pagars.monto) as total'))
-                ->whereYear('fecha_pagado', now()->year)
+            // Cuotas por pagar por mes
+            $cuotasPorPagar = CuotasPorPagar::selectRaw('MONTH(fecha_pagado) as mes, SUM(monto) as total')
+                ->whereYear('fecha_pagado', $year)
                 ->where('estado', 'pagado')
                 ->groupBy('mes')
                 ->pluck('total', 'mes')
                 ->toArray();
 
-            // Obtener compras por mes (egresos)
-            $comprasPorMes = DB::table('compras')
-                ->select(DB::raw('MONTH(fecha_compra) as mes'), DB::raw('SUM(totalPagado) as total'))
-                ->whereYear('fecha_compra', now()->year)
+            // Compras por mes (egresos)
+            $comprasPorMes = Compra::selectRaw('MONTH(fecha_compra) as mes, SUM(totalPagado) as total')
+                ->whereYear('fecha_compra', $year)
                 ->groupBy('mes')
                 ->pluck('total', 'mes')
                 ->toArray();
 
-            // Obtener el monto total de todos los préstamos registrados
-            $totalPrestamos = DB::table('cuentas_por_cobrars')
-                ->select(DB::raw('SUM(monto) as total'))
-                ->pluck('total')
-                ->first();
+            // Total de préstamos registrados
+            $totalPrestamos = CuentasPorCobrar::sum('monto');
+            $montoPagado = CuentasPorCobrar::sum('monto_pagado');
 
-            $montoPagado = DB::table('cuentas_por_cobrars')
-                ->select(DB::raw('SUM(monto_pagado) as total'))
-                ->pluck('total')
-                ->first();
-
-            // Inicializar todos los meses del año con cero
+            // Inicializar meses con 0
             $meses = array_fill(1, 12, 0);
 
-            // Calcular ingresos por mes
+            // Calcular ingresos (ventas + cobranzas)
             $ingresos = array_replace($meses, $ventasPorMes);
-
             foreach ($cuentasPorCobrar as $mes => $total) {
-                if (isset($ingresos[$mes])) {
-                    $ingresos[$mes] += $total;
-                } else {
-                    $ingresos[$mes] = $total;
-                }
+                $ingresos[$mes] = ($ingresos[$mes] ?? 0) + $total;
             }
 
-            // Calcular egresos por mes
+            // Calcular egresos (pagos + cuotas + compras)
             $egresos = $meses;
-            foreach ($pagosEmpleados as $mes => $total) {
-                if (isset($egresos[$mes])) {
-                    $egresos[$mes] += $total;
-                } else {
-                    $egresos[$mes] = $total;
+            foreach ([$pagosEmpleados, $cuotasPorPagar, $comprasPorMes] as $grupo) {
+                foreach ($grupo as $mes => $total) {
+                    $egresos[$mes] = ($egresos[$mes] ?? 0) + $total;
                 }
             }
 
-            foreach ($cuotasPorPagar as $mes => $total) {
-                if (isset($egresos[$mes])) {
-                    $egresos[$mes] += $total;
-                } else {
-                    $egresos[$mes] = $total;
-                }
-            }
-
-            foreach ($comprasPorMes as $mes => $total) {
-                if (isset($egresos[$mes])) {
-                    $egresos[$mes] += $total;
-                } else {
-                    $egresos[$mes] = $total;
-                }
-            }
-
-            // Datos para el gráfico de ingresos y egresos
+            // Datos de ingresos/egresos
             $totalIngresos = array_sum($ingresos);
-
             $datosIngresosEgresos = [
                 'labels' => array_keys($ingresos),
                 'ingresos' => array_values($ingresos),
                 'egresos' => array_values($egresos),
-                'totalIngresos' => $totalIngresos // Puedes incluirlo en la respuesta si lo necesitas
+                'totalIngresos' => $totalIngresos,
             ];
 
-
-            // Datos para otros gráficos
+            // Datos para gráficos
             $datosPagosEmpleados = [
                 'labels' => array_keys($pagosEmpleados),
                 'data' => array_values($pagosEmpleados)
@@ -156,7 +123,7 @@ class FinanzasController extends Controller
                 'data' => array_values($ventasPorMes)
             ];
 
-            // Devolver todo dentro de 'data'
+            // Respuesta final
             return response()->json([
                 'success' => true,
                 'data' => [
@@ -165,10 +132,11 @@ class FinanzasController extends Controller
                     'totalPrestamos' => $totalPrestamos,
                     'datosCuentasPorPagar' => $datosCuentasPorPagar,
                     'ventasPorMesData' => $ventasPorMesData,
-                    'datosIngresosEgresos' => $datosIngresosEgresos
+                    'datosIngresosEgresos' => $datosIngresosEgresos,
                 ]
             ]);
         } catch (\Exception $e) {
+            Log::error('Error al obtener informes financieros:', ['error' => $e->getMessage()]);
             return response()->json([
                 'success' => false,
                 'message' => 'Error al obtener los informes financieros',
