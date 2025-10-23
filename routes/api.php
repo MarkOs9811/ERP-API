@@ -103,7 +103,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::get('/miPerfil', [ConfiguracionController::class, 'getMiPerfil']);
     Route::get('/configuracion/getMiEmpresa', [ConfiguracionController::class, 'getEmpresa']);
     Route::post('/configuracion/updateMiempresa', [ConfiguracionController::class, 'actualizarConfiguracion']);
-
+    Route::get('/configuraciones/serieCorrelativo', [ConfiguracionController::class, 'getConfiSerieCorrelativo']);
     // RUTAS PARA VENTAS 
     Route::get('/ventas', [VentasController::class, 'getVentas']);
 

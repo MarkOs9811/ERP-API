@@ -9,6 +9,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Boleta;
 use App\Models\Caja;
 use App\Models\Cliente;
+use App\Models\Configuraciones;
 use App\Models\CuentasPorCobrar;
 use App\Models\Cuota;
 use App\Models\DetallePedido;
@@ -25,8 +26,10 @@ use App\Models\PedidosWebRegistro;
 use App\Models\Persona;
 use App\Models\Plato;
 use App\Models\PreventaMesa;
+use App\Models\SerieCorrelativo;
 use App\Models\Venta;
 use App\Services\EstadoPedidoController;
+use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -720,8 +723,6 @@ class VenderController extends Controller
                     'total' => $total,
                 ];
 
-
-
                 $facturacionSunatController = new FacturacionSunatController();
                 $respuesta = $facturacionSunatController->generarFactura($datosFactura);
 
@@ -849,30 +850,95 @@ class VenderController extends Controller
         }
     }
 
+    /**
+     * Registra el comprobante (Factura o Boleta) obteniendo la serie y 
+     * el correlativo de forma segura desde la base de datos.
+     */
     private function registrarComprobante($venta, $tipoComprobante, $estado = 1, $observaciones = null, $rutaXml = null, $rutaCdr = null)
     {
-        if ($tipoComprobante == 'F') {
-            $factura = Factura::where('idVenta', $venta->id)->first() ?? new Factura();
-            $factura->idVenta = $venta->id;
-            $factura->numSerie = 'F001';
-            $ultimoNumero = Factura::max('numero');
-            $factura->numero = str_pad($ultimoNumero + 1, 3, '0', STR_PAD_LEFT);
-            $factura->estado = $estado; // Actualizar el estado
-            $factura->observaciones = $observaciones; // Actualizar las observaciones
-            $factura->rutaXml = $rutaXml; // Guardar la ruta del XML
-            $factura->rutaCdr = $rutaCdr; // Guardar la ruta del CDR
-            $factura->save();
-        } else {
-            $boleta = Boleta::where('idVenta', $venta->id)->first() ?? new Boleta();
-            $boleta->idVenta = $venta->id;
-            $boleta->numSerie = 'B001';
-            $ultimoNumero = Boleta::max('numero');
-            $boleta->numero = str_pad($ultimoNumero + 1, 3, '0', STR_PAD_LEFT);
-            $boleta->estado = $estado; // Actualizar el estado
-            $boleta->observaciones = $observaciones; // Actualizar las observaciones
-            $boleta->rutaXml = $rutaXml; // Guardar la ruta del XML
-            $boleta->rutaCdr = $rutaCdr; // Guardar la ruta del CDR
-            $boleta->save();
+        // 1. OBTENER DATOS DEL USUARIO (EMPRESA Y SEDE)
+        // Corregimos la obtención del usuario. Necesitamos el objeto completo.
+        $usuario = Auth::user();
+
+        if (!$usuario) {
+            // Buena práctica: manejar si el usuario no está logueado
+            throw new Exception("Usuario no autenticado.");
+        }
+        $idEmpresa = $usuario->idEmpresa;
+        $idSede = $usuario->idSede;
+        $tipoSunat = ($tipoComprobante == 'F') ? '01' : '03';
+
+        try {
+
+            // Iniciamos la transacción SEGURA para obtener el número
+            $datosSerie = DB::transaction(function () use ($idEmpresa, $idSede, $tipoSunat) {
+
+                // Buscamos la serie por defecto Y LA BLOQUEAMOS 🔒
+                $serie = SerieCorrelativo::where('idEmpresa', $idEmpresa)
+                    ->where('idSede', $idSede)
+                    ->where('tipo_documento_sunat', $tipoSunat)
+                    ->where('is_default', 1) // <- ¡Buscando la columna 'is_default' = 1!
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$serie) {
+                    throw new Exception("No se encontró una serie configurada (default) para tipo $tipoSunat, Sede $idSede.");
+                }
+
+                // ¡Éxito! Incrementamos el contador
+                $serie->correlativo_actual += 1;
+                $serie->save(); // Guardamos el nuevo valor (ej. 182)
+
+                // Retornamos los datos que necesitamos
+                return [
+                    'serie' => $serie->serie, // Ej: 'F001'
+                    'correlativo' => $serie->correlativo_actual // Ej: 182
+                ];
+            });
+
+            // 4. PREPARAMOS EL NÚMERO DE COMPROBANTE
+            // El estándar SUNAT usa 8 dígitos para el correlativo.
+            // Tu código anterior usaba 3 ('str_pad(..., 3,...)'), lo cual es muy poco.
+            // Lo cambiamos a 8 para cumplir el estándar.
+            $numeroComprobante = str_pad($datosSerie['correlativo'], 8, '0', STR_PAD_LEFT); // Ej: '00000182'
+            $serieComprobante = $datosSerie['serie']; // Ej: 'F001'
+
+
+            // 5. GUARDAR EL COMPROBANTE (FACTURA O BOLETA)
+            // Esta lógica es la misma que tenías, pero usando las nuevas variables.
+
+            if ($tipoComprobante == 'F') {
+                $factura = Factura::where('idVenta', $venta->id)->first() ?? new Factura();
+                $factura->idVenta = $venta->id;
+
+                // ---- ¡LÓGICA ACTUALIZADA! ----
+                $factura->numSerie = $serieComprobante; // Viene de la BD
+                $factura->numero = $numeroComprobante;  // Viene de la BD (formateado)
+                // -----------------------------
+
+                $factura->estado = $estado;
+                $factura->observaciones = $observaciones;
+                $factura->rutaXml = $rutaXml;
+                $factura->rutaCdr = $rutaCdr;
+                $factura->save();
+            } else { // Es Boleta
+                $boleta = Boleta::where('idVenta', $venta->id)->first() ?? new Boleta();
+                $boleta->idVenta = $venta->id;
+
+                // ---- ¡LÓGICA ACTUALIZADA! ----
+                $boleta->numSerie = $serieComprobante; // Viene de la BD
+                $boleta->numero = $numeroComprobante;  // Viene de la BD (formateado)
+                // -----------------------------
+
+                $boleta->estado = $estado;
+                $boleta->observaciones = $observaciones;
+                $boleta->rutaXml = $rutaXml;
+                $boleta->rutaCdr = $rutaCdr;
+                $boleta->save();
+            }
+        } catch (Exception $e) {
+
+            throw new Exception("Error al generar el correlativo: " . $e->getMessage());
         }
     }
 

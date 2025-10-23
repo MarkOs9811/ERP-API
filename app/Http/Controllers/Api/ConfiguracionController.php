@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Configuraciones;
 use App\Models\MiEmpresa;
+use App\Models\SerieCorrelativo;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -331,6 +332,16 @@ class ConfiguracionController extends Controller
                 "message" => "Error al obtener estado",
                 "error" => $e->getMessage()
             ], 500);
+        }
+    }
+
+    public function getConfiSerieCorrelativo()
+    {
+        try {
+            $confiSerie = SerieCorrelativo::get();
+            return response()->json(['success' => true, "data" => $confiSerie], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, "message" => "Error al obtener la serie y correlativo" . $e->getMessage()], 500);
         }
     }
 }
