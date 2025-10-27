@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AjustesAlmacenController;
+use App\Http\Controllers\Api\AjustesPlanillasController;
 use App\Http\Controllers\Api\AjustesUniMedidaController;
 use App\Http\Controllers\api\AjusteVentasController;
 use App\Http\Controllers\Api\AreaController;
@@ -37,6 +38,7 @@ use App\Http\Controllers\Api\ReportesController;
 use App\Http\Controllers\Api\SedesController;
 use App\Http\Controllers\api\WhatsAppController;
 use App\Http\Controllers\Auth\GoogleController;
+use App\Models\AjustesPlanilla;
 use Google\Service\AdSenseHost\Report;
 
 Route::options('/{any}', function () {
@@ -294,6 +296,10 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::get('vacaciones', [PlanillaController::class, 'getVacaciones']);
     Route::post('vacaciones', [PlanillaController::class, 'storeVacaciones']);
     Route::post('vacaciones/venderDias', [PlanillaController::class, 'venderDias']);
+
+    // RUTAS PARA AJUSTES DE PLANILLA
+    Route::get('/ajustesPlanilla', [AjustesPlanillasController::class, 'getAjustesPlanilla']);
+
 
     // GESTION DE PLATOS Y CATEGORIAS
     Route::get('/gestionPlatos/getPlatos', [GestionMenusController::class, 'getPlatos']);
