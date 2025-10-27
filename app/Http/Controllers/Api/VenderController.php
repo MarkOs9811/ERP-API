@@ -856,8 +856,7 @@ class VenderController extends Controller
      */
     private function registrarComprobante($venta, $tipoComprobante, $estado = 1, $observaciones = null, $rutaXml = null, $rutaCdr = null)
     {
-        // 1. OBTENER DATOS DEL USUARIO (EMPRESA Y SEDE)
-        // Corregimos la obtención del usuario. Necesitamos el objeto completo.
+
         $usuario = Auth::user();
 
         if (!$usuario) {
@@ -887,6 +886,7 @@ class VenderController extends Controller
 
                 // ¡Éxito! Incrementamos el contador
                 $serie->correlativo_actual += 1;
+                $serie->usado = 1;
                 $serie->save(); // Guardamos el nuevo valor (ej. 182)
 
                 // Retornamos los datos que necesitamos

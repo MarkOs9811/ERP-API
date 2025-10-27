@@ -7,15 +7,22 @@ use App\Models\Configuraciones;
 use App\Models\MiEmpresa;
 use App\Models\SerieCorrelativo;
 use App\Models\User;
+use App\Traits\SedeValidation;
+use Exception;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
-use PSpell\Config;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
+
 
 use function Laravel\Prompts\error;
 
 class ConfiguracionController extends Controller
 {
+    use SedeValidation;
     public function actualizarConfiguracion(Request $request)
     {
         try {
@@ -342,6 +349,246 @@ class ConfiguracionController extends Controller
             return response()->json(['success' => true, "data" => $confiSerie], 200);
         } catch (\Exception $e) {
             return response()->json(['success' => false, "message" => "Error al obtener la serie y correlativo" . $e->getMessage()], 500);
+        }
+    }
+
+    public function saveSerieCorrelativo(Request $request)
+    {
+        // Validación
+        $validator = Validator::make(
+            $request->all(),
+            [
+                'tipo_documento_sunat' => ['required', 'string', 'in:01,03,07,08'],
+                'correlativo' => ['required', 'integer', 'min:1'],
+
+                'numeroSerie' => [
+                    'required',
+                    'string',
+                    'size:4',
+                    // Formato general (letra inicial F o B, luego 3 caracteres alfanuméricos)
+                    'regex:/^[FB][A-Z0-9]{3}$/i',
+
+                    // Validación de unicidad: misma empresa, sede y tipo_documento_sunat
+                    Rule::unique('serie_correlativos', 'serie')
+                        ->where(function ($query) use ($request) {
+                            $user = Auth::user();
+                            return $query
+                                ->where('idEmpresa', $user->idEmpresa)
+                                ->where('tipo_documento_sunat', $request->input('tipo_documento_sunat'));
+                        }),
+
+                    // Validación adicional personalizada según tipo de documento
+                    function ($attribute, $value, $fail) use ($request) {
+                        $serie = strtoupper($value);
+                        $tipo = $request->input('tipo_documento_sunat');
+
+                        if ($tipo === '01' && substr($serie, 0, 1) !== 'F') {
+                            return $fail('Las Facturas deben empezar con "F".');
+                        }
+                        if ($tipo === '03' && substr($serie, 0, 1) !== 'B') {
+                            return $fail('Las Boletas deben empezar con "B".');
+                        }
+                        if (in_array($tipo, ['07', '08']) && !in_array(substr($serie, 0, 1), ['F', 'B'])) {
+                            return $fail('Las Notas deben empezar con "F" o "B".');
+                        }
+                    },
+                ],
+            ],
+            [
+                'tipo_documento_sunat.required' => 'Debe seleccionar un tipo de documento.',
+
+                'numeroSerie.unique' => 'La serie ingresada ya existe para este tipo de documento en esta sede o entra.',
+                'numeroSerie.regex' => 'Formato inválido (Ej: F001 o B001).',
+                'numeroSerie.size' => 'La serie debe tener exactamente 4 caracteres.',
+                'correlativo.required' => 'El correlativo es obligatorio.',
+                'correlativo.integer' => 'El correlativo debe ser un número entero.',
+                'correlativo.min' => 'El correlativo debe ser mayor a 0.',
+            ]
+        );
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        DB::beginTransaction();
+        try {
+            $validated = $validator->validated();
+
+
+            $serie = SerieCorrelativo::create([
+
+                'tipo_documento_sunat' => $validated['tipo_documento_sunat'],
+                'serie' => strtoupper($validated['numeroSerie']),
+                'correlativo_actual' => $validated['correlativo'],
+                'is_default' => 0,
+                'estado' => 0,
+            ]);
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Serie registrada con éxito.',
+                'data' => $serie,
+            ], 201);
+        } catch (Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function ponerDefaultSerie($id)
+    {
+        DB::beginTransaction();
+        try {
+            $user = Auth::user();
+
+            // 1. Buscar la serie
+            $serie = SerieCorrelativo::where('idEmpresa', $user->idEmpresa)
+                ->where('idSede', $user->idSede)
+                ->find($id);
+
+            if (!$serie) {
+                return response()->json(['message' => 'Serie no encontrada.'], 404);
+            }
+
+            // 2. Validar que el correlativo no haya llegado al máximo
+            if ($serie->correlativo_actual >= 99999999) {
+                return response()->json([
+                    'message' => 'No se puede establecer como predeterminada. El correlativo ya alcanzó su límite (99999999).'
+                ], 422);
+            }
+            if ($serie->estado != 1) {
+                return response()->json([
+                    'message' => 'Para poner por defecto esta serie debe estar activada'
+                ], 422);
+            }
+
+            // 3. Poner todas las series del mismo tipo en 0
+            SerieCorrelativo::where('idEmpresa', $user->idEmpresa)
+                ->where('idSede', $user->idSede)
+                ->where('tipo_documento_sunat', $serie->tipo_documento_sunat)
+                ->update(['is_default' => 0]);
+
+            // 4. Activar solo la seleccionada
+            $serie->is_default = 1;
+            $serie->save();
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Serie establecida como predeterminada correctamente.',
+            ], 200);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'message' => 'Error al establecer la serie por defecto.',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function activarSerie($id)
+    {
+        try {
+            $serie = SerieCorrelativo::find($id);
+            if (!$serie) {
+                return response()->json(['success' => false, "message" => "no se encontró la serie"], 404);
+            }
+            $serie->estado = 1;
+            $serie->save();
+            return response()->json(['success' => true, "message" => "Se activó la serie"], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, "message" => "Error:" . $e->getMessage()], 500);
+        }
+    }
+
+    public function DesactivarSerie($id)
+    {
+        try {
+            $serie = SerieCorrelativo::find($id);
+            if (!$serie) {
+                return response()->json(['success' => false, "message" => "no se encontró la serie"], 404);
+            }
+            if ($serie->is_default == 1) {
+                return response()->json(['success' => false, "message" => "no se puesde desactivar por que está puesta por defecto"], 422);
+            }
+            $serie->estado = 0;
+            $serie->save();
+            return response()->json(['success' => true, "message" => "Se desactivó la serie"], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, "message" => "Error:" . $e->getMessage()], 500);
+        }
+    }
+
+    public function actualizarSerie(Request $request)
+    {
+
+        $idParaIgnorar = $request->input('idSerie');
+
+        if (!$idParaIgnorar) {
+            return response()->json(['success' => false, "message" => "No se proporcionó el ID del registro a actualizar"], 422);
+        }
+
+
+        $serieCorrelativo = SerieCorrelativo::find($idParaIgnorar);
+
+        if (!$serieCorrelativo) {
+            return response()->json(['success' => false, "message" => "Registro de la serie no encontrada"], 404);
+        }
+
+        try {
+
+
+            $validatedData = $request->validate(
+                [
+                    'tipo_documento_sunat' => ['required', 'string', 'in:01,03,07,08'],
+                    'correlativo' => ['required', 'integer', 'min:1'],
+                    'numeroSerie' => [
+                        'required',
+                        'string',
+                        'size:4',
+                        'regex:/^[FB][A-Z0-9]{3}$/i',
+                        $this->uniqueSede(
+                            'serie_correlativos',     // 1. La tabla donde buscar
+                            'serie',            // 2. La columna que validamos
+                            $idParaIgnorar,           // 3. El ID que debe ignorar (para que no falle consigo mismo)
+                            [                         // 4. Las columnas extra para la clave compuesta
+                                'tipo_documento_sunat' => $request->input('tipo_documento_sunat')
+                            ]
+                        )
+                    ],
+                    // ... (valida otros campos que puedas necesitar, como 'id' si es requerido)
+                    'idSerie' => ['required', 'integer']
+                ],
+                ['numeroSerie.unique' => 'No puedes usar esta serie: ya existe en otra sede o ha sido registrada previamente.']
+
+            );
+
+
+
+            // 6. Si la validación pasa, actualiza el registro
+            $serieCorrelativo->tipo_documento_sunat = $validatedData['tipo_documento_sunat'];
+            $serieCorrelativo->serie = $validatedData['numeroSerie'];
+            $serieCorrelativo->correlativo_actual = $validatedData['correlativo'];
+            $serieCorrelativo->save();
+
+
+            // 7. Devuelve una respuesta de éxito
+            return response()->json(['success' => true, "message" => "La serie se actualizó correctamente"], 200);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                "message" => "Error de validación",
+                "errors" => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+
+            return response()->json(['success' => false, "message" => "Error de servidor: " . $e->getMessage()], 500);
         }
     }
 }

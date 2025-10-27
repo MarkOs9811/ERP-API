@@ -11,6 +11,17 @@ class SerieCorrelativo extends Model
 {
     use HasFactory;
 
+
+    protected $fillable = [
+        'tipo_documento_sunat',   // Ej: 01 = Factura, 03 = Boleta
+        'serie',
+        'correlativo_actual',
+        'is_default',
+        'estado',
+        'usado',
+        'idEmpresa',
+        'idSede',
+    ];
     protected static function booted()
     {
         static::addGlobalScope(new EmpresaScope);

@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Models\Scopes\EmpresaScope;
+use App\Models\Scopes\SedeScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
@@ -16,6 +18,9 @@ class Solicitud extends Model
     protected $fillable = [
         'nombre_solicitante',
         'idArea',
+        'idSede',
+        'proveedor',
+        'tipo',
         'correo_electronico',
         'telefono',
         'nombre_producto',
@@ -46,5 +51,22 @@ class Solicitud extends Model
     public function categoria()
     {
         return $this->belongsTo(Categoria::class, 'idCategoria', 'id');
+    }
+    protected static function booted()
+    {
+        static::addGlobalScope(new EmpresaScope);
+        static::addGlobalScope(new SedeScope);
+        static::creating(function ($venta) {
+            $user = auth()->user();
+
+            if ($user) {
+                if (empty($venta->idSede)) {
+                    $venta->idSede = $user->idSede;
+                }
+                if (empty($venta->idEmpresa)) {
+                    $venta->idEmpresa = $user->idEmpresa;
+                }
+            }
+        });
     }
 }

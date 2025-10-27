@@ -104,6 +104,15 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::get('/configuracion/getMiEmpresa', [ConfiguracionController::class, 'getEmpresa']);
     Route::post('/configuracion/updateMiempresa', [ConfiguracionController::class, 'actualizarConfiguracion']);
     Route::get('/configuraciones/serieCorrelativo', [ConfiguracionController::class, 'getConfiSerieCorrelativo']);
+
+    // CRUD PARA LA SERIE Y CORRELATIVOS
+    Route::get('/configuraciones/serieCorrelativo', [ConfiguracionController::class, 'getConfiSerieCorrelativo']);
+    Route::post('/configuraciones/serieCorrelativo', [ConfiguracionController::class, 'saveSerieCorrelativo']);
+    Route::put('configuraciones/serieCorrelativoDefault/{id}', [ConfiguracionController::class, 'ponerDefaultSerie']);
+    Route::put('configuraciones/serieCorrelativoActivar/{id}', [ConfiguracionController::class, 'activarSerie']);
+    Route::put('configuraciones/serieCorrelativoDesactivar/{id}', [ConfiguracionController::class, 'DesactivarSerie']);
+    Route::put('configuraciones/serieCorrelativoActualizar', [ConfiguracionController::class, 'actualizarSerie']);
+
     // RUTAS PARA VENTAS 
     Route::get('/ventas', [VentasController::class, 'getVentas']);
 
@@ -130,6 +139,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     Route::get('/misSolicitudes', [SolicitudesController::class, 'getMisSolicitudes']);
     Route::post('/misSolicitudes', [SolicitudesController::class, 'registrarSolicitud']);
+    Route::post('/misSolicitudes/solicitudAddExterna', [SolicitudesController::class, 'solicitudAddExterna']);
 
 
     // RUTAS PARA COMPRAS 
