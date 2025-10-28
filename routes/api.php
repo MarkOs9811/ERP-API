@@ -33,6 +33,7 @@ use App\Http\Controllers\Api\FacturacionSunatController;
 use App\Http\Controllers\Api\FinanzasController;
 use App\Http\Controllers\api\GoogleCalendarController;
 use App\Http\Controllers\api\PedidosWebController;
+use App\Http\Controllers\Api\PeriodoNominaController;
 use App\Http\Controllers\api\PlanillaController;
 use App\Http\Controllers\Api\ReportesController;
 use App\Http\Controllers\Api\SedesController;
@@ -300,6 +301,8 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     // RUTAS PARA AJUSTES DE PLANILLA
     Route::get('/ajustesPlanilla', [AjustesPlanillasController::class, 'getAjustesPlanilla']);
 
+    // RUTAS PARA AJUSTER DE PRIODOS DE NOMINA
+    Route::get('/periodoNomina', [PeriodoNominaController::class, 'getPeriodoNomina']);
 
     // GESTION DE PLATOS Y CATEGORIAS
     Route::get('/gestionPlatos/getPlatos', [GestionMenusController::class, 'getPlatos']);
