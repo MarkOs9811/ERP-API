@@ -203,7 +203,7 @@ class PlanillaController extends Controller
         }
     }
 
-    public function getPlanilla($idCargo = null)
+    public function getPlanilla()
     {
         try {
             // Consulta base con eager loading
@@ -217,13 +217,6 @@ class PlanillaController extends Controller
                 'empleado.pagos',
             ])->orderBy('id', 'desc');
 
-            // Filtrar por cargo si se especifica
-            if ($idCargo) {
-                $query->whereHas('empleado.cargo', function ($q) use ($idCargo) {
-                    $q->where('idCargo', $idCargo);
-                });
-            }
-
             // Obtener usuarios
             $usuarios = $query->get();
 
@@ -236,7 +229,7 @@ class PlanillaController extends Controller
                 }
 
                 $diasTrabajados = $empleado->asistencias
-                    ->filter(fn($a) => \Carbon\Carbon::parse($a->fechaEntrada)->isSameMonth(now()))
+                    ->filter(fn($a) => Carbon::parse($a->fechaEntrada)->isSameMonth(now()))
                     ->count();
 
                 $porcentajeDiasTrabajados = min(100, ($diasTrabajados / 30) * 100);

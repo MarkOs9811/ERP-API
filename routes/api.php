@@ -275,11 +275,11 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     // RUTAS PARA MODULO PLANILLA - RECURSOS HUMANOS
 
-
     Route::get('/nomina', [PlanillaController::class, 'getPlanilla']);
     Route::get('/nominaEmpleado/{id}', [PlanillaController::class, 'getEmpleadoPerfil']);
     Route::post('/nomina/generarPago', [PlanillaController::class, 'generarPagosMensuales']);
     Route::post('/planilla', [PlanillaController::class, 'registroPlanillaEmpleado']);
+    Route::get('/validaNomina', [PeriodoNominaController::class, 'getDatosParaResolverNomina']);
 
     // RUTAS PARA ASISTENCIA
     Route::get('/asistencia', [AsistenciasController::class, 'getAsistencia']);
@@ -303,6 +303,9 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     // RUTAS PARA AJUSTER DE PRIODOS DE NOMINA
     Route::get('/periodoNomina', [PeriodoNominaController::class, 'getPeriodoNomina']);
+    Route::post('/periodoNomina', [PeriodoNominaController::class, 'savePeriodoNomina']);
+    Route::put('/periodoNomina/{idPeriodo}', [PeriodoNominaController::class, 'updatePeriodoNomina']);
+    Route::delete('/periodoNomina/{idPeriodo}', [PeriodoNominaController::class, 'deletePeriodoNomina']);
 
     // GESTION DE PLATOS Y CATEGORIAS
     Route::get('/gestionPlatos/getPlatos', [GestionMenusController::class, 'getPlatos']);

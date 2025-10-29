@@ -12,7 +12,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 
-class SolicitudesController extends Controller
+class 
+SolicitudesController extends Controller
 {
     public function getMisSolicitudes()
     {
