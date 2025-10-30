@@ -83,21 +83,20 @@ Route::get('/cajas2', [CajaController::class, 'getCajas']);
 
 
 
-// RUTAS PARA REGISTRAR ASISTENCIA ENTRADA / SALIDA
-Route::post('/asistencia/ingreso', [AsistenciasController::class, 'ingreso']);
-Route::post('/asistencia/salida', [AsistenciasController::class, 'salida']);
+
 
 // RUTA DE PRUEBA SIN AUTH
 Route::get('/comprasAll', [ComprasController::class, 'getCompras']);
 
 Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
+    // RUTAS PARA REGISTRAR ASISTENCIA ENTRADA / SALIDA
+    Route::post('/asistencia/ingreso', [AsistenciasController::class, 'ingreso']);
+    Route::post('/asistencia/salida', [AsistenciasController::class, 'salida']);
+
 
     // RUTAS PARA ATENDER UN PEDIDO POR CHAT
     Route::get('/chat/{id}', [WhatsAppController::class, 'obtenerChats']);
     Route::post('/chat', [WhatsAppController::class, 'store']);
-
-
-
 
     Route::post('/almacen/add-stock', [AlmacenController::class, 'addStock']);
 

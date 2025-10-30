@@ -12,6 +12,7 @@ use App\Traits\EmpresaSedeValidation;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class PeriodoNominaController extends Controller
@@ -189,49 +190,50 @@ class PeriodoNominaController extends Controller
         }
     }
 
-   
     public function getDatosParaResolverNomina()
     {
         try {
-            // 1. Buscamos el periodo de foco
             $periodoDePago = PeriodoNomina::whereIn('estado', [1, 2])
                 ->orderBy('estado', 'DESC')
                 ->first();
 
             if (!$periodoDePago) {
+
                 return response()->json([
                     'success' => false,
                     'message' => 'No se encontró un periodo Abierto o En Validación para procesar.'
                 ], 404);
             }
 
-            // 2. Traemos TODOS los registros del periodo usando el Scope
 
-            // A. TODAS las Asistencias
             $asistenciasDelPeriodo = Asistencia::delPeriodoDePago()
-                ->with('usuario:id,nombres,apellidos')
-                // --- CORRECCIÓN AQUÍ ---
-                // Usamos 'fechaEntrada' de tu tabla, no 'fecha_asistencia'
+                // --- 👇 CORRECCIÓN AQUÍ ---
+                // Cambiado 'nombres' (plural) a 'nombre' (singular)
+                ->with('empleado:documento_identidad,nombre,apellidos')
                 ->orderBy('fechaEntrada', 'asc')
                 ->get();
 
-            // B. TODOS los Adelantos de sueldo
+
+
             $adelantosDelPeriodo = AdelantoSueldo::delPeriodoDePago()
-                ->with('usuario:id,nombres,apellidos')
+                // --- 👇 CORRECCIÓN AQUÍ ---
+                // Cambiado 'nombres' (plural) a 'nombre' (singular)
+                ->with('usuario.empleado.persona:id,nombre,apellidos')
                 ->get();
 
-            // C. TODAS las Horas Extra
             $horasExtraDelPeriodo = HoraExtras::delPeriodoDePago()
-                ->with('usuario:id,nombres,apellidos')
+                // --- 👇 CORRECCIÓN AQUÍ ---
+                // Cambiado 'nombres' (plural) a 'nombre' (singular)
+                ->with('usuario.empleado.persona:id,nombre,apellidos')
                 ->get();
 
-            // D. TODAS las Vacaciones
             $vacacionesDelPeriodo = Vacacione::delPeriodoDePago()
-                ->with('usuario:id,nombres,apellidos')
+                // --- 👇 CORRECCIÓN AQUÍ ---
+                // Cambiado 'nombres' (plural) a 'nombre' (singular)
+                ->with('usuario.empleado.persona:id,nombre,apellidos')
                 ->get();
 
-
-            // 3. Preparamos el array de datos
+            // Preparamos el array de datos
             $dataCompleta = [
                 'periodo'     => $periodoDePago,
                 'asistencias' => $asistenciasDelPeriodo,
@@ -240,13 +242,12 @@ class PeriodoNominaController extends Controller
                 'vacaciones'  => $vacacionesDelPeriodo,
             ];
 
-            // 4. Devolvemos todo en la clave 'data'
+
             return response()->json([
                 'success' => true,
                 'data'    => $dataCompleta
             ]);
         } catch (\Exception $e) {
-            // --- Manejo de cualquier error inesperado (500) ---
             return response()->json(
                 [
                     'success' => false,
