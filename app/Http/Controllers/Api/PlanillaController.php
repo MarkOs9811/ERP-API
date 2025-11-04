@@ -18,6 +18,7 @@ use App\Models\EmpleadoDeduccione;
 use App\Models\HoraExtras;
 use App\Models\LibroDiario;
 use App\Models\Pago;
+use App\Models\PeriodoNomina;
 use App\Models\Persona;
 use App\Models\Provincia;
 use App\Models\TipoContrato;
@@ -204,66 +205,140 @@ class PlanillaController extends Controller
     }
 
     public function getPlanilla()
-    {
-        try {
-            // Consulta base con eager loading
-            $query = User::with([
-                'empleado.persona',
-                'empleado.cargo',
-                'empleado.horario',
-                'empleado.contrato',
-                'empleado.area',
-                'empleado.asistencias',
-                'empleado.pagos',
-            ])->orderBy('id', 'desc');
+{
+    // Log de inicio
+    Log::info('getPlanilla - Iniciando ejecución...');
 
-            // Obtener usuarios
-            $usuarios = $query->get();
+    try {
+        $userAuth = Auth::user();
 
-            // Procesar los datos
-            $usuariosArray = $usuarios->map(function ($user) {
-                $empleado = $user->empleado;
+        // Verificamos si el usuario está autenticado
+        if (!$userAuth) {
+            Log::warning('getPlanilla - Intento de acceso sin autenticación.');
+            return response()->json(['success' => false, 'message' => 'No autenticado.'], 401);
+        }
 
-                if (!$empleado) {
-                    return null; // Evita errores si algún usuario no tiene empleado asociado
-                }
+        Log::info('getPlanilla - Usuario autenticado:', [
+            'userId' => $userAuth->id, 
+            'idEmpresa' => $userAuth->idEmpresa, 
+            'idSede' => $userAuth->idSede
+        ]);
 
-                $diasTrabajados = $empleado->asistencias
-                    ->filter(fn($a) => Carbon::parse($a->fechaEntrada)->isSameMonth(now()))
-                    ->count();
+        // --- 1. Obtener el Período de Nómina Activo ---
+        $periodoActua = PeriodoNomina::where('idEmpresa', $userAuth->idEmpresa)
+                                     ->where('idSede', $userAuth->idSede)
+                                     ->where('estado', 1)
+                                     ->first();
 
-                $porcentajeDiasTrabajados = min(100, ($diasTrabajados / 30) * 100);
+        // --- 2. Manejar si no hay un período activo ---
+        if (!$periodoActua) {
+            // Log de advertencia si no se encuentra el período
+            Log::warning('getPlanilla - No se encontró período de nómina activo.', [
+                'idEmpresa' => $userAuth->idEmpresa, 
+                'idSede' => $userAuth->idSede
+            ]);
 
-                return [
-                    'id' => $user->id,
-                    'nombre_completo' => ucwords(($empleado->persona->nombre ?? '') . ' ' . ($empleado->persona->apellidos ?? '')),
-                    'documento_identidad' => $empleado->persona->documento_identidad ?? '',
-                    'dias_trabajados' => $diasTrabajados,
-                    'porcentaje_dias_trabajados' => $porcentajeDiasTrabajados,
-                    'cargo' => ucwords($empleado->cargo->nombre ?? ''),
-                    'contrato' => ucwords($empleado->contrato->nombre ?? ''),
-                    'area' => ucwords($empleado->area->nombre ?? ''),
-                    'salario_neto' => optional($empleado->pagos->last())->salario_neto,
-                    'usuario' => [
-                        'fotoPerfil' => $user->fotoPerfil,
-                        'email' => $user->email,
-                    ],
-                ];
-            })->filter();
-
-            return response()->json([
-                'success' => true,
-                'data' => $usuariosArray->values(),
-                'message' => 'Datos de planilla obtenidos correctamente.',
-            ], 200);
-        } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'data' => [],
-                'message' => 'Error al obtener los datos de planilla: ' . $e->getMessage(),
-            ], 500);
+                'message' => 'No se encontró un período de nómina activo para esta empresa y sede.',
+            ], 404);
         }
+
+        // Log del período encontrado
+        Log::info('getPlanilla - Período activo encontrado:', $periodoActua->toArray());
+
+        // --- 3. Consulta base con "Constrained Eager Loading" ---
+        $query = User::with([
+            'empleado.persona',
+            'empleado.cargo',
+            'empleado.horario',
+            'empleado.contrato',
+            'empleado.area',
+            'empleado.asistencias' => function ($query) use ($periodoActua) {
+                $query->where('idPeriodo', $periodoActua->id);
+            },
+            'empleado.pagos' => function ($query) use ($periodoActua) {
+                $query->where('idPeriodo', $periodoActua->id);
+            },
+        ])
+        ->where('idEmpresa', $userAuth->idEmpresa)
+        ->where('idSede', $userAuth->idSede)
+        ->orderBy('id', 'desc');
+
+        // Obtener usuarios
+        $usuarios = $query->get();
+
+        // Log de cuántos usuarios se encontraron
+        Log::info('getPlanilla - Usuarios encontrados para el período: ' . $usuarios->count());
+
+        // Asumiendo que el período tiene fechas de inicio y fin para calcular el total de días
+        $fechaInicio = Carbon::parse($periodoActua->fecha_inicio);
+        $fechaFin = Carbon::parse($periodoActua->fecha_fin);
+        $totalDiasPeriodo = $fechaInicio->diffInDays($fechaFin) + 1; // +1 para incluir ambos días
+
+        Log::info('getPlanilla - Días totales del período calculados: ' . $totalDiasPeriodo);
+
+        // --- 4. Procesar los datos ---
+        $usuariosArray = $usuarios->map(function ($user) use ($totalDiasPeriodo) {
+            $empleado = $user->empleado;
+
+            if (!$empleado) {
+                // Log si un usuario no tiene perfil de empleado
+                Log::warning('getPlanilla - Usuario sin empleado asociado:', ['userId' => $user->id]);
+                return null;
+            }
+
+            $diasTrabajados = $empleado->asistencias->count();
+
+            $porcentajeDiasTrabajados = $totalDiasPeriodo > 0
+                ? min(100, ($diasTrabajados / $totalDiasPeriodo) * 100)
+                : 0;
+
+            return [
+                'id' => $user->id,
+                'nombre_completo' => ucwords(($empleado->persona->nombre ?? '') . ' ' . ($empleado->persona->apellidos ?? '')),
+                'documento_identidad' => $empleado->persona->documento_identidad ?? '',
+                'dias_trabajados' => $diasTrabajados,
+                'porcentaje_dias_trabajados' => round($porcentajeDiasTrabajados, 2),
+                'cargo' => ucwords($empleado->cargo->nombre ?? ''),
+                'contrato' => ucwords($empleado->contrato->nombre ?? ''),
+                'area' => ucwords($empleado->area->nombre ?? ''),
+                'salario_neto' => optional($empleado->pagos->last())->salario_neto,
+                'usuario' => [
+                    'fotoPerfil' => $user->fotoPerfil,
+                    'email' => $user->email,
+                ],
+            ];
+        })->filter(); 
+
+        // Log de finalización exitosa
+        Log::info('getPlanilla - Procesamiento finalizado. Devolviendo ' . $usuariosArray->count() . ' registros.');
+
+        return response()->json([
+            'success' => true,
+            'data' => $usuariosArray->values(),
+            'message' => 'Datos de planilla obtenidos correctamente.',
+        ], 200);
+
+    } catch (\Exception $e) {
+        
+        // --- ¡EL LOG MÁS IMPORTANTE! ---
+        // Registra cualquier error que ocurra en el bloque try
+        Log::error('getPlanilla - Ha ocurrido un error:', [
+            'mensaje' => $e->getMessage(),
+            'linea' => $e->getLine(),
+            'archivo' => $e->getFile(),
+            'trace' => $e->getTraceAsString() // Traza completa para depuración avanzada
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'data' => [],
+            'message' => 'Error al obtener los datos de planilla: ' . $e->getMessage(),
+        ], 500);
     }
+}
     public function getEmpleadoPerfil($idEmpleado)
     {
         try {
