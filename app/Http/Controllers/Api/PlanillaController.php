@@ -25,6 +25,7 @@ use App\Models\TipoContrato;
 use App\Models\User;
 use App\Models\Vacacione;
 use Carbon\Carbon;
+use Carbon\CarbonPeriod;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -205,140 +206,139 @@ class PlanillaController extends Controller
     }
 
     public function getPlanilla()
-{
-    // Log de inicio
-    Log::info('getPlanilla - Iniciando ejecución...');
+    {
+        // Log de inicio
+        Log::info('getPlanilla - Iniciando ejecución...');
 
-    try {
-        $userAuth = Auth::user();
+        try {
+            $userAuth = Auth::user();
 
-        // Verificamos si el usuario está autenticado
-        if (!$userAuth) {
-            Log::warning('getPlanilla - Intento de acceso sin autenticación.');
-            return response()->json(['success' => false, 'message' => 'No autenticado.'], 401);
-        }
+            // Verificamos si el usuario está autenticado
+            if (!$userAuth) {
+                Log::warning('getPlanilla - Intento de acceso sin autenticación.');
+                return response()->json(['success' => false, 'message' => 'No autenticado.'], 401);
+            }
 
-        Log::info('getPlanilla - Usuario autenticado:', [
-            'userId' => $userAuth->id, 
-            'idEmpresa' => $userAuth->idEmpresa, 
-            'idSede' => $userAuth->idSede
-        ]);
-
-        // --- 1. Obtener el Período de Nómina Activo ---
-        $periodoActua = PeriodoNomina::where('idEmpresa', $userAuth->idEmpresa)
-                                     ->where('idSede', $userAuth->idSede)
-                                     ->where('estado', 1)
-                                     ->first();
-
-        // --- 2. Manejar si no hay un período activo ---
-        if (!$periodoActua) {
-            // Log de advertencia si no se encuentra el período
-            Log::warning('getPlanilla - No se encontró período de nómina activo.', [
-                'idEmpresa' => $userAuth->idEmpresa, 
+            Log::info('getPlanilla - Usuario autenticado:', [
+                'userId' => $userAuth->id,
+                'idEmpresa' => $userAuth->idEmpresa,
                 'idSede' => $userAuth->idSede
+            ]);
+
+            // --- 1. Obtener el Período de Nómina Activo ---
+            $periodoActua = PeriodoNomina::where('idEmpresa', $userAuth->idEmpresa)
+                ->where('idSede', $userAuth->idSede)
+                ->where('estado', 1)
+                ->first();
+
+            // --- 2. Manejar si no hay un período activo ---
+            if (!$periodoActua) {
+                // Log de advertencia si no se encuentra el período
+                Log::warning('getPlanilla - No se encontró período de nómina activo.', [
+                    'idEmpresa' => $userAuth->idEmpresa,
+                    'idSede' => $userAuth->idSede
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'data' => [],
+                    'message' => 'No se encontró un período de nómina activo para esta empresa y sede.',
+                ], 404);
+            }
+
+            // Log del período encontrado
+            Log::info('getPlanilla - Período activo encontrado:', $periodoActua->toArray());
+
+            // --- 3. Consulta base con "Constrained Eager Loading" ---
+            $query = User::with([
+                'empleado.persona',
+                'empleado.cargo',
+                'empleado.horario',
+                'empleado.contrato',
+                'empleado.area',
+                'empleado.asistencias' => function ($query) use ($periodoActua) {
+                    $query->where('idPeriodo', $periodoActua->id);
+                },
+                'empleado.pagos' => function ($query) use ($periodoActua) {
+                    $query->where('idPeriodo', $periodoActua->id);
+                },
+            ])
+                ->where('idEmpresa', $userAuth->idEmpresa)
+                ->where('idSede', $userAuth->idSede)
+                ->orderBy('id', 'desc');
+
+            // Obtener usuarios
+            $usuarios = $query->get();
+
+            // Log de cuántos usuarios se encontraron
+            Log::info('getPlanilla - Usuarios encontrados para el período: ' . $usuarios->count());
+
+            // Asumiendo que el período tiene fechas de inicio y fin para calcular el total de días
+            $fechaInicio = Carbon::parse($periodoActua->fecha_inicio);
+            $fechaFin = Carbon::parse($periodoActua->fecha_fin);
+            $totalDiasPeriodo = $fechaInicio->diffInDays($fechaFin) + 1; // +1 para incluir ambos días
+
+            Log::info('getPlanilla - Días totales del período calculados: ' . $totalDiasPeriodo);
+
+            // --- 4. Procesar los datos ---
+            $usuariosArray = $usuarios->map(function ($user) use ($totalDiasPeriodo) {
+                $empleado = $user->empleado;
+
+                if (!$empleado) {
+                    // Log si un usuario no tiene perfil de empleado
+                    Log::warning('getPlanilla - Usuario sin empleado asociado:', ['userId' => $user->id]);
+                    return null;
+                }
+
+                $diasTrabajados = $empleado->asistencias->count();
+
+                $porcentajeDiasTrabajados = $totalDiasPeriodo > 0
+                    ? min(100, ($diasTrabajados / $totalDiasPeriodo) * 100)
+                    : 0;
+
+                return [
+                    'id' => $user->id,
+                    'nombre_completo' => ucwords(($empleado->persona->nombre ?? '') . ' ' . ($empleado->persona->apellidos ?? '')),
+                    'documento_identidad' => $empleado->persona->documento_identidad ?? '',
+                    'dias_trabajados' => $diasTrabajados,
+                    'porcentaje_dias_trabajados' => round($porcentajeDiasTrabajados, 2),
+                    'cargo' => ucwords($empleado->cargo->nombre ?? ''),
+                    'contrato' => ucwords($empleado->contrato->nombre ?? ''),
+                    'area' => ucwords($empleado->area->nombre ?? ''),
+                    'salario_neto' => optional($empleado->pagos->last())->salario_neto,
+                    'usuario' => [
+                        'fotoPerfil' => $user->fotoPerfil,
+                        'email' => $user->email,
+                    ],
+                ];
+            })->filter();
+
+            // Log de finalización exitosa
+            Log::info('getPlanilla - Procesamiento finalizado. Devolviendo ' . $usuariosArray->count() . ' registros.');
+
+            return response()->json([
+                'success' => true,
+                'data' => $usuariosArray->values(),
+                'message' => 'Datos de planilla obtenidos correctamente.',
+            ], 200);
+        } catch (\Exception $e) {
+
+            // --- ¡EL LOG MÁS IMPORTANTE! ---
+            // Registra cualquier error que ocurra en el bloque try
+            Log::error('getPlanilla - Ha ocurrido un error:', [
+                'mensaje' => $e->getMessage(),
+                'linea' => $e->getLine(),
+                'archivo' => $e->getFile(),
+                'trace' => $e->getTraceAsString() // Traza completa para depuración avanzada
             ]);
 
             return response()->json([
                 'success' => false,
                 'data' => [],
-                'message' => 'No se encontró un período de nómina activo para esta empresa y sede.',
-            ], 404);
+                'message' => 'Error al obtener los datos de planilla: ' . $e->getMessage(),
+            ], 500);
         }
-
-        // Log del período encontrado
-        Log::info('getPlanilla - Período activo encontrado:', $periodoActua->toArray());
-
-        // --- 3. Consulta base con "Constrained Eager Loading" ---
-        $query = User::with([
-            'empleado.persona',
-            'empleado.cargo',
-            'empleado.horario',
-            'empleado.contrato',
-            'empleado.area',
-            'empleado.asistencias' => function ($query) use ($periodoActua) {
-                $query->where('idPeriodo', $periodoActua->id);
-            },
-            'empleado.pagos' => function ($query) use ($periodoActua) {
-                $query->where('idPeriodo', $periodoActua->id);
-            },
-        ])
-        ->where('idEmpresa', $userAuth->idEmpresa)
-        ->where('idSede', $userAuth->idSede)
-        ->orderBy('id', 'desc');
-
-        // Obtener usuarios
-        $usuarios = $query->get();
-
-        // Log de cuántos usuarios se encontraron
-        Log::info('getPlanilla - Usuarios encontrados para el período: ' . $usuarios->count());
-
-        // Asumiendo que el período tiene fechas de inicio y fin para calcular el total de días
-        $fechaInicio = Carbon::parse($periodoActua->fecha_inicio);
-        $fechaFin = Carbon::parse($periodoActua->fecha_fin);
-        $totalDiasPeriodo = $fechaInicio->diffInDays($fechaFin) + 1; // +1 para incluir ambos días
-
-        Log::info('getPlanilla - Días totales del período calculados: ' . $totalDiasPeriodo);
-
-        // --- 4. Procesar los datos ---
-        $usuariosArray = $usuarios->map(function ($user) use ($totalDiasPeriodo) {
-            $empleado = $user->empleado;
-
-            if (!$empleado) {
-                // Log si un usuario no tiene perfil de empleado
-                Log::warning('getPlanilla - Usuario sin empleado asociado:', ['userId' => $user->id]);
-                return null;
-            }
-
-            $diasTrabajados = $empleado->asistencias->count();
-
-            $porcentajeDiasTrabajados = $totalDiasPeriodo > 0
-                ? min(100, ($diasTrabajados / $totalDiasPeriodo) * 100)
-                : 0;
-
-            return [
-                'id' => $user->id,
-                'nombre_completo' => ucwords(($empleado->persona->nombre ?? '') . ' ' . ($empleado->persona->apellidos ?? '')),
-                'documento_identidad' => $empleado->persona->documento_identidad ?? '',
-                'dias_trabajados' => $diasTrabajados,
-                'porcentaje_dias_trabajados' => round($porcentajeDiasTrabajados, 2),
-                'cargo' => ucwords($empleado->cargo->nombre ?? ''),
-                'contrato' => ucwords($empleado->contrato->nombre ?? ''),
-                'area' => ucwords($empleado->area->nombre ?? ''),
-                'salario_neto' => optional($empleado->pagos->last())->salario_neto,
-                'usuario' => [
-                    'fotoPerfil' => $user->fotoPerfil,
-                    'email' => $user->email,
-                ],
-            ];
-        })->filter(); 
-
-        // Log de finalización exitosa
-        Log::info('getPlanilla - Procesamiento finalizado. Devolviendo ' . $usuariosArray->count() . ' registros.');
-
-        return response()->json([
-            'success' => true,
-            'data' => $usuariosArray->values(),
-            'message' => 'Datos de planilla obtenidos correctamente.',
-        ], 200);
-
-    } catch (\Exception $e) {
-        
-        // --- ¡EL LOG MÁS IMPORTANTE! ---
-        // Registra cualquier error que ocurra en el bloque try
-        Log::error('getPlanilla - Ha ocurrido un error:', [
-            'mensaje' => $e->getMessage(),
-            'linea' => $e->getLine(),
-            'archivo' => $e->getFile(),
-            'trace' => $e->getTraceAsString() // Traza completa para depuración avanzada
-        ]);
-
-        return response()->json([
-            'success' => false,
-            'data' => [],
-            'message' => 'Error al obtener los datos de planilla: ' . $e->getMessage(),
-        ], 500);
     }
-}
     public function getEmpleadoPerfil($idEmpleado)
     {
         try {
@@ -1201,5 +1201,164 @@ class PlanillaController extends Controller
         $detalleHaber->accion = $this->determinarAccion($cuentaContableHaber->tipo, 'haber');
         $detalleHaber->monto = $pagoTotales;
         $detalleHaber->save();
+    }
+    public function iniciarValidacion(Request $request, $idPeriodo)
+    {
+        Log::info("Iniciando SUBSANACIÓN para Periodo ID: $idPeriodo");
+        try {
+            DB::transaction(function () use ($idPeriodo) {
+
+                // 1. Busca el periodo ABIERTO (Estado 1)
+                $periodo = PeriodoNomina::where('id', $idPeriodo)
+                    ->where('estado', 1) // <-- Busca estado 1
+                    ->lockForUpdate()
+                    ->firstOrFail();
+
+                // --- 2. Obtener Empleados ---
+                $empleados = Empleado::where('estado', 1)
+                    ->with(['horario', 'persona'])
+                    ->get();
+
+                // --- 3. Definir Rango ---
+                $rangoFechas = CarbonPeriod::create($periodo->fecha_inicio, $periodo->fecha_fin);
+
+                // --- 4. Iterar y Subsanar (Esta era tu lógica de 'validarNominaCompleta') ---
+                foreach ($empleados as $empleado) {
+
+                    if (!$empleado->horario) {
+                        Log::warning("Empleado ID {$empleado->id} sin horario.", 'iniciarValidacion');
+                        continue;
+                    }
+                    if (!$empleado->persona || !$empleado->persona->documento_identidad) {
+                        Log::warning("Empleado ID {$empleado->id} sin persona/DNI.", 'iniciarValidacion');
+                        continue;
+                    }
+
+                    $documentoEmpleado = $empleado->persona->documento_identidad;
+                    $diasLaborables = $empleado->horario->dias_laborables ?? [];
+
+                    foreach ($rangoFechas as $date) {
+                        $fechaActual = $date->toDateString();
+                        $diaDeSemana = $date->dayOfWeekIso;
+
+                        if (!in_array($diaDeSemana, $diasLaborables)) continue;
+
+                        // 4.B. Vacaciones
+                        $vacacionAprobada = Vacacione::where('empleado_id', $empleado->id)
+                            ->where('estado', 1)
+                            ->where('fecha_inicio', '<=', $fechaActual)
+                            ->where('fecha_fin', '>=', $fechaActual)
+                            ->exists();
+
+                        if ($vacacionAprobada) {
+                            Asistencia::updateOrCreate(
+                                ['codigoUsuario' => $documentoEmpleado, 'fechaEntrada' => $fechaActual],
+                                ['idPeriodo' => $periodo->id, 'estadoAsistencia' => 'Vacaciones', 'horasTrabajadas' => 0]
+                            );
+                            continue;
+                        }
+
+                        // 4.C. Asistencias
+                        $asistencia = Asistencia::where('codigoUsuario', $documentoEmpleado)
+                            ->where('fechaEntrada', $fechaActual)
+                            ->first();
+
+                        if ($asistencia) {
+                            $estadosIntocables = ['Tardanza', 'Falta Justificada', 'Licencia'];
+                            if (in_array($asistencia->estadoAsistencia, $estadosIntocables)) {
+                                $asistencia->idPeriodo = $periodo->id;
+                                $asistencia->save();
+                                continue;
+                            }
+                            if ($asistencia->horaEntrada && !$asistencia->horaSalida) {
+                                $asistencia->horaSalida = $empleado->horario->hora_salida_programada;
+                                $asistencia->estadoAsistencia = 'Salida Autocompletada';
+                            }
+                            $asistencia->idPeriodo = $periodo->id;
+                            $asistencia->save();
+                        } else {
+                            Asistencia::create([
+                                'codigoUsuario' => $documentoEmpleado,
+                                'fechaEntrada' => $fechaActual,
+                                'idPeriodo' => $periodo->id,
+                                'estadoAsistencia' => 'Falta',
+                                'horasTrabajadas' => 0,
+                            ]);
+                        }
+                    }
+                }
+
+                // --- 5. Resolver Horas Extra Pendientes ---
+                HoraExtras::where('fecha', '>=', $periodo->fecha_inicio)
+                    ->where('fecha', '<=', $periodo->fecha_fin)
+                    ->where('estado', 0) // Pendiente
+                    ->update([
+                        'estado' => 2, // 2 = Rechazada (automáticamente)
+                    ]);
+
+                // --- 6. Actualizar el Estado del Periodo ---
+                $periodo->estado = 2; // <-- Pasa a Estado 2 (En Validación)
+                $periodo->save();
+
+                Log::info("Subsanación completa. Periodo ID: $idPeriodo movido a Estado 2.");
+            }); // Fin de la Transacción
+
+            return response()->json([
+                'message' => 'Proceso de validación iniciado. Asistencias completadas y pendientes resueltos.'
+            ], 200);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            Log::error("Error al iniciar validación: Periodo (ID: $idPeriodo, Estado: 1) no encontrado.");
+            return response()->json(['message' => 'Error: No se encontró el periodo abierto para validar.'], 404);
+        } catch (\Exception $e) {
+            Log::error("Error crítico al iniciar validación (ID: $idPeriodo): " . $e->getMessage());
+            return response()->json(['message' => 'Ocurrió un error inesperado al procesar las asistencias.', 'error' => $e->getMessage()], 500);
+        }
+    }
+
+
+    public function validarNominaCompleta(Request $request, $idPeriodo)
+    {
+        Log::info("Iniciando CIERRE (Generar Pagos) para Periodo ID: $idPeriodo");
+        try {
+            DB::transaction(function () use ($idPeriodo) {
+
+                // 1. Busca el periodo EN VALIDACIÓN (Estado 2)
+                $periodo = PeriodoNomina::where('id', $idPeriodo)
+                    ->where('estado', 2) // <-- Busca estado 2
+                    ->lockForUpdate()
+                    ->firstOrFail();
+
+                // 2. VERIFICA que el admin haya resuelto todo
+                $horasExtraPendientes = HoraExtras::where('idPeriodo', $periodo->id)
+                    ->where('estado', 0) // 0 = Pendiente
+                    ->count();
+
+                if ($horasExtraPendientes > 0) {
+                    Log::warning("Cierre fallido: $horasExtraPendientes H.E. pendientes en Periodo ID: $idPeriodo");
+                    throw new \Exception("No se puede cerrar. Aún existen $horasExtraPendientes horas extra pendientes de aprobación.");
+                }
+
+                // --- 3. AQUÍ VA TU LÓGICA DE CÁLCULO DE NÓMINA ---
+                Log::info("Verificación OK. Generando pagos para Periodo ID: $idPeriodo...");
+                // ...
+                // ... CalcularSueldos($periodo);
+                // ...
+
+                // 4. Actualizar el Estado del Periodo
+                $periodo->estado = 3; // <-- Pasa a Estado 3 (Cerrado)
+                $periodo->save();
+                Log::info("Cierre completo. Periodo ID: $idPeriodo movido a Estado 3.");
+            }); // Fin de la Transacción
+
+            return response()->json([
+                'message' => 'Nómina generada y periodo cerrado exitosamente.'
+            ], 200);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            Log::error("Error al cerrar periodo: Periodo (ID: $idPeriodo, Estado: 2) no encontrado.");
+            return response()->json(['message' => 'Error: No se encontró el periodo en validación.'], 404);
+        } catch (\Exception $e) {
+            Log::error("Error crítico al cerrar periodo (ID: $idPeriodo): " . $e->getMessage());
+            return response()->json(['message' => $e->getMessage()], 400);
+        }
     }
 }
