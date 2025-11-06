@@ -224,7 +224,7 @@ class PeriodoNominaController extends Controller
             $horasExtraDelPeriodo = HoraExtras::delPeriodoDePago()
                 // --- 👇 CORRECCIÓN AQUÍ ---
                 // Cambiado 'nombres' (plural) a 'nombre' (singular)
-                ->with('usuario.empleado.persona:id,nombre,apellidos')
+                ->with('usuario.empleado.persona:id,nombre,apellidos,documento_identidad')
                 ->get();
 
             $vacacionesDelPeriodo = Vacacione::delPeriodoDePago()

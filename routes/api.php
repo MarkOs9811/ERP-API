@@ -32,6 +32,7 @@ use App\Http\Controllers\Api\EventosController;
 use App\Http\Controllers\Api\FacturacionSunatController;
 use App\Http\Controllers\Api\FinanzasController;
 use App\Http\Controllers\api\GoogleCalendarController;
+use App\Http\Controllers\Api\NotificacionesController;
 use App\Http\Controllers\api\PedidosWebController;
 use App\Http\Controllers\Api\PeriodoNominaController;
 use App\Http\Controllers\api\PlanillaController;
@@ -99,6 +100,9 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::post('/chat', [WhatsAppController::class, 'store']);
 
     Route::post('/almacen/add-stock', [AlmacenController::class, 'addStock']);
+
+    // RUTAS PARA MIS NOTIFICACIONES
+    Route::get('/notificaciones', [NotificacionesController::class, 'getNotificaciones']);
 
     // MODULO CONFIGURACION
     Route::get('/configuraciones', [ConfiguracionController::class, 'getConfiguracion']);

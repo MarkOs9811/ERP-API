@@ -26,6 +26,7 @@ use App\Models\User;
 use App\Models\Vacacione;
 use Carbon\Carbon;
 use Carbon\CarbonPeriod;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -207,13 +208,10 @@ class PlanillaController extends Controller
 
     public function getPlanilla()
     {
-        // Log de inicio
-        Log::info('getPlanilla - Iniciando ejecución...');
 
         try {
             $userAuth = Auth::user();
 
-            // Verificamos si el usuario está autenticado
             if (!$userAuth) {
                 Log::warning('getPlanilla - Intento de acceso sin autenticación.');
                 return response()->json(['success' => false, 'message' => 'No autenticado.'], 401);
@@ -225,10 +223,10 @@ class PlanillaController extends Controller
                 'idSede' => $userAuth->idSede
             ]);
 
-            // --- 1. Obtener el Período de Nómina Activo ---
+
             $periodoActua = PeriodoNomina::where('idEmpresa', $userAuth->idEmpresa)
                 ->where('idSede', $userAuth->idSede)
-                ->where('estado', 1)
+                ->whereIn('estado', [1, 2])
                 ->first();
 
             // --- 2. Manejar si no hay un período activo ---
@@ -267,25 +265,18 @@ class PlanillaController extends Controller
                 ->where('idSede', $userAuth->idSede)
                 ->orderBy('id', 'desc');
 
-            // Obtener usuarios
             $usuarios = $query->get();
 
-            // Log de cuántos usuarios se encontraron
-            Log::info('getPlanilla - Usuarios encontrados para el período: ' . $usuarios->count());
 
-            // Asumiendo que el período tiene fechas de inicio y fin para calcular el total de días
             $fechaInicio = Carbon::parse($periodoActua->fecha_inicio);
             $fechaFin = Carbon::parse($periodoActua->fecha_fin);
-            $totalDiasPeriodo = $fechaInicio->diffInDays($fechaFin) + 1; // +1 para incluir ambos días
+            $totalDiasPeriodo = $fechaInicio->diffInDays($fechaFin) + 1;
 
-            Log::info('getPlanilla - Días totales del período calculados: ' . $totalDiasPeriodo);
-
-            // --- 4. Procesar los datos ---
             $usuariosArray = $usuarios->map(function ($user) use ($totalDiasPeriodo) {
                 $empleado = $user->empleado;
 
                 if (!$empleado) {
-                    // Log si un usuario no tiene perfil de empleado
+
                     Log::warning('getPlanilla - Usuario sin empleado asociado:', ['userId' => $user->id]);
                     return null;
                 }
@@ -313,9 +304,6 @@ class PlanillaController extends Controller
                 ];
             })->filter();
 
-            // Log de finalización exitosa
-            Log::info('getPlanilla - Procesamiento finalizado. Devolviendo ' . $usuariosArray->count() . ' registros.');
-
             return response()->json([
                 'success' => true,
                 'data' => $usuariosArray->values(),
@@ -323,13 +311,12 @@ class PlanillaController extends Controller
             ], 200);
         } catch (\Exception $e) {
 
-            // --- ¡EL LOG MÁS IMPORTANTE! ---
-            // Registra cualquier error que ocurra en el bloque try
+
             Log::error('getPlanilla - Ha ocurrido un error:', [
                 'mensaje' => $e->getMessage(),
                 'linea' => $e->getLine(),
                 'archivo' => $e->getFile(),
-                'trace' => $e->getTraceAsString() // Traza completa para depuración avanzada
+                'trace' => $e->getTraceAsString()
             ]);
 
             return response()->json([
@@ -1202,115 +1189,233 @@ class PlanillaController extends Controller
         $detalleHaber->monto = $pagoTotales;
         $detalleHaber->save();
     }
-    public function iniciarValidacion(Request $request, $idPeriodo)
+
+    public function iniciarValidacion($idPeriodo)
     {
-        Log::info("Iniciando SUBSANACIÓN para Periodo ID: $idPeriodo");
+        Log::info("Iniciando SUBSANACIÓN (V-Final + HE) para Periodo ID: $idPeriodo");
+
         try {
             DB::transaction(function () use ($idPeriodo) {
 
                 // 1. Busca el periodo ABIERTO (Estado 1)
                 $periodo = PeriodoNomina::where('id', $idPeriodo)
-                    ->where('estado', 1) // <-- Busca estado 1
+                    ->where('estado', 1)
                     ->lockForUpdate()
                     ->firstOrFail();
 
-                // --- 2. Obtener Empleados ---
-                $empleados = Empleado::where('estado', 1)
-                    ->with(['horario', 'persona'])
-                    ->get();
+                // 2. Obtener Empleados en un Mapa (key = DNI)
+                $mapEmpleados = Empleado::where('estado', 1)
+                    ->with(['horario', 'persona', 'usuario']) // <-- Incluimos 'usuario'
+                    ->get()
+                    ->keyBy('persona.documento_identidad');
 
-                // --- 3. Definir Rango ---
+                Log::info("Cargados " . $mapEmpleados->count() . " empleados en el mapa.");
+
+                // --- PASO 1: Subsanar Asistencias Existentes ---
+                $asistenciasDelPeriodo = Asistencia::where('idPeriodo', $periodo->id)->get();
+                Log::info("PASO 1: Encontradas " . $asistenciasDelPeriodo->count() . " asistencias existentes para subsanar.");
+
+                foreach ($asistenciasDelPeriodo as $asistencia) {
+
+                    // (Omitimos si el estado ya es 1, ya fue procesada)
+                    if ($asistencia->estado == 1) continue;
+
+                    $empleado = $mapEmpleados->get($asistencia->codigoUsuario);
+
+                    // Verificamos el campo 'horaSalida' de la relación 'horario'
+                    if (!$empleado || !$empleado->horario || !$empleado->horario->horaSalida) {
+                        Log::warning("No se puede subsanar Asistencia ID {$asistencia->id}: Empleado (DNI: {$asistencia->codigoUsuario}) o su horario (horaSalida) no encontrado.");
+                        continue;
+                    }
+
+                    $estadosIntocables = ['falta', 'justificada'];
+                    if (in_array($asistencia->estadoAsistencia, $estadosIntocables)) {
+                        $asistencia->estado = 1;
+                        $asistencia->save();
+                        continue;
+                    }
+
+                    // Si tiene entrada pero no salida (ej. 'tardanza' o 'a tiempo')
+                    if ($asistencia->horaEntrada && !$asistencia->horaSalida) {
+
+                        $hora_salida_prog = $empleado->horario->horaSalida;
+
+                        // --- 1. Calcular Fecha/Hora de Salida Correcta (Manejo Turno Nocturno) ---
+                        $entrada_dt = Carbon::parse($asistencia->fechaEntrada . ' ' . $asistencia->horaEntrada);
+                        $salida_dt = Carbon::parse($asistencia->fechaEntrada . ' ' . $hora_salida_prog);
+
+                        if ($salida_dt->lt($entrada_dt)) {
+                            $salida_dt->addDay();
+                        }
+
+                        $fechaSalidaCorrecta = $salida_dt->toDateString();
+
+                        // --- 2. Rellenar campos faltantes ---
+                        $asistencia->horaSalida = $hora_salida_prog;
+                        $asistencia->fechaSalida = $fechaSalidaCorrecta;
+                        $asistencia->horas_extras = '00:00:00'; // Valor inicial
+                        $asistencia->estado = 1; // Marcamos como procesada
+
+                        // --- 3. Calcular Horas Trabajadas ---
+                        try {
+                            $segundos = $salida_dt->diffInSeconds($entrada_dt);
+                            $asistencia->horasTrabajadas = gmdate('H:i:s', $segundos);
+                        } catch (\Exception $e) {
+                            Log::warning("Error al calcular horasTrabajadas para Asistencia ID {$asistencia->id}: " . $e->getMessage());
+                            $asistencia->horasTrabajadas = '00:00:00';
+                        }
+
+                        // --- 4. Guardar todo ---
+                        $asistencia->save();
+                        Log::info("Autocompletada Asistencia ID {$asistencia->id} (Salida: {$fechaSalidaCorrecta}, Horas, Estado).");
+                    }
+                }
+                Log::info("PASO 1: Subsanación de salidas completada.");
+
+
+                // --- PASO 2: Crear Registros de Vacaciones ---
                 $rangoFechas = CarbonPeriod::create($periodo->fecha_inicio, $periodo->fecha_fin);
+                Log::info("PASO 2: Iniciando escaneo de vacaciones...");
 
-                // --- 4. Iterar y Subsanar (Esta era tu lógica de 'validarNominaCompleta') ---
-                foreach ($empleados as $empleado) {
+                foreach ($mapEmpleados as $documentoEmpleado => $empleado) {
 
-                    if (!$empleado->horario) {
-                        Log::warning("Empleado ID {$empleado->id} sin horario.", 'iniciarValidacion');
-                        continue;
-                    }
-                    if (!$empleado->persona || !$empleado->persona->documento_identidad) {
-                        Log::warning("Empleado ID {$empleado->id} sin persona/DNI.", 'iniciarValidacion');
+                    // Corrección: Validar que el empleado tenga usuario
+                    if (!$empleado->usuario) {
+                        Log::warning("PASO 2: Saltando escaneo de vacaciones para Empleado DNI {$documentoEmpleado}. No tiene 'usuario' relacionado.");
                         continue;
                     }
 
-                    $documentoEmpleado = $empleado->persona->documento_identidad;
-                    $diasLaborables = $empleado->horario->dias_laborables ?? [];
+                    $idUsuario = $empleado->usuario->id;
 
                     foreach ($rangoFechas as $date) {
                         $fechaActual = $date->toDateString();
-                        $diaDeSemana = $date->dayOfWeekIso;
 
-                        if (!in_array($diaDeSemana, $diasLaborables)) continue;
-
-                        // 4.B. Vacaciones
-                        $vacacionAprobada = Vacacione::where('empleado_id', $empleado->id)
-                            ->where('estado', 1)
+                        $vacacionAprobada = Vacacione::where('idUsuario', $idUsuario)
+                            ->where('estado', 0) // 0 = activas
                             ->where('fecha_inicio', '<=', $fechaActual)
                             ->where('fecha_fin', '>=', $fechaActual)
                             ->exists();
 
                         if ($vacacionAprobada) {
                             Asistencia::updateOrCreate(
-                                ['codigoUsuario' => $documentoEmpleado, 'fechaEntrada' => $fechaActual],
-                                ['idPeriodo' => $periodo->id, 'estadoAsistencia' => 'Vacaciones', 'horasTrabajadas' => 0]
+                                [
+                                    'codigoUsuario' => $documentoEmpleado,
+                                    'fechaEntrada' => $fechaActual
+                                ],
+                                [
+                                    'idPeriodo' => $periodo->id,
+                                    'estadoAsistencia' => 'justificada',
+                                    'horasTrabajadas' => '00:00:00',
+                                    'horas_extras' => '00:00:00',
+                                    'fechaSalida' => $fechaActual,
+                                    'horaEntrada' => null,
+                                    'horaSalida' => null,
+                                    'estado' => 1 // Marcamos como procesado
+                                ]
                             );
-                            continue;
                         }
+                    } // Fin bucle días
+                } // Fin bucle empleados
+                Log::info("PASO 2: Escaneo de vacaciones completado.");
 
-                        // 4.C. Asistencias
-                        $asistencia = Asistencia::where('codigoUsuario', $documentoEmpleado)
-                            ->where('fechaEntrada', $fechaActual)
-                            ->first();
 
-                        if ($asistencia) {
-                            $estadosIntocables = ['Tardanza', 'Falta Justificada', 'Licencia'];
-                            if (in_array($asistencia->estadoAsistencia, $estadosIntocables)) {
-                                $asistencia->idPeriodo = $periodo->id;
-                                $asistencia->save();
-                                continue;
-                            }
-                            if ($asistencia->horaEntrada && !$asistencia->horaSalida) {
-                                $asistencia->horaSalida = $empleado->horario->hora_salida_programada;
-                                $asistencia->estadoAsistencia = 'Salida Autocompletada';
-                            }
-                            $asistencia->idPeriodo = $periodo->id;
-                            $asistencia->save();
-                        } else {
-                            Asistencia::create([
-                                'codigoUsuario' => $documentoEmpleado,
-                                'fechaEntrada' => $fechaActual,
-                                'idPeriodo' => $periodo->id,
-                                'estadoAsistencia' => 'Falta',
-                                'horasTrabajadas' => 0,
-                            ]);
-                        }
+                // --- PASO 3: Recolectar IDs de Usuario (para Pasos 4 y 5) ---
+                Log::info("PASO 3: Iniciando recolección de IDs de usuario...");
+
+                $listaIdsUnicos = [];
+                $mapIdUsuarioADni = []; // Mapa [idUsuario => DNI]
+
+                foreach ($mapEmpleados as $dni => $empleado) {
+                    if ($empleado->usuario) {
+                        $idUsuario = $empleado->usuario->id;
+                        $listaIdsUnicos[] = $idUsuario;
+                        $mapIdUsuarioADni[$idUsuario] = $dni;
                     }
                 }
+                $listaIdsUnicos = array_unique($listaIdsUnicos);
+                Log::info("PASO 3: Recolección completa. " . count($listaIdsUnicos) . " IDs de usuario válidos.");
 
-                // --- 5. Resolver Horas Extra Pendientes ---
-                HoraExtras::where('fecha', '>=', $periodo->fecha_inicio)
-                    ->where('fecha', '<=', $periodo->fecha_fin)
-                    ->where('estado', 0) // Pendiente
-                    ->update([
-                        'estado' => 2, // 2 = Rechazada (automáticamente)
-                    ]);
 
-                // --- 6. Actualizar el Estado del Periodo ---
-                $periodo->estado = 2; // <-- Pasa a Estado 2 (En Validación)
+                // --- PASO 4: Resolver Horas Extra Pendientes (0 -> 1) ---
+                Log::info("PASO 4: Resolviendo HE pendientes (0 -> 1)...");
+
+                if (count($listaIdsUnicos) > 0) {
+                    HoraExtras::where('fecha', '>=', $periodo->fecha_inicio)
+                        ->where('fecha', '<=', $periodo->fecha_fin)
+                        ->where('estado', 0) // Pendientes
+                        ->whereIn('idUsuario', $listaIdsUnicos)
+                        ->update(['estado' => 1]); // Pasan a estado 1
+                } else {
+                    Log::info("PASO 4: No se encontraron IDs de usuario, se omite HE.");
+                }
+                Log::info("PASO 4: HE pendientes resueltas.");
+
+
+                // --- PASO 5: Aplicar Horas Extra APROBADAS a Asistencias ---
+                Log::info("PASO 5: Aplicando horas extra APROBADAS a asistencias...");
+
+                // --- ¡REVISA ESTA LÍNEA! ---
+                // Asumo que 'estado = 1' son las APROBADAS.
+                // Si las aprobadas son 'estado = 1', cambia este valor.
+                $estadoAprobadoHE = 1;
+
+                if (count($listaIdsUnicos) > 0) {
+                    $horasExtrasAprobadas = HoraExtras::where('estado', $estadoAprobadoHE)
+                        ->whereIn('idUsuario', $listaIdsUnicos)
+                        ->where('fecha', '>=', $periodo->fecha_inicio)
+                        ->where('fecha', '<=', $periodo->fecha_fin)
+                        ->get();
+
+                    Log::info("PASO 5: Se encontraron " . $horasExtrasAprobadas->count() . " registros de HE aprobadas para aplicar.");
+
+                    foreach ($horasExtrasAprobadas as $horaExtra) {
+                        // Usamos el mapa [userId => DNI] que creamos en PASO 3
+                        if (isset($mapIdUsuarioADni[$horaExtra->idUsuario])) {
+
+                            $dni = $mapIdUsuarioADni[$horaExtra->idUsuario];
+
+                            // ===== INICIO DE LA CORRECCIÓN DE FORMATO =====
+                            try {
+                                // 1. Convertimos el decimal (ej: 2.0) a segundos (ej: 7200)
+                                $horasEnDecimal = (float) $horaExtra->horas_trabajadas;
+                                $segundosTotales = $horasEnDecimal * 3600;
+
+                                // 2. Formateamos los segundos a 'H:i:s' (ej: '02:00:00')
+                                $formatoHis = gmdate('H:i:s', $segundosTotales);
+
+                                // 3. Actualizamos la asistencia con el formato correcto
+                                Asistencia::where('codigoUsuario', $dni)
+                                    ->where('fechaEntrada', $horaExtra->fecha)
+                                    ->update([
+                                        'horas_extras' => $formatoHis
+                                    ]);
+                            } catch (\Exception $e) {
+                                Log::warning("PASO 5: Error al convertir horas extra (Valor: {$horaExtra->horas_trabajadas}) para DNI {$dni} en fecha {$horaExtra->fecha}. Error: " . $e->getMessage());
+                            }
+                            // ===== FIN DE LA CORRECCIÓN DE FORMATO =====
+                        }
+                    }
+                    Log::info("PASO 5: HE Aprobadas aplicadas.");
+                } else {
+                    Log::info("PASO 5: No se encontraron IDs de usuario, se omite aplicación de HE.");
+                }
+
+
+                // --- PASO 6: Actualizar el Estado del Periodo ---
+                $periodo->estado = 2; // Pasa a Estado 2 (En Validación)
                 $periodo->save();
 
-                Log::info("Subsanación completa. Periodo ID: $idPeriodo movido a Estado 2.");
+                Log::info("Subsanación (V-Final + HE) completa. Periodo ID: $idPeriodo movido a Estado 2.");
             }); // Fin de la Transacción
 
             return response()->json([
-                'message' => 'Proceso de validación iniciado. Asistencias completadas y pendientes resueltos.'
+                'message' => 'Proceso de validación completado. Registros autocompletados, vacaciones y horas extra aplicadas.'
             ], 200);
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+        } catch (ModelNotFoundException $e) {
             Log::error("Error al iniciar validación: Periodo (ID: $idPeriodo, Estado: 1) no encontrado.");
             return response()->json(['message' => 'Error: No se encontró el periodo abierto para validar.'], 404);
         } catch (\Exception $e) {
-            Log::error("Error crítico al iniciar validación (ID: $idPeriodo): " . $e->getMessage());
+            Log::error("Error crítico al iniciar validación (ID: $idPeriodo): " . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
             return response()->json(['message' => 'Ocurrió un error inesperado al procesar las asistencias.', 'error' => $e->getMessage()], 500);
         }
     }
