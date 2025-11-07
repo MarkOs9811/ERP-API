@@ -292,6 +292,8 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     // RUTAS PARA HORAS EXTRAS - PLANILLA
     Route::get('/horasExtras', [PlanillaController::class, 'getHorasExtras']);
     Route::post('/horasExtras', [PlanillaController::class, 'storeHorasExtras']);
+    Route::delete('/horasExtras/{id}', [PlanillaController::class, 'deleteHorasExtras']);
+
 
     // RUTAS PARA AdelantoSueldo - PLANILLA
     Route::get('/adelantoSueldo', [PlanillaController::class, 'getAdelandoSueldo']);

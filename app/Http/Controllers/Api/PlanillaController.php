@@ -515,7 +515,7 @@ class PlanillaController extends Controller
                     $pagoPorHora = $usuario->empleado->cargo->pagoPorHoras;
                     Log::info('Información del usuario obtenida', ['usuario_id' => $usuario_id, 'pagoPorHora' => $pagoPorHora]);
 
-                    $estado = Carbon::parse($fecha)->isPast() || Carbon::parse($fecha)->isToday() ? 1 : 0;
+                    $estado = Carbon::parse($fecha)->isBefore(Carbon::today()) ? 1 : 0;
 
                     $totalPagoHorasExtras = 0;
 
