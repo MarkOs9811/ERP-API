@@ -444,11 +444,10 @@ class PlanillaController extends Controller
     public function storeHorasExtras(Request $request)
     {
         try {
-            Log::info('Inicio del método storeHorasExtras', ['request' => $request->all()]);
+
 
             // Convertir el array de objetos a un array de IDs
             $usuarios = collect($request->input('empleados'))->pluck('id')->toArray();
-            Log::info('IDs de usuarios extraídos', ['usuarios' => $usuarios]);
 
             // Reemplazar el campo 'empleados' con los IDs extraídos
             $request->merge(['empleados' => $usuarios]);
@@ -460,21 +459,19 @@ class PlanillaController extends Controller
                 'horas_trabajadas' => 'required|numeric|min:1',
             ]);
 
-            Log::info('Validación de datos', ['datos_validados' => $request->all()]);
+
             if ($validator->fails()) {
-                Log::error('Errores de validación', ['errors' => $validator->errors()]);
+
                 return response()->json(['success' => false, 'message' => 'Errores de validación', 'errors' => $validator->errors()], 422);
             }
 
             $fecha = $request->fecha;
             $horasTrabajadas = $request->horas_trabajadas;
             $mes_actual = Carbon::now()->format('Y-m');
-            Log::info('Datos procesados', ['fecha' => $fecha, 'horas_trabajadas' => $horasTrabajadas, 'mes_actual' => $mes_actual]);
 
             $resultados = [];
 
             foreach ($request->empleados as $usuario_id) {
-                Log::info('Procesando usuario', ['usuario_id' => $usuario_id]);
 
                 try {
                     // Verificar si ya tiene horas extras registradas para la misma fecha
@@ -573,7 +570,121 @@ class PlanillaController extends Controller
             ], 500);
         }
     }
+    public function upDateHorasExtras(Request $request, $id)
+    {
 
+        $datosValidados = $request->validate([
+            'fecha' => 'required|date',
+            'horas_trabajadas' => 'required|numeric|min:1',
+        ]);
+
+
+        try {
+            $horasExtra = HoraExtras::find($id);
+
+            if (!$horasExtra) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El registro de horas extras no fue encontrado.'
+                ], 404);
+            }
+
+            // Usamos los datos validados (más seguro)
+            $fecha = $datosValidados['fecha'];
+            $horasTrabajadas = $datosValidados['horas_trabajadas'];
+            $usuario_id = $horasExtra->idUsuario;
+
+            // 3. Validación de Regla de Negocio (Fecha repetida)
+            $fecha_repetida = HoraExtras::where('idUsuario', $usuario_id)
+                ->where('fecha', $fecha)
+                ->where('id', '!=', $id)
+                ->exists();
+
+            if ($fecha_repetida) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El usuario ya tiene registrada una hora extra para la fecha indicada.',
+                ], 422);
+            }
+
+            // 4. Validación de Regla de Negocio (Límite 6 horas)
+            $mes_a_validar = Carbon::parse($fecha);
+
+            $horas_en_el_mes = HoraExtras::where('idUsuario', $usuario_id)
+                ->whereYear('fecha', '=', $mes_a_validar->year)
+                ->whereMonth('fecha', '=', $mes_a_validar->month)
+                ->where('id', '!=', $id)
+                ->sum('horas_trabajadas');
+
+            if (($horas_en_el_mes + $horasTrabajadas) > 6) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El usuario no puede tener más de 6 horas extras en el presente mes.',
+                ], 422);
+            }
+
+            // 5. Obtener información del usuario para calcular el pago
+            $usuario = User::with('empleado.cargo')->find($usuario_id);
+
+            if (!$usuario || !$usuario->empleado || !$usuario->empleado->cargo) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se pudo encontrar la información del empleado o su cargo.'
+                ], 404);
+            }
+
+            $pagoPorHora = $usuario->empleado->cargo->pagoPorHoras;
+
+            // 6. Calcular el pago total
+            $totalPagoHorasExtras = 0;
+            if ($horasTrabajadas <= 2) {
+                $totalPagoHorasExtras = $horasTrabajadas * ($pagoPorHora * 1.25);
+            } else {
+                $totalPagoHorasExtras = (2 * ($pagoPorHora * 1.25)) + (($horasTrabajadas - 2) * ($pagoPorHora * 1.35));
+            }
+
+            // 7. Calcular el estado
+            $estado = Carbon::parse($fecha)->isBefore(Carbon::today()) ? 1 : 0;
+
+            // 8. Actualizar el registro
+            $horasExtra->fecha = $fecha;
+            $horasExtra->horas_trabajadas = $horasTrabajadas;
+            $horasExtra->pagoTotal = $totalPagoHorasExtras;
+            $horasExtra->estado = $estado;
+            $horasExtra->save();
+
+            Log::info('Horas extras actualizadas correctamente', ['horasExtra_id' => $id]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Horas extras actualizadas correctamente.',
+                'data' => $horasExtra
+            ], 200);
+        } catch (\Exception $e) {
+            // Este catch ahora SÓLO se activa por errores de "Lógica de Negocio"
+            // (por ejemplo, si falla la base de datos), pero NO por la validación.
+            Log::error('Error inesperado en el método update HorasExtras', ['error' => $e->getMessage(), 'id' => $id]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Ocurrió un error inesperado al actualizar las horas extras.',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function deleteHorasExtras($id)
+    {
+        try {
+            $horasExtras = HoraExtras::where('estado', 0)->findOrFail($id);
+            if (!$horasExtras) {
+                return response()->json(['success' => false, 'message' => "No se encontro un registro"], 422);
+            }
+            $horasExtras->delete();
+            return response()->json(['success' => true, 'message' => "Se eliminó correctamente"], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => "Error" . $e->getMessage()], 500);
+        }
+    }
 
     public function getAdelandoSueldo()
     {
@@ -803,56 +914,46 @@ class PlanillaController extends Controller
         }
     }
 
+
     public function storeVacaciones(Request $request)
     {
         try {
-            // Validación inicial de los datos
-            $validator = Validator::make($request->all(), [
+            // 1. VALIDACIÓN AUTOMÁTICA (El "validate genérico")
+            // Si esto falla, Laravel envía el JSON 422 "¡pum!"
+            $datosValidados = $request->validate([
                 'empleados' => 'required|array|min:1',
                 'empleados.*' => 'required|exists:users,id',
                 'fechaInicio' => 'required|date',
                 'fechaFin' => 'required|date|after_or_equal:fechaInicio',
-                'diasTotales' => 'required|integer|min:30',
+                'diasTotales' => 'required|integer|min:7', // Mantengo tu lógica de 7
                 'observaciones' => 'nullable|string',
             ]);
 
-            if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Errores de validación',
-                    'errors' => $validator->errors(),
-                ], 422);
-            }
+            // 2. Extracción de datos (ya validados)
+            $fechaInicio = $datosValidados['fechaInicio'];
+            $fechaFin = $datosValidados['fechaFin'];
+            $diasTotales = $datosValidados['diasTotales'];
+            $observaciones = $datosValidados['observaciones'] ?? null;
 
-            $fechaInicio = $request->fechaInicio;
-            $fechaFin = $request->fechaFin;
-            $diasTotales = $request->diasTotales;
-            $observaciones = $request->observaciones;
             $errores = [];
             $usuariosValidos = [];
 
-            // Validar cada usuario antes de registrar
-            foreach ($request->empleados as $usuario_id) {
+            // 3. VALIDACIÓN DE LÓGICA DE NEGOCIO (Iterar sobre empleados)
+            // Esta parte es tu lógica personalizada y está perfecta.
+            foreach ($datosValidados['empleados'] as $usuario_id) {
                 $usuario = User::with('empleado.persona')->find($usuario_id);
 
                 if (!$usuario || !$usuario->empleado) {
-                    $errores[] = [
-                        'usuario_id' => $usuario_id,
-                        'message' => 'No se encontró un empleado asociado a este usuario.',
-                    ];
+                    $errores[] = ['usuario_id' => $usuario_id, 'message' => 'No se encontró un empleado asociado a este usuario.'];
                     continue;
                 }
 
-                $empleado = $usuario->empleado;
-                $documentoIdentidad = $empleado->persona->documento_identidad;
+                $documentoIdentidad = $usuario->empleado->persona->documento_identidad;
 
                 // Validar que exista al menos una asistencia
                 $asistencias = Asistencia::where('codigoUsuario', $documentoIdentidad)->count();
                 if ($asistencias < 1) {
-                    $errores[] = [
-                        'usuario_id' => $usuario_id,
-                        'message' => 'El empleado no tiene registros de asistencia.',
-                    ];
+                    $errores[] = ['usuario_id' => $usuario_id, 'message' => 'El empleado no tiene registros de asistencia.'];
                     continue;
                 }
 
@@ -862,27 +963,25 @@ class PlanillaController extends Controller
                     ->exists();
 
                 if ($vacacionesPendientes) {
-                    $errores[] = [
-                        'usuario_id' => $usuario_id,
-                        'message' => 'El usuario ya tiene una vacación pendiente.',
-                    ];
+                    $errores[] = ['usuario_id' => $usuario_id, 'message' => 'El usuario ya tiene una vacación pendiente.'];
                     continue;
                 }
 
-                // Si pasa todas las validaciones, agregar a la lista de usuarios válidos
                 $usuariosValidos[] = $usuario;
             }
 
-            // Si hay errores, no registrar nada
+            // 4. RESPUESTA DE ERROR DE LÓGICA DE NEGOCIO
+            // Si hay errores de negocio, los devuelves.
             if (!empty($errores)) {
+                // Tu frontend leerá "Algunos usuarios no cumplen con las condiciones."
                 return response()->json([
                     'success' => false,
                     'message' => 'Algunos usuarios no cumplen con las condiciones.',
-                    'errors' => $errores,
+                    'errors' => $errores, // Lista de errores específicos por usuario
                 ], 422);
             }
 
-            // Registrar vacaciones para los usuarios válidos
+            // 5. REGISTRAR VACACIONES (Solo si todo es válido)
             foreach ($usuariosValidos as $usuario) {
                 $vacacion = new Vacacione();
                 $vacacion->idUsuario = $usuario->id;
@@ -902,10 +1001,20 @@ class PlanillaController extends Controller
                 'success' => true,
                 'message' => 'Vacaciones registradas exitosamente para todos los usuarios.',
             ], 200);
-        } catch (\Exception $e) {
+        } catch (ValidationException $e) {
+            // Este catch es redundante si usas $request->validate()
+            // porque Laravel ya lo maneja. Pero si quieres ser explícito:
             return response()->json([
                 'success' => false,
-                'message' => 'Ocurrió un error inesperado al registrar las vacaciones.',
+                'message' => $e->getMessage(),
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            // Este catch es para errores de base de datos u otros
+            Log::error('Error en storeVacaciones: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error' . $e->getMessage(),
                 'error' => $e->getMessage(),
             ], 500);
         }
@@ -914,7 +1023,7 @@ class PlanillaController extends Controller
     public function venderDias(Request $request)
     {
         try {
-            // Validar la entrada
+            // Validación (la dejé como la tenías, pero añadí mensajes)
             $request->validate([
                 'id' => 'required|exists:vacaciones,id',
                 'diasVender' => 'required|integer|min:1',
@@ -922,50 +1031,47 @@ class PlanillaController extends Controller
                 'id.required' => 'El ID de la vacación es obligatorio.',
                 'id.exists' => 'La vacación especificada no existe.',
                 'diasVender.required' => 'Debe especificar los días a vender.',
-                'diasVender.integer' => 'Los días a vender deben ser un número entero.',
                 'diasVender.min' => 'Debe vender al menos 1 día.',
             ]);
 
-            // Obtener la vacación
+
             $vacacion = Vacacione::findOrFail($request->input('id'));
+            $diasVender = $request->input('diasVender');
 
-            // Calcular los días disponibles para vender
-            $diasDisponibles = $vacacion->dias_totales - $vacacion->dias_utilizados;
 
-            // Verificar si los días a vender son válidos
-            if ($request->input('diasVender') > $diasDisponibles) {
+            $diasDisponibles = $vacacion->dias_totales - $vacacion->dias_utilizados - $vacacion->dias_vendidos;
+
+            // --- CORRECCIÓN 2: VERIFICAR SI SE PUEDE VENDER ---
+            if ($diasVender > $diasDisponibles) {
+                // Devolvemos 422 (Error de validación) con un 'message'
                 return response()->json([
                     'success' => false,
-                    'error' => "No puedes vender más días de los disponibles. Días disponibles: $diasDisponibles.",
-                ], 400);
+                    'message' => "No puedes vender $diasVender días. Días disponibles reales: $diasDisponibles.",
+                ], 422);
             }
 
-            // Actualizar días vendidos
-            $diasVender = $request->input('diasVender');
+
             $vacacion->dias_vendidos += $diasVender;
-            $vacacion->dias_totales = max(0, $vacacion->dias_totales - $diasVender);
 
-            if ($vacacion->dias_totales <= 0) {
-                // Si se han vendido todos los días, la fecha_fin debe ser igual a la fecha_inicio
-                $vacacion->fecha_fin = $vacacion->fecha_inicio;
 
-                // Cambiar el estado de las vacaciones a 1
-                $vacacion->estado = 1;
+            $vacacion->estadoPagado = 1;
 
-                // Cambiar el estado del usuario a 1
+
+            $diasConsumidos = $vacacion->dias_utilizados + $vacacion->dias_vendidos;
+
+
+            if ($diasConsumidos >= $vacacion->dias_totales) {
+
+                $vacacion->estado = 1; // 1 = Completado
+
+
                 if (!empty($vacacion->idUsuario)) {
                     $usuario = User::find($vacacion->idUsuario);
-                    if ($usuario) {
+                    // Si el usuario estaba en vacaciones (estado 0), lo activamos (estado 1)
+                    if ($usuario && $usuario->estado == 0) {
                         $usuario->estado = 1;
                         $usuario->save();
                     }
-                }
-            } else {
-                // Actualizar la fecha de fin cuando no se han vendido todos los días
-                if ($vacacion->fecha_fin > $vacacion->fecha_inicio) {
-                    $fechaFin = new \DateTime($vacacion->fecha_fin);
-                    $fechaFin->modify("-$diasVender days");
-                    $vacacion->fecha_fin = $fechaFin->format('Y-m-d');
                 }
             }
 
@@ -974,15 +1080,21 @@ class PlanillaController extends Controller
 
             return response()->json(['success' => true, 'message' => 'Días vendidos con éxito.']);
         } catch (ValidationException $e) {
-            // Enviar errores de validación detallados
-            return response()->json(['success' => false, 'errors' => $e->errors()], 422);
+            // --- CORRECCIÓN 5: RESPUESTA DE VALIDACIÓN CONSISTENTE ---
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(), // Mensaje general
+                'errors' => $e->errors()  // Errores detallados (por si los usas)
+            ], 422);
         } catch (\Exception $e) {
-            // Registrar el error y enviar un mensaje detallado
+            // --- CORRECCIÓN 5: RESPUESTA DE ERROR CONSISTENTE ---
             Log::error('Error al vender días de vacaciones: ' . $e->getMessage());
-            return response()->json(['success' => false, 'error' => 'Ocurrió un error al vender la vacación. Detalles: ' . $e->getMessage()], 500);
+            return response()->json([
+                'success' => false,
+                'message' => 'Ocurrió un error al vender la vacación. Detalles: ' . $e->getMessage()
+            ], 500);
         }
     }
-
     public function generarPagosMensuales()
     {
         // Obtener el día de pago registrado en la tabla AjustesPlanilla

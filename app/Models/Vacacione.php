@@ -63,10 +63,7 @@ class Vacacione extends Model
                         // ¡Éxito! Asignamos el ID
                         $vacaciones->idPeriodo = $periodoActivo->id;
                     } else {
-                        // 6. ¡ERROR GRAVE!
-                        // No hay ningún periodo abierto. No podemos guardar esto.
-                        // Lanzamos una excepción para detener el guardado
-                        // y que el frontend reciba un error.
+
                         throw new \Exception('No se encontró ningún periodo Abierto. No se puede registrar el adelanto.');
                     }
                 }

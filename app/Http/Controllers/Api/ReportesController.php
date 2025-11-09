@@ -795,4 +795,71 @@ class ReportesController extends Controller
             ], 500);
         }
     }
+
+    public function reporteHorasExtras()
+    {
+        try {
+            $horasExtras = HoraExtras::with('usuario.empleado.persona')->get();
+
+            $data = $horasExtras->map(function ($item) {
+                return [
+                    'ID' => $item->id,
+                    'Email' => $item->usuario->email,
+                    'Nombre' => optional($item->usuario->empleado->persona)->nombre ?? '',
+                    'Apellidos' => optional($item->usuario->empleado->persona)->apellidos ?? '',
+                    'Documento' => optional($item->usuario->empleado->persona)->documento_identidad ?? '',
+                    'Cargo' => optional($item->usuario->empleado->cargo)->nombre ?? '',
+                    'Horas trabajadas' => $item->horas_trabajadas,
+                    'Pago total' => $item->pagoTotal,
+                    'Estado' => $item->estado === 1 ? 'Trabajado' : 'Pendiente',
+                ];
+            });
+
+            $filename = 'reporte_horasExtras_' . now()->format('Ymd_His') . '.xlsx';
+
+            // 👇 Esto devuelve el archivo al navegador directamente
+            return (new FastExcel($data))->download($filename);
+        } catch (\Exception $e) {
+            Log::error('Error al generar reporte: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al generar el reporte: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+    public function reporteVacaciones()
+    {
+        try {
+            $horasExtras = Vacacione::with('usuario.empleado.persona')->get();
+
+            $data = $horasExtras->map(function ($item) {
+                return [
+                    'ID' => $item->id,
+                    'Email' => $item->usuario->email,
+                    'Nombre' => optional($item->usuario->empleado->persona)->nombre ?? '',
+                    'Apellidos' => optional($item->usuario->empleado->persona)->apellidos ?? '',
+                    'Documento' => optional($item->usuario->empleado->persona)->documento_identidad ?? '',
+                    'Cargo' => optional($item->usuario->empleado->cargo)->nombre ?? '',
+                    'Fecha Inicio' => $item->fecha_inicio,
+                    'Fecha Fin' => $item->fecha_fin,
+                    'Dias total' => $item->dias_totales,
+                    'Dias utilizados' => $item->dias_utilizados,
+                    'Días vendidos' => $item->dias_vendidos,
+                    'Estado pago/venta' => $item->estado === 1 ? 'Vacaciones vendidas' : 'NO vendidas',
+                    'Estado' => $item->estado === 1 ? 'Completado' : 'Pendiente',
+                ];
+            });
+
+            $filename = 'reporte_horasExtras_' . now()->format('Ymd_His') . '.xlsx';
+
+            // 👇 Esto devuelve el archivo al navegador directamente
+            return (new FastExcel($data))->download($filename);
+        } catch (\Exception $e) {
+            Log::error('Error al generar reporte: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al generar el reporte: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

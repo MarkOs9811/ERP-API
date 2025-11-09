@@ -40,7 +40,6 @@ use App\Http\Controllers\Api\ReportesController;
 use App\Http\Controllers\Api\SedesController;
 use App\Http\Controllers\api\WhatsAppController;
 use App\Http\Controllers\Auth\GoogleController;
-use App\Models\AjustesPlanilla;
 use Google\Service\AdSenseHost\Report;
 
 Route::options('/{any}', function () {
@@ -293,6 +292,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::get('/horasExtras', [PlanillaController::class, 'getHorasExtras']);
     Route::post('/horasExtras', [PlanillaController::class, 'storeHorasExtras']);
     Route::delete('/horasExtras/{id}', [PlanillaController::class, 'deleteHorasExtras']);
+    Route::put('/horasExtras/{id}', [PlanillaController::class, 'upDateHorasExtras']);
 
 
     // RUTAS PARA AdelantoSueldo - PLANILLA
@@ -313,6 +313,13 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::post('/periodoNomina', [PeriodoNominaController::class, 'savePeriodoNomina']);
     Route::put('/periodoNomina/{idPeriodo}', [PeriodoNominaController::class, 'updatePeriodoNomina']);
     Route::delete('/periodoNomina/{idPeriodo}', [PeriodoNominaController::class, 'deletePeriodoNomina']);
+
+    // RUTAS PARA AJUSTER DE bonificaciones - PLANILLA
+    Route::get('/bonificacionesAll', [AjustesPlanillasController::class, 'getBonificacionesAll']);
+    Route::post('/bonificaciones', [AjustesPlanillasController::class, 'storeBonificaciones']);
+    Route::put('/bonificaciones/{id}', [AjustesPlanillasController::class, 'suspendBonificaciones']);
+    Route::put('/bonificaciones/activar/{id}', [AjustesPlanillasController::class, 'activarBonificaciones']);
+
 
     // GESTION DE PLATOS Y CATEGORIAS
     Route::get('/gestionPlatos/getPlatos', [GestionMenusController::class, 'getPlatos']);
@@ -402,6 +409,9 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::get('/reporteAlmacenTodo', [ReportesController::class, 'reporteAlmacenTodo']);
     Route::get('/reporteProveedores', [ReportesController::class, 'reporteProveedores']);
     Route::get('/reporteCompras', [ReportesController::class, 'reporteCompras']);
+    Route::get('/reporteHorasExtras', [ReportesController::class, 'reporteHorasExtras']);
+    Route::get('/reporteVacaciones', [ReportesController::class, 'reporteVacaciones']);
+
     Route::get('/reporteUsuarios', [ReportesController::class, 'reporteUsuarios']);
 
 
