@@ -319,6 +319,21 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::post('/bonificaciones', [AjustesPlanillasController::class, 'storeBonificaciones']);
     Route::put('/bonificaciones/{id}', [AjustesPlanillasController::class, 'suspendBonificaciones']);
     Route::put('/bonificaciones/activar/{id}', [AjustesPlanillasController::class, 'activarBonificaciones']);
+    Route::put('/bonificaciones/editar/{id}', [AjustesPlanillasController::class, 'updateBonificacion']);
+
+    // RUTAS PARA AJUSTER DE DEDUCCION - PLANILLA
+    Route::get('/deduccionesAll', [AjustesPlanillasController::class, 'getDeduccionesAll']);
+    Route::post('/deducciones', [AjustesPlanillasController::class, 'storeDeducciones']);
+    Route::put('/deducciones/{id}', [AjustesPlanillasController::class, 'suspendDeducciones']);
+    Route::put('/deducciones/activar/{id}', [AjustesPlanillasController::class, 'activarDeducciones']);
+    Route::put('/deducciones/editar/{id}', [AjustesPlanillasController::class, 'updateDeducciones']);
+
+    // RUTAS PARA AJUSTER DE HORARIO - PLANILLA
+    Route::get('/horariosAll', [AjustesPlanillasController::class, 'getHorarioAll']);
+    Route::post('/horarios', [AjustesPlanillasController::class, 'storeHorarios']);
+    Route::put('/horarios/{id}', [AjustesPlanillasController::class, 'suspendHorarios']);
+    Route::put('/horarios/activar/{id}', [AjustesPlanillasController::class, 'activarHorarios']);
+    Route::put('/horarios/editar/{id}', [AjustesPlanillasController::class, 'updateHorarios']);
 
 
     // GESTION DE PLATOS Y CATEGORIAS
