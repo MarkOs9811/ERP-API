@@ -32,6 +32,7 @@ use App\Http\Controllers\Api\EventosController;
 use App\Http\Controllers\Api\FacturacionSunatController;
 use App\Http\Controllers\Api\FinanzasController;
 use App\Http\Controllers\api\GoogleCalendarController;
+use App\Http\Controllers\Api\MesasController;
 use App\Http\Controllers\Api\NotificacionesController;
 use App\Http\Controllers\api\PedidosWebController;
 use App\Http\Controllers\Api\PeriodoNominaController;
@@ -146,6 +147,16 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::post('/misSolicitudes', [SolicitudesController::class, 'registrarSolicitud']);
     Route::post('/misSolicitudes/solicitudAddExterna', [SolicitudesController::class, 'solicitudAddExterna']);
 
+
+    // CRUD PARA GESTION DE MESAS
+    Route::get('/mesasAll', [MesasController::class, 'getMesasAll']);
+    Route::put('/mesas/{id}', [MesasController::class, 'updateMesa']);
+    Route::post('/mesas', [MesasController::class, 'storeMesa']);
+    Route::delete('/mesas/{id}', [MesasController::class, 'deleteMesas']);
+
+
+
+    // =========================FIN RUTAS DE VENTAS====================================
 
     // RUTAS PARA COMPRAS 
     Route::get('/compras', [ComprasController::class, 'getCompras']);
