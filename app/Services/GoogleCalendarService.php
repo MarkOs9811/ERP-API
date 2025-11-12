@@ -3,7 +3,7 @@
 namespace App\Services;
 
 use App\Helpers\ConfiguracionHelper;
-use App\Models\User;
+// ¡YA NO USAMOS App\Models\User!
 use Google_Client;
 use Google\Service\Calendar as GoogleCalendar;
 use Google\Service\Calendar\Event as GoogleCalendarEvent;
@@ -14,56 +14,65 @@ class GoogleCalendarService
     protected $client;
     protected $service;
 
-    public function __construct(User $user)
+    // --- ¡CAMBIO #1: Constructor sin Usuario! ---
+    public function __construct()
     {
+        // 1. Obtener todas las credenciales desde la fila "Google Service"
+        // (Corregido 'google' a 'Google Service')
+        $clientId     = ConfiguracionHelper::valor1('Google Service');
+        $clientSecret = ConfiguracionHelper::valor2('Google Service');
+        $redirectUri  = ConfiguracionHelper::valor3('Google Service');
+        $refreshToken = ConfiguracionHelper::valor4('Google Service'); // <-- Leemos de valor4
 
-        config([
-            'services.google.client_id' => ConfiguracionHelper::valor1('google'),
-            'services.google.client_secret' => ConfiguracionHelper::valor2('google'),
-            'services.google.redirect' => ConfiguracionHelper::valor3('google'),
-        ]);
+        if (!$clientId || !$clientSecret || !$redirectUri) {
+            Log::error('Faltan credenciales de Google (ID, Secreto o Redirect URI) en la configuración.');
+            throw new \Exception('Credenciales de Google no configuradas.');
+        }
+
+        if (!$refreshToken) {
+            Log::error("Google Refresh Token no está configurado en 'valor4' de 'Google Service'");
+            throw new \Exception("Google Refresh Token no está configurado.");
+        }
+
+        // 2. Configurar el Google Client
         $this->client = new Google_Client();
-        $this->client->setClientId(config('services.google.client_id'));
-        $this->client->setClientSecret(config('services.google.client_secret'));
-        $this->client->setRedirectUri(config('services.google.redirect'));
+        $this->client->setClientId($clientId);
+        $this->client->setClientSecret($clientSecret);
+        $this->client->setRedirectUri($redirectUri);
         $this->client->setAccessType('offline');
-        $this->client->setPrompt('consent select_account');
-        $this->client->setScopes([
+        $this->client->setScopes([ // Tus scopes están bien
             'https://www.googleapis.com/auth/calendar',
             'https://www.googleapis.com/auth/calendar.events',
             'email',
             'profile'
         ]);
 
-        // Establecer el token actual
-        $this->client->setAccessToken([
-            'access_token' => $user->google_token,
-            'refresh_token' => $user->google_refresh_token,
-            'expires_in' => 3600,
-            'created' => time(),
-        ]);
+        // --- ¡CAMBIO #2: Autenticación Centralizada ---
+        // Ya no leemos el token del usuario.
+        // Siempre refrescamos usando el token central.
+        try {
+            $this->client->fetchAccessTokenWithRefreshToken($refreshToken);
 
-        // Si el token ha expirado, obtener uno nuevo
-        if ($this->client->isAccessTokenExpired()) {
-            $newToken = $this->client->fetchAccessTokenWithRefreshToken($user->google_refresh_token);
-
-            if (isset($newToken['error'])) {
-                Log::error('Error al renovar el token', ['error' => $newToken['error_description']]);
-                throw new \Exception('No se pudo obtener un nuevo access token.');
+            // (Opcional) Si Google da un *nuevo* refresh token, lo guardamos
+            $newToken = $this->client->getAccessToken();
+            if (isset($newToken['refresh_token']) && $newToken['refresh_token'] !== $refreshToken) {
+                Log::info('Google emitió un nuevo Refresh Token (Calendar). Guardando en valor4.');
+                // Asumimos que tienes 'guardarValorColumna' en tu helper
+                ConfiguracionHelper::guardarValorColumna('Google Service', 'valor4', $newToken['refresh_token']);
             }
-
-            $user->update([
-                'google_token' => $newToken['access_token'],
-                'token_created_at' => now(),
-                'google_refresh_token' => $newToken['refresh_token'] ?? $user->google_refresh_token,
-            ]);
-            $this->client->setAccessToken($newToken);
+        } catch (\Exception $e) {
+            Log::error('Error al renovar el token central de Google (Calendar): ' . $e->getMessage());
+            throw new \Exception('No se pudo autenticar con Google: ' . $e->getMessage());
         }
 
+        // --- ¡CAMBIO #3: Eliminar lógica de $user->update() ---
+        // Ya no es necesario.
 
         $this->service = new GoogleCalendar($this->client);
     }
 
+    // --- ¡SIN CAMBIOS AQUÍ! ---
+    // Esta función ya estaba perfecta.
     public function createEvent($summary, $description, $start, $end, $attendees = [], $calendarId = 'primary')
     {
         $event = new GoogleCalendarEvent([
@@ -76,6 +85,7 @@ class GoogleCalendarService
 
         return $this->service->events->insert($calendarId, $event, ['sendUpdates' => 'all']);
     }
+
 
     public function listEvents($calendarId = 'primary')
     {

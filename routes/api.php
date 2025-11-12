@@ -59,8 +59,6 @@ Route::post('/logout', [AuthController::class, 'logout'])->middleware('auth:sanc
 Route::get('/auth/google/redirect', [GoogleController::class, 'redirectToGoogle']);
 Route::get('/auth/google/callback', [GoogleController::class, 'handleGoogleCallback']);
 
-// PARA VALDIAR LOS DATOS DE GOOGLE
-Route::middleware('auth:sanctum')->get('/loginGoogle', [GoogleController::class, 'datosLoginGoogle']);
 
 // PARA CREAR EVENTSO CON SERVICIO DE GOOGLE CALENDAR
 Route::middleware('auth:sanctum')->post('/crear-evento', [GoogleCalendarController::class, 'crearEvento']);

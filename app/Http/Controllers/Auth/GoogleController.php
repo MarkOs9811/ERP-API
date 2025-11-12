@@ -36,6 +36,12 @@ class GoogleController extends Controller
                 'access_type' => 'offline',
                 'prompt' => 'consent',
             ])
+            ->scopes([
+                'https://www.googleapis.com/auth/calendar',
+                'https://www.googleapis.com/auth/spreadsheets',
+                'https://www.googleapis.com/auth/userinfo.email', // <-- Sigue pidiendo el email
+                'https://www.googleapis.com/auth/userinfo.profile', // <-- Sigue pidiendo el perfil
+            ])
             ->redirect();
     }
 
@@ -43,7 +49,8 @@ class GoogleController extends Controller
     {
         try {
             $frontendUrl = env('FRONTEND_URL', 'http://localhost:3000');
-            // Volver a sobrescribir la configuración por si el ciclo de vida de la petición cambió
+
+            // 1. Configuración de Socialite (usando tu Helper)
             $clientId = ConfiguracionHelper::valor1('Google Service');
             $clientSecret = ConfiguracionHelper::valor2('Google Service');
             $redirectUri = ConfiguracionHelper::valor3('Google Service');
@@ -54,93 +61,36 @@ class GoogleController extends Controller
                 'services.google.redirect' => $redirectUri,
             ]);
 
-            $googleUser = Socialite::driver('google')
-                ->stateless()
-                ->with([
-                    'access_type' => 'offline', // Para obtener el refresh_token
-                    'prompt' => 'consent'     // Importante para que se soliciten los nuevos scopes
-                ])
-                ->user();
+            $googleUser = Socialite::driver('google')->stateless()->user();
+            $refreshToken = $googleUser->refreshToken;
 
-            Log::debug('===========================================');
-
-            // Buscar usuario existente
-            $user = User::where('email', $googleUser->getEmail())->first();
-
-            if (!$user) {
-                return redirect("$frontendUrl/login?error=UsuarioNoRegistrado");
+            if (!$refreshToken) {
+                Log::error('No se recibió Refresh Token de Google.');
+                return redirect("$frontendUrl/configuracion/integraciones?google_auth=failed&error=NoRefreshToken");
             }
 
-            if ($user->auth_type !== 'google Oauth2') {
-                return redirect("$frontendUrl/login?error=TipoAutenticacionInvalido");
+            // 2. Lógica de guardado en 'valor 4' (tu código es correcto)
+            $config = Configuraciones::where('nombre', 'Google Service')->first();
+
+            if (!$config) {
+                Log::error('No se encontró la fila de configuración "Google Service"');
+                return redirect("$frontendUrl/configuracion/integraciones?google_auth=failed&error=ConfigNotFound");
             }
-            // Guardar tokens
-            $user->google_token = $googleUser->token;
-            $user->google_refresh_token = $googleUser->refreshToken;
-            $user->save();
 
-            $token = $user->createToken('auth_token')->plainTextToken;
+            // 3. Guardar el token en la columna 'valor 4'
+            $config->valor4 = $refreshToken;
+            $config->save();
 
-            // === LOG DEL TOKEN DE TU APP ===
-            Log::debug('Token de Laravel (Sanctum/Passport):', ['token' => $token]);
+            Log::info('Google Service autorizado. Refresh token guardado en valor 4.');
 
-            return redirect("$frontendUrl/google?token=$token");
+            // 4. Redirigimos de vuelta a la página de configuración con "éxito"
+            return redirect("$frontendUrl/configuracion/integraciones?google_auth=success");
         } catch (\Exception $e) {
-            Log::error('Error en handleGoogleCallback:', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+            Log::error('Error en handleGoogleCallback para integración:', [
+                'error' => $e->getMessage()
             ]);
-            return redirect('http://localhost:3000/login?error=GoogleAuthFailed');
+            $frontendUrl = env('FRONTEND_URL', 'http://localhost:3000');
+            return redirect("$frontendUrl/configuracion/integraciones?google_auth=failed");
         }
-    }
-
-    public function datosLoginGoogle(Request $request)
-    {
-        $googleUser = $request->user(); // Usuario autenticado con Google
-
-        // Buscar usuario por correo
-        $user = User::where('email', $googleUser->email)->first();
-        Log::debug('Usuario autenticado:', [$user]);
-
-        if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Este correo no está registrado en el sistema. Contacta al administrador.',
-            ], 403);
-        }
-
-        // Cargar relaciones necesarias
-        $user->loadMissing(['empleado.persona', 'roles', 'empleado.cargo', 'sede']);
-
-        // Verificar si tiene las relaciones esperadas
-        if (!$user->empleado || !$user->empleado->persona || $user->roles->isEmpty()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'El usuario no tiene roles asignados o no está vinculado correctamente a un empleado/persona.',
-            ], 403);
-        }
-
-        // Obtener datos de empresa y configuración
-        $empresa = MiEmpresa::first();
-
-        $configuracion = Configuraciones::where('idEmpresa', $empresa?->id)
-            ->get()
-            ->map(function ($config) {
-                return [
-                    'nombre' => $config->nombre,
-                    'estado' => $config->estado,
-                    'descripcion' => $config->descripcion,
-                ];
-            });
-
-        return response()->json([
-            'success' => true,
-            'user' => $user,
-            'roles' => $user->roles,
-            'token' => $request->bearerToken(),
-            'miEmpresa' => $empresa,
-            'caja' => $user->cajaAbierta(),
-            'configuracion' => $configuracion,
-        ]);
     }
 }

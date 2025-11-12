@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Helpers\ConfiguracionHelper;
 use Rap2hpoutre\FastExcel\FastExcel;
 use App\Http\Controllers\Controller;
 use App\Models\AdelantoSueldo;
@@ -406,40 +407,16 @@ class ReportesController extends Controller
                     ], 400);
             }
 
-            $user = Auth::user();
-            $sheetService = new GoogleSheetsService($user);
+            $sheetService = new GoogleSheetsService();
+            $spreadsheetId = $sheetService->getOrCreateSystemSpreadsheet('Reportes del Sistema');
 
-            // Verifica si el usuario tiene un ID de hoja de cálculo. Si no, crea una nueva hoja.
-            if ($user->google_spreadsheet_id) {
-                // Si el usuario ya tiene una hoja, usamos su ID
-                $spreadsheetId = $user->google_spreadsheet_id;
-                Log::info('Usando la hoja de cálculo existente con ID: ' . $spreadsheetId);
-            } else {
-                // Si no tiene una hoja, la creamos y guardamos el ID
-                $spreadsheetId = $sheetService->getOrCreateUserSpreadsheet($user);
-                Log::info('Hoja de cálculo creada con ID: ' . $spreadsheetId);
-            }
-
-            // ✅ Sobrescribir datos
-            $headers = array_values($headers); // fuerza indexado en headers
-            $filas = array_map('array_values', $filas); // fuerza indexado en cada fila
+            // 3. Preparamos y actualizamos la hoja
             $values = array_merge([$headers], $filas);
-            $values = array_values($values); // fuerza indexado en el array principal
+            $values = array_map('array_values', $values);
+            $values = array_values($values);
+            $url = $sheetService->updateSheet($spreadsheetId, $values);
 
-            // Opcional: log para depuración
-            Log::info('Headers:', $headers);
-            Log::info('Primera fila:', isset($filas[0]) ? $filas[0] : []);
-            Log::info('Values:', $values);
-
-            $url = $sheetService->updateSheet(
-                $spreadsheetId,
-                $values
-            );
-
-            return response()->json([
-                'success' => true,
-                'data' => $url
-            ]);
+            return response()->json(['success' => true, 'data' => $url]);
         } catch (\Exception $e) {
             Log::error('Error al generar reporte: ' . $e->getMessage());
             return response()->json([

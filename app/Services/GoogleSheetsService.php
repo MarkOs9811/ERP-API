@@ -2,8 +2,9 @@
 
 namespace App\Services;
 
+
 use App\Helpers\ConfiguracionHelper;
-use App\Models\User;
+// ¡Ya NO importamos App\Models\User!
 use Google_Client;
 use Google\Service\Sheets as GoogleSheets;
 use Google\Service\Drive as GoogleDrive;
@@ -17,68 +18,62 @@ class GoogleSheetsService
     protected $sheetsService;
     protected $driveService;
 
-    public function __construct(User $user)
+    // 1. CONSTRUCTOR ACTUALIZADO
+    // Ya no recibe un User, usa la configuración central
+    public function __construct()
     {
+        // Obtener credenciales desde la fila "Google Service"
+        $clientId     = ConfiguracionHelper::valor1('Google Service');
+        $clientSecret = ConfiguracionHelper::valor2('Google Service');
+        $redirectUri  = ConfiguracionHelper::valor3('Google Service');
+        $refreshToken = ConfiguracionHelper::valor4('Google Service'); // <-- Leemos de valor4
 
-        config([
-            'services.google.client_id' => ConfiguracionHelper::valor1('Google Service'),
-            'services.google.client_secret' => ConfiguracionHelper::valor2('Google Service'),
-            'services.google.redirect' => ConfiguracionHelper::valor3('Google Service'),
-        ]);
+        if (!$refreshToken) {
+            Log::error("Google Refresh Token no está configurado en 'valor4' de 'Google Service'");
+            throw new \Exception("Google Refresh Token no está configurado.");
+        }
+
         $this->client = new Google_Client();
-        $this->client->setClientId(config('services.google.client_id'));
-        $this->client->setClientSecret(config('services.google.client_secret'));
-        $this->client->setRedirectUri(config('services.google.redirect'));
+        $this->client->setClientId($clientId);
+        $this->client->setClientSecret($clientSecret);
+        $this->client->setRedirectUri($redirectUri);
         $this->client->setAccessType('offline');
-        $this->client->setPrompt('consent select_account');
-
-        // Esto es CLAVE: debe coincidir con los scopes de services.php
         $this->client->setScopes(config('services.google.scopes'));
 
-        // Set token
-        $this->client->setAccessToken([
-            'access_token' => $user->google_token,
-            'refresh_token' => $user->google_refresh_token,
-            'expires_in' => 3600,
-            'created' => time(),
-        ]);
+        // Refrescar el token de acceso
+        try {
+            $this->client->fetchAccessTokenWithRefreshToken($refreshToken);
 
-        // Refresh token if expired
-        if ($this->client->isAccessTokenExpired()) {
-            $newToken = $this->client->fetchAccessTokenWithRefreshToken($user->google_refresh_token);
-
-            if (isset($newToken['error'])) {
-                Log::error('Error al renovar el token', ['error' => $newToken['error_description']]);
-                throw new \Exception('No se pudo obtener un nuevo access token.');
+            // (Opcional) Si Google da un *nuevo* refresh token, lo guardamos
+            $newToken = $this->client->getAccessToken();
+            if (isset($newToken['refresh_token']) && $newToken['refresh_token'] !== $refreshToken) {
+                Log::info('Google emitió un nuevo Refresh Token. Guardando en valor4.');
+                ConfiguracionHelper::guardarValorColumna('Google Service', 'valor4', $newToken['refresh_token']);
             }
-
-            $user->update([
-                'google_token' => $newToken['access_token'],
-                'token_created_at' => now(),
-                'google_refresh_token' => $newToken['refresh_token'] ?? $user->google_refresh_token,
-            ]);
-            $this->client->setAccessToken($newToken);
+        } catch (\Exception $e) {
+            Log::error('Error al renovar el token central de Google: ' . $e->getMessage());
+            throw new \Exception('No se pudo autenticar con Google: ' . $e->getMessage());
         }
 
         $this->sheetsService = new GoogleSheets($this->client);
         $this->driveService = new GoogleDrive($this->client);
     }
 
-    /**
-     * Crea una hoja de cálculo y escribe los datos proporcionados.
-     */
-    public function getOrCreateUserSpreadsheet(User $user, string $defaultTitle = 'Hoja de Reporte')
+    // 2. FUNCIÓN "OBTENER O CREAR" ACTUALIZADA
+    // Esta es la lógica que querías, adaptada al sistema central
+    public function getOrCreateSystemSpreadsheet(string $defaultTitle = 'Hoja de Reportes del Sistema')
     {
-        // Si el usuario ya tiene una hoja, se usa su ID.
-        if ($user->google_spreadsheet_id) {
-            // El usuario ya tiene una hoja, asegurarse de devolver el ID correcto.
-            Log::info('El usuario ya tiene una hoja de cálculo. ID: ' . $user->google_spreadsheet_id);
-            return $user->google_spreadsheet_id;
+        // 1. Busca el ID en la columna 'clave' de 'Google Service'
+        $spreadsheetId = ConfiguracionHelper::clave('Google Service');
+
+        if ($spreadsheetId) {
+            Log::info('Usando la hoja de cálculo central existente. ID: ' . $spreadsheetId);
+            return $spreadsheetId;
         }
 
-        // Si no tiene, se crea una nueva hoja.
+        // 2. Si no existe (es NULL), creamos una nueva hoja.
         try {
-            Log::info('Creando una nueva hoja de cálculo para el usuario.');
+            Log::info('Creando una nueva hoja de cálculo central para el sistema.');
 
             $spreadsheet = new \Google_Service_Sheets_Spreadsheet([
                 'properties' => ['title' => $defaultTitle]
@@ -87,29 +82,30 @@ class GoogleSheetsService
             $spreadsheet = $this->sheetsService->spreadsheets->create($spreadsheet);
             $spreadsheetId = $spreadsheet->spreadsheetId;
 
-            // Verifica que el ID de la hoja sea correcto antes de guardarlo
             if (!$spreadsheetId) {
-                Log::error('Error al obtener el ID de la hoja de cálculo.');
+                Log::error('Error al obtener el ID de la hoja de cálculo creada.');
                 throw new \Exception('Error al obtener el ID de la hoja de cálculo.');
             }
 
-            // Guardar el ID en la base de datos del usuario
-            $user->update([
-                'google_spreadsheet_id' => $spreadsheetId
-            ]);
+            // 3. Guardar el ID en la 'clave' de la config
+            // (Asegúrate de tener 'guardarValorColumna' en tu Helper)
+            ConfiguracionHelper::guardarValorColumna(
+                'Google Service', // Fila
+                'clave',          // Columna
+                $spreadsheetId   // Valor
+            );
 
-            Log::info('Hoja de cálculo creada con éxito. ID: ' . $spreadsheetId);
-
+            Log::info('Hoja de cálculo central creada con éxito. ID: ' . $spreadsheetId);
             return $spreadsheetId;
         } catch (\Exception $e) {
-            // Manejo de errores si algo falla al crear la hoja
-            Log::error('Error al crear la hoja de cálculo para el usuario: ' . $e->getMessage());
-            throw $e; // Lanzar el error para que el sistema lo maneje
+            Log::error('Error al crear la hoja de cálculo central: ' . $e->getMessage());
+            throw $e;
         }
     }
 
 
-
+    // 3. TU FUNCIÓN 'updateSheet'
+    // Esta es tu función original, ¡no necesita cambios!
     public function updateSheet(string $spreadsheetId, array $values)
     {
         Log::info('Actualizando la hoja de cálculo con ID: ' . $spreadsheetId);
@@ -121,20 +117,16 @@ class GoogleSheetsService
         // 2. Limpiar completamente todo el contenido de la hoja
         try {
             Log::info("Limpiando completamente la hoja de cálculo (ID hoja: $sheetId)");
-
             $batchUpdateRequest = new \Google_Service_Sheets_BatchUpdateSpreadsheetRequest([
                 'requests' => [
                     [
                         'updateCells' => [
-                            'range' => [
-                                'sheetId' => $sheetId,
-                            ],
+                            'range' => ['sheetId' => $sheetId],
                             'fields' => '*'
                         ]
                     ]
                 ]
             ]);
-
             $this->sheetsService->spreadsheets->batchUpdate($spreadsheetId, $batchUpdateRequest);
             Log::info('Contenido anterior eliminado correctamente.');
         } catch (\Exception $e) {
@@ -143,18 +135,16 @@ class GoogleSheetsService
 
         // 3. Cargar los nuevos encabezados y filas
         try {
-            $range = 'A1'; // Siempre se escribirá desde A1
+            $range = 'A1';
             $body = new \Google_Service_Sheets_ValueRange([
                 'values' => $values
             ]);
-
-            $response = $this->sheetsService->spreadsheets_values->update(
+            $this->sheetsService->spreadsheets_values->update(
                 $spreadsheetId,
                 $range,
                 $body,
                 ['valueInputOption' => 'RAW']
             );
-
             Log::info('Datos nuevos escritos correctamente.');
         } catch (\Exception $e) {
             Log::error('Error al escribir nuevos datos en la hoja: ' . $e->getMessage());

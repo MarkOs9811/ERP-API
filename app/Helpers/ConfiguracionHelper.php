@@ -3,6 +3,7 @@
 namespace App\Helpers;
 
 use App\Models\Configuraciones;
+use Illuminate\Support\Facades\Log;
 
 class ConfiguracionHelper
 {
@@ -55,6 +56,41 @@ class ConfiguracionHelper
     public static function valor4($nombreConfig, $idEmpresa = null)
     {
         $config = self::get($nombreConfig, $idEmpresa);
-        return $config?->valor3;
+        return $config?->valor4;
+    }
+    public static function guardarValorColumna($nombreConfig, $columna, $valor, $idEmpresa = null)
+    {
+        try {
+            $config = self::get($nombreConfig, $idEmpresa);
+
+            if ($config) {
+                $config->{$columna} = $valor;
+                $config->save();
+                return true;
+            }
+            return false;
+        } catch (\Exception $e) {
+            Log::error("Error al guardar $columna en $nombreConfig: " . $e->getMessage());
+            return false;
+        }
+    }
+    public static function crearOActualizarValor($nombreConfig, $columna, $valor, $idEmpresa = null)
+    {
+        try {
+            // updateOrCreate buscará la fila y la actualizará, o la creará si no existe
+            Configuraciones::updateOrCreate(
+                [
+                    'nombre' => $nombreConfig,
+                    'idEmpresa' => $idEmpresa
+                ],
+                [
+                    $columna => $valor
+                ]
+            );
+            return true;
+        } catch (\Exception $e) {
+            Log::error("Error en crearOActualizarValor para $nombreConfig: " . $e->getMessage());
+            return false;
+        }
     }
 }

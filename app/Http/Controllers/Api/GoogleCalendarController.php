@@ -20,31 +20,29 @@ class GoogleCalendarController extends Controller
                 'datos_recibidos' => $request->all(),
             ]);
 
-            $user = Auth::user();
+            $user = Auth::user(); // <-- ¡Esto se queda! Lo necesitas para 'Evento::create'
 
             $request->validate([
                 'summary' => 'required|string',
                 'description' => 'nullable|string',
-                'start' => 'required|date',
-                'end' => 'required|date|after:start',
+                'start' => 'required|date_format:Y-m-d\TH:i',
+                'end' => 'required|date_format:Y-m-d\TH:i|after:start',
                 'attendees' => 'nullable|array',
                 'attendees.*' => 'email'
             ]);
 
             Log::info('✅ Validación correcta, creando servicio de GoogleCalendar');
 
-            $calendar = new GoogleCalendarService($user);
+            // --- ¡ESTE ES EL ÚNICO CAMBIO EN ESTE ARCHIVO! ---
+            // Ya no le pasamos el $user, usará el token central
+            $calendar = new GoogleCalendarService();
+            // ------------------------------------------------
 
-            Log::info('🔁 Enviando datos al API de Google Calendar...', [
-                'summary' => $request->summary,
-                'description' => $request->description,
-                'start' => $request->start,
-                'end' => $request->end,
-                'attendees' => $request->attendees,
-            ]);
+            Log::info('🔁 Enviando datos al API de Google Calendar...');
             $start = Carbon::parse($request->start)->toRfc3339String();
             $end = Carbon::parse($request->end)->toRfc3339String();
 
+            // Esta lógica de $calendar->createEvent() no cambia
             $evento = $calendar->createEvent(
                 $request->summary,
                 $request->description,
@@ -52,13 +50,15 @@ class GoogleCalendarController extends Controller
                 $end,
                 $request->attendees ?? []
             );
+
+            // Esta lógica de Evento::create() no cambia
             Evento::create([
-                'idUsuario' => $user->id,
+                'idUsuario' => $user->id, // <-- Por esto mantuvimos $user
                 'google_event_id' => $evento->getId(),
                 'summary' => $request->summary,
                 'description' => $request->description,
-                'start' =>   $start,
-                'end' =>   $end,
+                'start' =>  $start,
+                'end' =>  $end,
                 'attendees' => json_encode($request->attendees),
                 'status' => $evento->getStatus(),
                 'html_link' => $evento->htmlLink

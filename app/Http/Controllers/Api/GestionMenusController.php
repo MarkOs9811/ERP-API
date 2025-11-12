@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Categoria;
 use App\Models\CategoriaPlato;
 use App\Models\Plato;
+use App\Traits\EmpresaSedeValidation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -14,6 +15,8 @@ use Illuminate\Validation\ValidationException;
 
 class GestionMenusController extends Controller
 {
+
+    use EmpresaSedeValidation;
     public function getCategoria()
     {
         try {
@@ -157,7 +160,12 @@ class GestionMenusController extends Controller
     {
         try {
             $validated = $request->validate([
-                'nombre' => 'required|string|max:255',
+                'nombre' => ([
+                    'required',
+                    'string',
+                    'max:255',
+                    $this->uniqueEmpresaSede('platos', 'nombre'),
+                ]),
                 'precio' => 'numeric|required|min:0',
                 'descripcion' => 'string|max:255',
                 'categoria' => 'required|numeric|exists:categoria_platos,id',
@@ -199,7 +207,7 @@ class GestionMenusController extends Controller
                     'required',
                     'string',
                     'max:255',
-                    Rule::unique('platos', 'nombre')->ignore($id),
+                    $this->uniqueEmpresaSede('platos', 'nombre', $id),
                 ],
                 'descripcion' => 'required|string|max:500',
                 'precio' => 'required|numeric|min:0',
