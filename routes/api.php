@@ -80,10 +80,6 @@ Route::get('/sunat/enviar-factura', [FacturacionSunatController::class, 'generar
 Route::get('/reporteVentas', [ReportesController::class, 'reporteVentasExcel']);
 Route::get('/cajas2', [CajaController::class, 'getCajas']);
 
-
-
-
-
 // RUTA DE PRUEBA SIN AUTH
 Route::get('/comprasAll', [ComprasController::class, 'getCompras']);
 
@@ -243,6 +239,10 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     // RUTAS PAARA SEDES
     Route::get('/sedesAll', [SedesController::class, 'getSedes']);
+    Route::post('/sedes', [SedesController::class, 'saveSedes']);
+    Route::put('/sedes/{id}', [SedesController::class, 'upDateSedes']);
+    Route::put('/sedesDesactivar/{id}', [SedesController::class, 'desactivarSede']);
+    Route::put('/sedesActivar/{id}', [SedesController::class, 'activarSede']);
 
 
     // RUTAS PARA CARGOS Y ROLES
@@ -442,3 +442,8 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::get('/reporteKardexExcelSalida', [ReportesController::class, 'reporteKardexSalida']);
     Route::get('/reporteKardexExcelEntrada', [ReportesController::class, 'reporteKardexEntrada']);
 });
+
+
+// LOGIN Y CRUD PARA EL SUPERADMIN
+
+Route::post('/login/superadmin', [AuthController::class, 'loginSuperAdmin'])->name('login');

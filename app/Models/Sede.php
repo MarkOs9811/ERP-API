@@ -9,18 +9,24 @@ use Illuminate\Database\Eloquent\Model;
 class Sede extends Model
 {
     use HasFactory;
+
+    protected $fillable = [
+        'codigo',
+        'nombre',
+        'direccion',
+        'telefono',
+        'idEmpresa',
+    ];
     protected static function booted()
     {
         static::addGlobalScope(new EmpresaScope);
 
-        static::creating(function ($venta) {
+        static::creating(function ($sedes) {
             $user = auth()->user();
 
             if ($user) {
-
-
-                if (empty($venta->idEmpresa)) {
-                    $venta->idEmpresa = $user->idEmpresa;
+                if (empty($sedes->idEmpresa)) {
+                    $sedes->idEmpresa = $user->idEmpresa;
                 }
             }
         });
