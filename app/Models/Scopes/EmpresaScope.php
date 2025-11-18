@@ -15,7 +15,13 @@ class EmpresaScope implements Scope
     public function apply(Builder $builder, Model $model): void
     {
         $user = Auth::user();
-        if ($user && $user->idEmpresa) {
+        if (!$user) {
+            return;
+        }
+        if ($user->isAdmin == 1) {
+            return;
+        }
+        if ($user->idEmpresa) {
             $builder->where($model->getTable() . '.idEmpresa', $user->idEmpresa);
         }
     }

@@ -28,6 +28,7 @@ use App\Http\Controllers\api\UnidadController;
 use App\Http\Controllers\Api\VenderController;
 use App\Http\Controllers\api\VentasController;
 use App\Http\Controllers\api\ComprasController;
+use App\Http\Controllers\Api\EmpresasAdminController;
 use App\Http\Controllers\Api\EventosController;
 use App\Http\Controllers\Api\FacturacionSunatController;
 use App\Http\Controllers\Api\FinanzasController;
@@ -447,3 +448,11 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 // LOGIN Y CRUD PARA EL SUPERADMIN
 
 Route::post('/login/superadmin', [AuthController::class, 'loginSuperAdmin'])->name('login');
+Route::middleware('auth:sanctum', 'throttle:api')->group(
+    function () {
+        Route::get('/superadmin/empresas', [EmpresasAdminController::class, 'getEmpresas']);
+        Route::post('/superadmin/empresas', [AuthController::class, 'storeEmpresa']);
+        Route::put('/superadmin/empresas/{id}', [AuthController::class, 'updateEmpresa']);
+        Route::delete('/superadmin/empresas/{id}', [AuthController::class, 'deleteEmpresa']);
+    }
+);

@@ -9,6 +9,25 @@ class MiEmpresa extends Model
 {
     use HasFactory;
     protected $fillable = [
-        'nombre', 'ruc', 'logo', 'numero', 'correo', 'direccion',
+        'nombre',
+        'ruc',
+        'logo',
+        'numero',
+        'correo',
+        'direccion',
     ];
+
+    public function usuarios()
+    {
+        return $this->hasMany(User::class, 'idEmpresa', 'id');
+    }
+
+    public function sedes()
+    {
+        return $this->hasMany(Sede::class, 'idEmpresa', 'id');
+    }
+    public function configuraciones()
+    {
+        return $this->hasMany(Configuraciones::class, 'idEmpresa', 'id');
+    }
 }
