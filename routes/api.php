@@ -451,7 +451,7 @@ Route::post('/login/superadmin', [AuthController::class, 'loginSuperAdmin'])->na
 Route::middleware('auth:sanctum', 'throttle:api')->group(
     function () {
         Route::get('/superadmin/empresas', [EmpresasAdminController::class, 'getEmpresas']);
-        Route::post('/superadmin/empresas', [AuthController::class, 'storeEmpresa']);
+        Route::post('/superadmin/empresas', [EmpresasAdminController::class, 'storeEmpresa']);
         Route::put('/superadmin/empresas/{id}', [AuthController::class, 'updateEmpresa']);
         Route::delete('/superadmin/empresas/{id}', [AuthController::class, 'deleteEmpresa']);
     }
