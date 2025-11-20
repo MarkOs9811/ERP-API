@@ -7,6 +7,7 @@ use App\Models\MiEmpresa;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class AuthController extends Controller
@@ -21,73 +22,85 @@ class AuthController extends Controller
                 'password' => 'required',
             ]);
 
-            Log::info('Credenciales validadas', $credentials);
-
+            // 1. Buscar usuario
             $user = User::where('email', $credentials['email'])->first();
 
             if (!$user) {
-                Log::warning('Usuario no encontrado', ['email' => $credentials['email']]);
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Usuario no encontrado',
-                ], 404);
+                return response()->json(['success' => false, 'message' => 'Usuario no encontrado'], 404);
             }
 
-            Log::info('Usuario encontrado', ['id' => $user->id, 'auth_type' => $user->auth_type]);
-
+            // 2. Validar tipo de autenticación
             if ($user->auth_type !== 'manual') {
-                Log::warning('Intento de login con método incorrecto', [
-                    'id' => $user->id,
-                    'esperado' => 'manual',
-                    'recibido' => $user->auth_type
-                ]);
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Este usuario debe iniciar sesión con Google',
-                ], 403);
+                return response()->json(['success' => false, 'message' => 'Este usuario debe iniciar sesión con Google'], 403);
             }
 
+            // 3. Validar contraseña
             if (!Auth::attempt($credentials)) {
-                Log::warning('Credenciales inválidas', ['email' => $credentials['email']]);
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Credenciales inválidas',
-                ], 401);
+                return response()->json(['success' => false, 'message' => 'Credenciales inválidas'], 401);
             }
 
-            Log::info('Auth::attempt correcto', ['id' => Auth::id()]);
+            // 4. Cargar usuario con relaciones necesarias
+            $user = User::with('empleado.persona', 'empleado.cargo', 'roles')->find(Auth::id());
 
-            $user = User::with('empleado.persona', 'empleado.cargo', 'sede')->find(Auth::id());
+            // 5. Obtener la empresa del usuario
+            // NOTA: Si es SuperAdmin (isAdmin=1), quizás no tiene idEmpresa o ve todo.
+            // Aquí asumimos lógica para usuarios normales de empresa.
+            $empresa = null;
+            $rolesEfectivos = collect([]);
+
+            if ($user->idEmpresa) {
+                $empresa = MiEmpresa::find($user->idEmpresa);
+
+                if (!$empresa) {
+                    return response()->json(['success' => false, 'message' => 'Empresa no válida o desactivada'], 403);
+                }
+
+                // Si la empresa misma está inactiva, bloquear acceso
+                if ($empresa->estado == 0) { // Asumiendo que 0 es inactivo
+                    return response()->json(['success' => false, 'message' => 'Su empresa se encuentra inactiva. Contacte soporte.'], 403);
+                }
+
+
+                $rolesEmpresaIds = DB::table('empresa_roles')
+                    ->where('idEmpresa', $empresa->id)
+                    ->where('estado', 1) // Solo módulos activos/pagados
+                    ->where(function ($query) {
+                        // Y que no hayan expirado
+                        $query->whereNull('fecha_expiracion')
+                            ->orWhere('fecha_expiracion', '>=', now());
+                    })
+                    ->pluck('idRole')
+                    ->toArray();
+
+
+                $rolesEfectivos = $user->roles->filter(function ($role) use ($rolesEmpresaIds) {
+                    return in_array($role->id, $rolesEmpresaIds);
+                })->values();
+            } else {
+
+                if ($user->isAdmin == 1) {
+                    $rolesEfectivos = $user->roles;
+                }
+            }
 
             /** @var \App\Models\User $user */
             $token = $user->createToken('accessToken')->plainTextToken;
-            $empresa = MiEmpresa::first();
-            $caja = $user->cajaAbierta(); // puede ser null, y está bien
+            $caja = $user->cajaAbierta();
 
-            Log::info('Login exitoso', [
-                'id' => $user->id,
-                'caja_id' => $caja?->id
-            ]);
+            Log::info('Login exitoso', ['id' => $user->id, 'empresa' => $empresa?->id]);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Login exitoso',
                 'user' => $user,
-                'roles' => $user->roles,
+                'roles' => $rolesEfectivos, // ENVIAMOS SOLO LOS ROLES VALIDADOS
                 'token' => $token,
-                'caja' => $caja, // null o caja abierta
+                'caja' => $caja,
                 'empresa' => $empresa,
             ], 200);
         } catch (\Throwable $e) {
-            Log::error('Error en login', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Ocurrió un error en el login',
-            ], 500);
+            Log::error('Error en login', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            return response()->json(['success' => false, 'message' => 'Ocurrió un error en el login'], 500);
         }
     }
     public function logout(Request $request)

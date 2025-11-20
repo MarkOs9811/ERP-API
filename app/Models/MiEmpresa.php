@@ -30,4 +30,11 @@ class MiEmpresa extends Model
     {
         return $this->hasMany(Configuraciones::class, 'idEmpresa', 'id');
     }
+
+    public function roles()
+    {
+        return $this->belongsToMany(Role::class, 'empresa_roles', 'idEmpresa', 'idRole')
+            ->withPivot('estado', 'fecha_expiracion')
+            ->withTimestamps();
+    }
 }

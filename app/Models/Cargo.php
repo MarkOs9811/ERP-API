@@ -8,7 +8,13 @@ use Illuminate\Database\Eloquent\Model;
 class Cargo extends Model
 {
     use HasFactory;
-    protected $fillable = ['nombre'];
+    protected $fillable = [
+        'idEmpresa',
+        'nombre',
+        'salario',
+        'pagoPorHoras',
+        'estado',
+    ];
 
     public function roles()
     {

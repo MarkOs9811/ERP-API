@@ -9,6 +9,12 @@ use Illuminate\Database\Eloquent\Model;
 class Horario extends Model
 {
     use HasFactory;
+    protected $fillable = [
+        'idEmpresa',
+        'horaEntrada',
+        'horaSalida',
+        'estado',
+    ];
     protected static function booted()
     {
         static::addGlobalScope(new EmpresaScope);
