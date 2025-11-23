@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Scopes\EmpresaScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
@@ -34,5 +35,21 @@ class Cargo extends Model
     public function users()
     {
         return $this->hasMany(User::class);
+    }
+    protected static function booted()
+    {
+        static::addGlobalScope(new EmpresaScope);
+
+
+        static::creating(function ($cargo) {
+            $user = auth()->user();
+
+            if ($user) {
+
+                if (empty($cargo->idEmpresa)) {
+                    $cargo->idEmpresa = $user->idEmpresa;
+                }
+            }
+        });
     }
 }

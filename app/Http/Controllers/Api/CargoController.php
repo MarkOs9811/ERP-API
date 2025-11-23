@@ -5,12 +5,16 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Cargo;
 use App\Models\Role;
+use App\Traits\EmpresaValidation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 
 class CargoController extends Controller
+
 {
+    use EmpresaValidation;
     public function getCargos()
     {
         try {
@@ -20,7 +24,7 @@ class CargoController extends Controller
             return response()->json(['error' => 'Error al obtener los Cargos', 'message' => $e->getMessage()], 500);
         }
     }
-    
+
     public function getRolesAll()
     {
         try {
@@ -31,9 +35,6 @@ class CargoController extends Controller
                 'cargos',
                 'rolUsers.permisos' // accede a permisos a través del modelo RoleUser
             ])->get();
-
-
-
 
             return response()->json([
                 'success' => true,
@@ -65,7 +66,13 @@ class CargoController extends Controller
         try {
             // Validación
             $validator = Validator::make($request->all(), [
-                'nombre' => 'required|string|regex:/^[A-Za-zÁÉÍÓÚáéíóúÑñ\s]+$/',
+                'nombre' => ([
+                    'required',
+                    'string',
+                    'regex:/^[A-Za-zÁÉÍÓÚáéíóúÑñ\s]+$/',
+                    $this->uniqueEmpresa('cargos', 'nombre')
+
+                ]),
                 'salario' => 'required|numeric|min:0',
                 'pagoPorHoras' => 'required|numeric|min:0',
                 'rolerCar' => 'required|array',
@@ -78,10 +85,10 @@ class CargoController extends Controller
                     'errors' => $validator->errors()
                 ], 422);
             }
-
+            $nombreLimpio = Str::lower(Str::ascii($request->nombre));
             // Guardar el cargo
             $cargo = new Cargo();
-            $cargo->nombre = $request->nombre;
+            $cargo->nombre = $nombreLimpio;
             $cargo->salario = $request->salario;
             $cargo->pagoPorHoras = $request->pagoPorHoras;
             $cargo->save();
@@ -102,7 +109,13 @@ class CargoController extends Controller
         try {
             $validator = Validator::make($request->all(), [
                 'idCargo' => 'required|integer|exists:cargos,id',
-                'nombre' => 'required|string|regex:/^[A-Za-zÁÉÍÓÚáéíóúÑñ\s]+$/|unique:cargos,nombre,' . $request->idCargo,
+                'nombre' => ([
+                    'required',
+                    'string',
+                    'regex:/^[A-Za-zÁÉÍÓÚáéíóúÑñ\s]+$/',
+                    $this->uniqueEmpresa('cargos', 'nombre', $request->idCargo)
+
+                ]),
                 'salario' => 'required|numeric|min:0',
                 'pagoPorHoras' => 'required|numeric|min:0',
                 'rolerCar' => 'required|array',
@@ -115,10 +128,10 @@ class CargoController extends Controller
                     'errors' => $validator->errors()
                 ], 422);
             }
-
+            $nombreLimpio = Str::lower(Str::ascii($request->nombre));
             // Buscar cargo existente
             $cargo = Cargo::findOrFail($request->idCargo);
-            $cargo->nombre = $request->nombre;
+            $cargo->nombre = $nombreLimpio;
             $cargo->salario = $request->salario;
             $cargo->pagoPorHoras = $request->pagoPorHoras;
             $cargo->save();

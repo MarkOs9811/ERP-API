@@ -229,56 +229,77 @@ class EmpresasAdminController extends Controller
             if ($request->has('estado')) $pivotData['estado'] = $request->input('estado');
             if ($request->has('fecha_expiracion')) $pivotData['fecha_expiracion'] = $request->input('fecha_expiracion');
 
-
+            // 1. Buscar Cargo Administrador
             $cargoAdmin = Cargo::where('idEmpresa', $id)
-                ->where('nombre', 'Administrador') // Ojo con mayúsculas/minúsculas en tu BD
+                ->where('nombre', 'Administrador')
+                ->first();
+
+            // 2. NUEVO: Buscar Usuario Administrador (Dueño de la empresa)
+            // Usamos withoutGlobalScopes por si quien ejecuta esto es un SuperAdmin externo
+            // Asumimos que $empresa->email es el campo de correo. Si es 'correo', cámbialo.
+            $usuarioAdmin = User::withoutGlobalScopes()
+                ->where('email', $empresa->userAdmin)
                 ->first();
 
             switch ($action) {
                 case 'attach':
-                    // 1. Asignar a la EMPRESA
+                    // A. Asignar a la EMPRESA
                     if (!$empresa->roles()->where('idRole', $roleId)->exists()) {
                         $empresa->roles()->attach($roleId, ['estado' => 1]);
                     }
 
-                    // 2. Asignar AUTOMÁTICAMENTE al CARGO ADMINISTRADOR
+                    // B. Asignar al CARGO
                     if ($cargoAdmin) {
-                        // syncWithoutDetaching evita errores si ya lo tenía
                         $cargoAdmin->roles()->syncWithoutDetaching([$roleId]);
+                    }
+
+                    // C. NUEVO: Asignar al USUARIO
+                    if ($usuarioAdmin) {
+                        $usuarioAdmin->roles()->syncWithoutDetaching([$roleId]);
                     }
                     break;
 
                 case 'detach':
-                    // 1. Quitar de la EMPRESA
+                    // A. Quitar de la EMPRESA
                     $empresa->roles()->detach($roleId);
 
-                    // 2. Quitar AUTOMÁTICAMENTE del CARGO ADMINISTRADOR
-                    // (Opcional: Si la empresa pierde el módulo, el admin tampoco debería tenerlo)
+                    // B. Quitar del CARGO
                     if ($cargoAdmin) {
                         $cargoAdmin->roles()->detach($roleId);
+                    }
+
+                    // C. NUEVO: Quitar del USUARIO
+                    if ($usuarioAdmin) {
+                        $usuarioAdmin->roles()->detach($roleId);
                     }
                     break;
 
                 case 'update_pivot':
-                    // Solo actualiza datos de la relación empresa-rol (fechas, estado)
+                    // Solo actualiza datos de la relación empresa-rol
                     $empresa->roles()->updateExistingPivot($roleId, $pivotData);
                     break;
 
                 case 'sync_all':
                     $rolesIds = $request->input('roles_ids', []);
+
+                    // A. Empresa
                     $empresa->roles()->syncWithoutDetaching($rolesIds);
 
-                    // Asignar todos al admin también
+                    // B. Cargo
                     if ($cargoAdmin) {
                         $cargoAdmin->roles()->syncWithoutDetaching($rolesIds);
+                    }
+
+                    // C. NUEVO: Usuario
+                    if ($usuarioAdmin) {
+                        $usuarioAdmin->roles()->syncWithoutDetaching($rolesIds);
                     }
                     break;
             }
 
             return response()->json([
                 'success' => true,
-                'message' => 'Módulos y permisos de Admin actualizados',
-                // No necesitamos devolver toda la data pesada aquí, el front la recargará
+                'message' => 'Módulos actualizados en Empresa, Cargo y Usuario Admin.',
                 'data' => ['id' => $empresa->id]
             ], 200);
         } catch (\Exception $e) {

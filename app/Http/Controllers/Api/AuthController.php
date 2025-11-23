@@ -39,12 +39,10 @@ class AuthController extends Controller
                 return response()->json(['success' => false, 'message' => 'Credenciales inválidas'], 401);
             }
 
-            // 4. Cargar usuario con relaciones necesarias
+            // 4. Cargar usuario con relaciones
             $user = User::with('empleado.persona', 'empleado.cargo', 'roles')->find(Auth::id());
 
-            // 5. Obtener la empresa del usuario
-            // NOTA: Si es SuperAdmin (isAdmin=1), quizás no tiene idEmpresa o ve todo.
-            // Aquí asumimos lógica para usuarios normales de empresa.
+            // 5. Lógica de Empresa y Roles Efectivos
             $empresa = null;
             $rolesEfectivos = collect([]);
 
@@ -55,35 +53,37 @@ class AuthController extends Controller
                     return response()->json(['success' => false, 'message' => 'Empresa no válida o desactivada'], 403);
                 }
 
-                // Si la empresa misma está inactiva, bloquear acceso
-                if ($empresa->estado == 0) { // Asumiendo que 0 es inactivo
+                if ($empresa->estado == 0) {
                     return response()->json(['success' => false, 'message' => 'Su empresa se encuentra inactiva. Contacte soporte.'], 403);
                 }
 
-
+                // A. Obtener IDs de roles que la empresa REALMENTE tiene activos
                 $rolesEmpresaIds = DB::table('empresa_roles')
                     ->where('idEmpresa', $empresa->id)
-                    ->where('estado', 1) // Solo módulos activos/pagados
+                    ->where('estado', 1)
                     ->where(function ($query) {
-                        // Y que no hayan expirado
                         $query->whereNull('fecha_expiracion')
                             ->orWhere('fecha_expiracion', '>=', now());
                     })
                     ->pluck('idRole')
                     ->toArray();
 
-
+                // B. FILTRADO MÁGICO: Cruzar roles del usuario con los de la empresa
                 $rolesEfectivos = $user->roles->filter(function ($role) use ($rolesEmpresaIds) {
                     return in_array($role->id, $rolesEmpresaIds);
-                })->values();
-            } else {
+                })->values(); // values() reordena los índices del array
 
+            } else {
                 if ($user->isAdmin == 1) {
                     $rolesEfectivos = $user->roles;
                 }
             }
 
-            /** @var \App\Models\User $user */
+            // 6. SOBRESCRIBIR LA RELACIÓN EN EL OBJETO USER
+            // Esto asegura que si el frontend lee user.roles, vea los filtrados.
+            $user->setRelation('roles', $rolesEfectivos);
+
+
             $token = $user->createToken('accessToken')->plainTextToken;
             $caja = $user->cajaAbierta();
 
@@ -92,8 +92,8 @@ class AuthController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Login exitoso',
-                'user' => $user,
-                'roles' => $rolesEfectivos, // ENVIAMOS SOLO LOS ROLES VALIDADOS
+                'user' => $user, // Ahora este user lleva los roles limpios dentro
+                'roles' => $rolesEfectivos,
                 'token' => $token,
                 'caja' => $caja,
                 'empresa' => $empresa,
