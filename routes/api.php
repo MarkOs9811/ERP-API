@@ -456,5 +456,9 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(
         Route::post('/superadmin/empresas', [EmpresasAdminController::class, 'storeEmpresa']);
         Route::put('/superadmin/empresas/{id}', [EmpresasAdminController::class, 'updateEmpresa']);
         Route::post('/superadmin/empresas/{id}/modulos', [EmpresasAdminController::class, 'updateEmpresaModulos']);
+
+
+        // TERMINAR TUTORIAL
+        Route::put('/superadmin/empresasSteps/complete-setup', [EmpresasAdminController::class, 'completeSetup']);
     }
 );
