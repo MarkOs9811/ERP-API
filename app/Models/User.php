@@ -66,6 +66,7 @@ class User extends Authenticatable
         return $this->belongsTo(Sede::class, 'idSede');
     }
 
+
     // ESTE METODO PERMITE NAVEGAR DESDE EMPLEADO A SUS ROLES USER
     public function rolesUsuarios()
     {

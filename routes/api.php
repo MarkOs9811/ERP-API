@@ -289,11 +289,10 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     Route::get('/nomina', [PlanillaController::class, 'getPlanilla']);
     Route::get('/nominaEmpleado/{id}', [PlanillaController::class, 'getEmpleadoPerfil']);
-    Route::post('/nomina/generarPago', [PlanillaController::class, 'generarPagosMensuales']);
     Route::post('/planilla', [PlanillaController::class, 'registroPlanillaEmpleado']);
     Route::get('/validaNomina', [PeriodoNominaController::class, 'getDatosParaResolverNomina']);
     Route::put('/periodoNomina/iniciarValidacion/{idPeriodo}', [PlanillaController::class, 'iniciarValidacion']);
-    Route::put('/periodoNomina/realizarPago/{idPeriodo}', [PlanillaController::class, 'validarNominaCompleta']);
+    Route::post('/periodoNomina/realizarPago/{idPeriodo}', [PlanillaController::class, 'validarNominaCompleta']);
 
     // RUTAS PARA ASISTENCIA
     Route::get('/asistencia', [AsistenciasController::class, 'getAsistencia']);

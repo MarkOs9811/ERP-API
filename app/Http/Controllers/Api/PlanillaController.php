@@ -329,10 +329,12 @@ class PlanillaController extends Controller
     public function getEmpleadoPerfil($idEmpleado)
     {
         try {
+
             $usuario = User::with(
                 'empleado.persona',
                 'empleado.cargo',
                 'empleado.area',
+                'empleado.pagos',
                 'empleado.contrato',
                 'empleado.horario'
             )->find($idEmpleado);
@@ -340,11 +342,17 @@ class PlanillaController extends Controller
             if (!$usuario || !$usuario->empleado) {
                 return response()->json(['success' => false, 'message' => 'Empleado no encontrado'], 404);
             }
-            $empleado = $usuario->empleado;
 
-            if (!$empleado) {
-                return null; // Evita errores si algún usuario no tiene empleado asociado
-            }
+            $empleado = $usuario->empleado;
+            $ultimoPago = $empleado->pagos->sortByDesc('fecha_pago')->first();
+
+            // Si existe un pago, sacamos los montos. Si no, enviamos 0.
+            $montoUltimaBonificacion = $ultimoPago ? $ultimoPago->bonificaciones : 0;
+            $montoUltimaDeduccion    = $ultimoPago ? $ultimoPago->deducciones : 0;
+            $sueldoNeto = $ultimoPago ? $ultimoPago->salario_neto : 0;
+            $sueldoBase    = $ultimoPago ? $ultimoPago->salario_base : 0;
+
+
 
             $diasTrabajados = $empleado->asistencias
                 ->filter(fn($a) => Carbon::parse($a->fechaEntrada)->isSameMonth(now()))
@@ -352,25 +360,30 @@ class PlanillaController extends Controller
 
             $porcentajeDiasTrabajados = min(100, ($diasTrabajados / 30) * 100);
 
-            $vacaciones = Vacacione::where('idUsuario', $usuario->id)->whereYear('fecha_inicio', Carbon::now()->year)->get();
+            $vacaciones = Vacacione::where('idUsuario', $usuario->id)
+                ->whereYear('fecha_inicio', Carbon::now()->year)
+                ->get();
 
-            // LAS BONIFICACIONES VIENES DE LA RELACION DE EMPLEADO CON BONIFICACIONES, ESTA EN TABLA PIVOT empleado_bonificaciones
-            $bonificaciones = $empleado->bonificaciones()->where('estado', 1)->get();
-            $deducciones = $empleado->deducciones()->where('estado', 1)->get();
+            // Opcional: Listas de configuración (si las necesitas)
+            $listaBonificacionesConfig = $empleado->bonificaciones()->where('estado', 1)->get();
+            $listaDeduccionesConfig = $empleado->deducciones()->where('estado', 1)->get();
 
             $data = [
                 'usuario' => $usuario,
                 'dias_trabajados' => $diasTrabajados,
                 'porcentaje_dias_trabajados' => $porcentajeDiasTrabajados,
-                'vacaciones' => $porcentajeDiasTrabajados,
                 'vacacionesContados' => $vacaciones,
-                'bonificaciones' => $bonificaciones,
-                'deducciones' => $deducciones,
+                'totalBonificaciones' => $montoUltimaBonificacion,
+                'totalDeducciones' => $montoUltimaDeduccion,
+                'bonificaciones' => $listaBonificacionesConfig,
+                'deducciones' => $listaDeduccionesConfig,
+                'sueldoBase' => $sueldoBase,
+                'sueldoNeto' => $sueldoNeto
             ];
 
             return response()->json(['success' => true, 'data' => $data], 200);
         } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'error' . $e->getMessage()], 500);
+            return response()->json(['success' => false, 'message' => 'error: ' . $e->getMessage()], 500);
         }
     }
     public function getTipoContrato()
@@ -1307,36 +1320,67 @@ class PlanillaController extends Controller
         Log::info("Iniciando SUBSANACIÓN (V-Final + HE) para Periodo ID: $idPeriodo");
 
         try {
-            DB::transaction(function () use ($idPeriodo) {
+            // ---------------------------------------------------------
+            // 1. VALIDACIÓN PREVIA (Validar Fecha sin bloquear BD)
+            // ---------------------------------------------------------
+            $periodoPreliminar = PeriodoNomina::findOrFail($idPeriodo);
 
-                // 1. Busca el periodo ABIERTO (Estado 1)
+            // Verificamos si HOY es menor a la fecha fin del periodo.
+            // Usamos startOfDay() para ignorar las horas y comparar solo fechas.
+            if (Carbon::now()->startOfDay()->lt(Carbon::parse($periodoPreliminar->fecha_fin)->startOfDay())) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "No es posible iniciar la validación. El periodo finaliza el " . Carbon::parse($periodoPreliminar->fecha_fin)->format('d/m/Y') . ". Debes esperar al cierre."
+                ], 400);
+            }
+
+            // ---------------------------------------------------------
+            // 2. INICIO DE LA TRANSACCIÓN (Proceso pesado)
+            // ---------------------------------------------------------
+            return DB::transaction(function () use ($idPeriodo) {
+
+                // A. Buscamos el periodo y lo bloqueamos para que nadie más lo toque
                 $periodo = PeriodoNomina::where('id', $idPeriodo)
-                    ->where('estado', 1)
+                    ->where('estado', 1) // Debe estar Abierto
                     ->lockForUpdate()
-                    ->firstOrFail();
+                    ->first();
 
-                // 2. Obtener Empleados en un Mapa (key = DNI)
+                if (!$periodo) {
+                    throw new \Exception("El periodo no se encuentra en estado 'Abierto' (1) o ya está siendo procesado.");
+                }
+
+                // IDs de contexto (CRUCIALES para el aislamiento de datos)
+                $idEmpresa = $periodo->idEmpresa;
+                $idSede = $periodo->idSede;
+
+                // B. Obtener Empleados FILTRADOS por Empresa y Sede
                 $mapEmpleados = Empleado::where('estado', 1)
-                    ->with(['horario', 'persona', 'usuario']) // <-- Incluimos 'usuario'
+                    ->where('idEmpresa', $idEmpresa) // <--- FILTRO DE SEGURIDAD
+                    ->where('idSede', $idSede)       // <--- FILTRO DE SEGURIDAD
+                    ->with(['horario', 'persona', 'usuario'])
                     ->get()
                     ->keyBy('persona.documento_identidad');
 
-                Log::info("Cargados " . $mapEmpleados->count() . " empleados en el mapa.");
+                Log::info("Cargados " . $mapEmpleados->count() . " empleados válidos de la Sede $idSede.");
 
-                // --- PASO 1: Subsanar Asistencias Existentes ---
+                // ---------------------------------------------------------
+                // PASO 1: Subsanar Asistencias Existentes (Completar salidas)
+                // ---------------------------------------------------------
                 $asistenciasDelPeriodo = Asistencia::where('idPeriodo', $periodo->id)->get();
-                Log::info("PASO 1: Encontradas " . $asistenciasDelPeriodo->count() . " asistencias existentes para subsanar.");
 
                 foreach ($asistenciasDelPeriodo as $asistencia) {
-
-                    // (Omitimos si el estado ya es 1, ya fue procesada)
                     if ($asistencia->estado == 1) continue;
+
+                    // Si la asistencia pertenece a un empleado que NO es de esta sede (filtro mapa), la saltamos
+                    if (!$mapEmpleados->has($asistencia->codigoUsuario)) {
+                        continue;
+                    }
 
                     $empleado = $mapEmpleados->get($asistencia->codigoUsuario);
 
-                    // Verificamos el campo 'horaSalida' de la relación 'horario'
+                    // Validar horario
                     if (!$empleado || !$empleado->horario || !$empleado->horario->horaSalida) {
-                        Log::warning("No se puede subsanar Asistencia ID {$asistencia->id}: Empleado (DNI: {$asistencia->codigoUsuario}) o su horario (horaSalida) no encontrado.");
+                        Log::warning("Asistencia ID {$asistencia->id}: Empleado sin horario definido. Omitiendo.");
                         continue;
                     }
 
@@ -1347,68 +1391,58 @@ class PlanillaController extends Controller
                         continue;
                     }
 
-                    // Si tiene entrada pero no salida (ej. 'tardanza' o 'a tiempo')
+                    // Lógica de autocompletado de salida
                     if ($asistencia->horaEntrada && !$asistencia->horaSalida) {
-
                         $hora_salida_prog = $empleado->horario->horaSalida;
 
-                        // --- 1. Calcular Fecha/Hora de Salida Correcta (Manejo Turno Nocturno) ---
                         $entrada_dt = Carbon::parse($asistencia->fechaEntrada . ' ' . $asistencia->horaEntrada);
                         $salida_dt = Carbon::parse($asistencia->fechaEntrada . ' ' . $hora_salida_prog);
 
+                        // Ajuste turno nocturno
                         if ($salida_dt->lt($entrada_dt)) {
                             $salida_dt->addDay();
                         }
 
                         $fechaSalidaCorrecta = $salida_dt->toDateString();
 
-                        // --- 2. Rellenar campos faltantes ---
                         $asistencia->horaSalida = $hora_salida_prog;
                         $asistencia->fechaSalida = $fechaSalidaCorrecta;
-                        $asistencia->horas_extras = '00:00:00'; // Valor inicial
+                        $asistencia->horas_extras = '00:00:00';
                         $asistencia->estado = 1; // Marcamos como procesada
 
-                        // --- 3. Calcular Horas Trabajadas ---
                         try {
                             $segundos = $salida_dt->diffInSeconds($entrada_dt);
                             $asistencia->horasTrabajadas = gmdate('H:i:s', $segundos);
                         } catch (\Exception $e) {
-                            Log::warning("Error al calcular horasTrabajadas para Asistencia ID {$asistencia->id}: " . $e->getMessage());
                             $asistencia->horasTrabajadas = '00:00:00';
                         }
-
-                        // --- 4. Guardar todo ---
                         $asistencia->save();
-                        Log::info("Autocompletada Asistencia ID {$asistencia->id} (Salida: {$fechaSalidaCorrecta}, Horas, Estado).");
                     }
                 }
-                Log::info("PASO 1: Subsanación de salidas completada.");
+                Log::info("PASO 1: Subsanación completada.");
 
-
-                // --- PASO 2: Crear Registros de Vacaciones ---
+                // ---------------------------------------------------------
+                // PASO 2: Crear Asistencias desde Vacaciones
+                // ---------------------------------------------------------
                 $rangoFechas = CarbonPeriod::create($periodo->fecha_inicio, $periodo->fecha_fin);
-                Log::info("PASO 2: Iniciando escaneo de vacaciones...");
 
                 foreach ($mapEmpleados as $documentoEmpleado => $empleado) {
-
-                    // Corrección: Validar que el empleado tenga usuario
-                    if (!$empleado->usuario) {
-                        Log::warning("PASO 2: Saltando escaneo de vacaciones para Empleado DNI {$documentoEmpleado}. No tiene 'usuario' relacionado.");
-                        continue;
-                    }
+                    if (!$empleado->usuario) continue;
 
                     $idUsuario = $empleado->usuario->id;
 
                     foreach ($rangoFechas as $date) {
                         $fechaActual = $date->toDateString();
 
+                        // Verificar si hay vacación activa en esa fecha
                         $vacacionAprobada = Vacacione::where('idUsuario', $idUsuario)
-                            ->where('estado', 0) // 0 = activas
+                            ->where('estado', 0) // 0 = Activa/Aprobada
                             ->where('fecha_inicio', '<=', $fechaActual)
                             ->where('fecha_fin', '>=', $fechaActual)
                             ->exists();
 
                         if ($vacacionAprobada) {
+                            // Creamos/Actualizamos la asistencia
                             Asistencia::updateOrCreate(
                                 [
                                     'codigoUsuario' => $documentoEmpleado,
@@ -1416,26 +1450,28 @@ class PlanillaController extends Controller
                                 ],
                                 [
                                     'idPeriodo' => $periodo->id,
-                                    'estadoAsistencia' => 'justificada',
+                                    // IMPORTANTE: Aseguramos contexto explícito
+                                    'idEmpresa' => $idEmpresa,
+                                    'idSede' => $idSede,
+                                    'estadoAsistencia' => 'justificada', // O 'vacaciones' si tienes ese estado
                                     'horasTrabajadas' => '00:00:00',
                                     'horas_extras' => '00:00:00',
                                     'fechaSalida' => $fechaActual,
                                     'horaEntrada' => null,
                                     'horaSalida' => null,
-                                    'estado' => 1 // Marcamos como procesado
+                                    'estado' => 1
                                 ]
                             );
                         }
-                    } // Fin bucle días
-                } // Fin bucle empleados
-                Log::info("PASO 2: Escaneo de vacaciones completado.");
+                    }
+                }
+                Log::info("PASO 2: Vacaciones procesadas.");
 
-
-                // --- PASO 3: Recolectar IDs de Usuario (para Pasos 4 y 5) ---
-                Log::info("PASO 3: Iniciando recolección de IDs de usuario...");
-
+                // ---------------------------------------------------------
+                // PASO 3: Recolectar IDs de Usuario (Filtrados)
+                // ---------------------------------------------------------
                 $listaIdsUnicos = [];
-                $mapIdUsuarioADni = []; // Mapa [idUsuario => DNI]
+                $mapIdUsuarioADni = [];
 
                 foreach ($mapEmpleados as $dni => $empleado) {
                     if ($empleado->usuario) {
@@ -1445,30 +1481,22 @@ class PlanillaController extends Controller
                     }
                 }
                 $listaIdsUnicos = array_unique($listaIdsUnicos);
-                Log::info("PASO 3: Recolección completa. " . count($listaIdsUnicos) . " IDs de usuario válidos.");
 
-
-                // --- PASO 4: Resolver Horas Extra Pendientes (0 -> 1) ---
-                Log::info("PASO 4: Resolviendo HE pendientes (0 -> 1)...");
-
+                // ---------------------------------------------------------
+                // PASO 4: Aprobar Horas Extra Pendientes (Masivo)
+                // ---------------------------------------------------------
                 if (count($listaIdsUnicos) > 0) {
                     HoraExtras::where('fecha', '>=', $periodo->fecha_inicio)
                         ->where('fecha', '<=', $periodo->fecha_fin)
                         ->where('estado', 0) // Pendientes
-                        ->whereIn('idUsuario', $listaIdsUnicos)
-                        ->update(['estado' => 1]); // Pasan a estado 1
-                } else {
-                    Log::info("PASO 4: No se encontraron IDs de usuario, se omite HE.");
+                        ->whereIn('idUsuario', $listaIdsUnicos) // SOLO usuarios de esta sede
+                        ->update(['estado' => 1]); // Aprobar
                 }
-                Log::info("PASO 4: HE pendientes resueltas.");
+                Log::info("PASO 4: Horas extras pendientes aprobadas.");
 
-
-                // --- PASO 5: Aplicar Horas Extra APROBADAS a Asistencias ---
-                Log::info("PASO 5: Aplicando horas extra APROBADAS a asistencias...");
-
-                // --- ¡REVISA ESTA LÍNEA! ---
-                // Asumo que 'estado = 1' son las APROBADAS.
-                // Si las aprobadas son 'estado = 1', cambia este valor.
+                // ---------------------------------------------------------
+                // PASO 5: Aplicar Horas Extra a Asistencias (Formato H:i:s)
+                // ---------------------------------------------------------
                 $estadoAprobadoHE = 1;
 
                 if (count($listaIdsUnicos) > 0) {
@@ -1478,57 +1506,46 @@ class PlanillaController extends Controller
                         ->where('fecha', '<=', $periodo->fecha_fin)
                         ->get();
 
-                    Log::info("PASO 5: Se encontraron " . $horasExtrasAprobadas->count() . " registros de HE aprobadas para aplicar.");
-
                     foreach ($horasExtrasAprobadas as $horaExtra) {
-                        // Usamos el mapa [userId => DNI] que creamos en PASO 3
                         if (isset($mapIdUsuarioADni[$horaExtra->idUsuario])) {
-
                             $dni = $mapIdUsuarioADni[$horaExtra->idUsuario];
-
-                            // ===== INICIO DE LA CORRECCIÓN DE FORMATO =====
                             try {
-                                // 1. Convertimos el decimal (ej: 2.0) a segundos (ej: 7200)
+                                // Conversión Decimal -> Hora
                                 $horasEnDecimal = (float) $horaExtra->horas_trabajadas;
                                 $segundosTotales = $horasEnDecimal * 3600;
-
-                                // 2. Formateamos los segundos a 'H:i:s' (ej: '02:00:00')
                                 $formatoHis = gmdate('H:i:s', $segundosTotales);
 
-                                // 3. Actualizamos la asistencia con el formato correcto
                                 Asistencia::where('codigoUsuario', $dni)
                                     ->where('fechaEntrada', $horaExtra->fecha)
-                                    ->update([
-                                        'horas_extras' => $formatoHis
-                                    ]);
+                                    ->update(['horas_extras' => $formatoHis]);
                             } catch (\Exception $e) {
-                                Log::warning("PASO 5: Error al convertir horas extra (Valor: {$horaExtra->horas_trabajadas}) para DNI {$dni} en fecha {$horaExtra->fecha}. Error: " . $e->getMessage());
+                                // Continuar si falla formato, no es crítico para detener todo
                             }
-                            // ===== FIN DE LA CORRECCIÓN DE FORMATO =====
                         }
                     }
-                    Log::info("PASO 5: HE Aprobadas aplicadas.");
-                } else {
-                    Log::info("PASO 5: No se encontraron IDs de usuario, se omite aplicación de HE.");
                 }
+                Log::info("PASO 5: Horas extras aplicadas a asistencias.");
 
-
-                // --- PASO 6: Actualizar el Estado del Periodo ---
-                $periodo->estado = 2; // Pasa a Estado 2 (En Validación)
+                // ---------------------------------------------------------
+                // PASO 6: Finalizar Transición
+                // ---------------------------------------------------------
+                $periodo->estado = 2; // Estado: En Validación
                 $periodo->save();
 
-                Log::info("Subsanación (V-Final + HE) completa. Periodo ID: $idPeriodo movido a Estado 2.");
-            }); // Fin de la Transacción
+                Log::info("Validación completada. Periodo ID: $idPeriodo movido a Estado 2.");
 
-            return response()->json([
-                'message' => 'Proceso de validación completado. Registros autocompletados, vacaciones y horas extra aplicadas.'
-            ], 200);
-        } catch (ModelNotFoundException $e) {
-            Log::error("Error al iniciar validación: Periodo (ID: $idPeriodo, Estado: 1) no encontrado.");
-            return response()->json(['message' => 'Error: No se encontró el periodo abierto para validar.'], 404);
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Validación iniciada correctamente. Se han procesado incidencias, vacaciones y horas extra.'
+                ], 200);
+            }); // Fin Transacción
+
         } catch (\Exception $e) {
-            Log::error("Error crítico al iniciar validación (ID: $idPeriodo): " . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
-            return response()->json(['message' => 'Ocurrió un error inesperado al procesar las asistencias.', 'error' => $e->getMessage()], 500);
+            Log::error("Error crítico en validación (Periodo $idPeriodo): " . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ocurrió un error al procesar la validación: ' . $e->getMessage()
+            ], 500);
         }
     }
 
@@ -1536,46 +1553,221 @@ class PlanillaController extends Controller
     public function validarNominaCompleta(Request $request, $idPeriodo)
     {
         Log::info("Iniciando CIERRE (Generar Pagos) para Periodo ID: $idPeriodo");
+
         try {
-            DB::transaction(function () use ($idPeriodo) {
+            DB::beginTransaction();
 
-                // 1. Busca el periodo EN VALIDACIÓN (Estado 2)
-                $periodo = PeriodoNomina::where('id', $idPeriodo)
-                    ->where('estado', 2) // <-- Busca estado 2
-                    ->lockForUpdate()
-                    ->firstOrFail();
+            // 1. Busca el periodo EN VALIDACIÓN (Estado 2)
+            $periodo = PeriodoNomina::where('id', $idPeriodo)
+                ->where('estado', 2)
+                ->lockForUpdate()
+                ->firstOrFail();
 
-                // 2. VERIFICA que el admin haya resuelto todo
-                $horasExtraPendientes = HoraExtras::where('idPeriodo', $periodo->id)
-                    ->where('estado', 0) // 0 = Pendiente
-                    ->count();
+            // 2. VERIFICA horas extras pendientes
+            $horasExtraPendientes = HoraExtras::where('idPeriodo', $periodo->id)
+                ->where('estado', 0)
+                ->count();
 
-                if ($horasExtraPendientes > 0) {
-                    Log::warning("Cierre fallido: $horasExtraPendientes H.E. pendientes en Periodo ID: $idPeriodo");
-                    throw new \Exception("No se puede cerrar. Aún existen $horasExtraPendientes horas extra pendientes de aprobación.");
-                }
+            if ($horasExtraPendientes > 0) {
+                throw new \Exception("No se puede cerrar. Aún existen $horasExtraPendientes horas extra pendientes de aprobación.");
+            }
 
-                // --- 3. AQUÍ VA TU LÓGICA DE CÁLCULO DE NÓMINA ---
-                Log::info("Verificación OK. Generando pagos para Periodo ID: $idPeriodo...");
-                // ...
-                // ... CalcularSueldos($periodo);
-                // ...
+            // --- 3. LÓGICA DE CÁLCULO DE NÓMINA ---
+            Log::info("Verificación OK. Generando pagos para Periodo ID: $idPeriodo...");
 
-                // 4. Actualizar el Estado del Periodo
-                $periodo->estado = 3; // <-- Pasa a Estado 3 (Cerrado)
-                $periodo->save();
-                Log::info("Cierre completo. Periodo ID: $idPeriodo movido a Estado 3.");
-            }); // Fin de la Transacción
+            // Calculamos pagos (usando la función corregida con filtros de sede/empresa)
+            $totalNomina = $this->calcularPagosMasivos($periodo);
+
+            // 4. Actualizar el Estado del Periodo Actual a CERRADO (3)
+            $periodo->estado = 3;
+            $periodo->save();
+
+            // --- NUEVO PASO: 4.5 APERTURAR EL SIGUIENTE PERIODO ---
+            // Buscamos el siguiente periodo cronológico de la misma empresa y sede
+            $siguientePeriodo = PeriodoNomina::where('idEmpresa', $periodo->idEmpresa)
+                ->where('idSede', $periodo->idSede)
+                ->where('estado', 0) // Buscamos solo los que están en espera (0)
+                ->where('fecha_inicio', '>', $periodo->fecha_inicio) // Que inicie después del actual
+                ->orderBy('fecha_inicio', 'asc') // El más próximo
+                ->first();
+
+            $mensajeExtra = "";
+
+            if ($siguientePeriodo) {
+                $siguientePeriodo->estado = 1; // Lo pasamos a ABIERTO
+                $siguientePeriodo->save();
+                Log::info("Transición Automática: Se aperturó el periodo '{$siguientePeriodo->nombrePeriodo}' (ID: {$siguientePeriodo->id}).");
+                $mensajeExtra = " Y se ha aperturado el periodo: " . $siguientePeriodo->nombrePeriodo;
+            } else {
+                Log::warning("Cierre completado, pero no se encontró un periodo futuro para abrir automáticamente.");
+                $mensajeExtra = " (No se encontró un periodo siguiente para abrir).";
+            }
+            // -----------------------------------------------------
+
+            // 5. Registrar en Contabilidad (Libro Diario)
+            $this->RegistrarTransaccion($totalNomina);
+
+            DB::commit();
+            Log::info("Cierre completo. Periodo ID: $idPeriodo movido a Estado 3.");
 
             return response()->json([
-                'message' => 'Nómina generada y periodo cerrado exitosamente.'
+                'success' => true,
+                'message' => 'Nómina cerrada y pagos generados exitosamente.' . $mensajeExtra
             ], 200);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            Log::error("Error al cerrar periodo: Periodo (ID: $idPeriodo, Estado: 2) no encontrado.");
-            return response()->json(['message' => 'Error: No se encontró el periodo en validación.'], 404);
+            DB::rollBack();
+            Log::error("Error al cerrar periodo: Periodo no encontrado o estado incorrecto.");
+            return response()->json(['success' => false, 'message' => 'Error: No se encontró el periodo en validación.'], 404);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error("Error crítico al cerrar periodo (ID: $idPeriodo): " . $e->getMessage());
-            return response()->json(['message' => $e->getMessage()], 400);
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 400);
         }
+    }
+
+    private function calcularPagosMasivos($periodo)
+    {
+        // LOG 1: Inicio del proceso
+        Log::info("--- [DEBUG-PAGOS] INICIO del cálculo para Periodo ID: {$periodo->id} ---");
+
+        $fechaInicio = $periodo->fecha_inicio;
+        $fechaFin = $periodo->fecha_fin;
+
+        $idEmpresa = $periodo->idEmpresa;
+        $idSede = $periodo->idSede;
+
+        // LOG 2: Verificar filtros de contexto
+        Log::info("[DEBUG-PAGOS] Filtros -> Empresa: {$idEmpresa}, Sede: {$idSede}, Fechas: {$fechaInicio} al {$fechaFin}");
+
+        $empleados = Empleado::with([
+            'cargo',
+            'bonificaciones',
+            'deducciones',
+            'usuario'
+        ])
+            ->where('estado', 1)
+            ->where('idEmpresa', $idEmpresa)
+            ->where('idSede', $idSede)
+            ->get();
+
+        // LOG 3: Resultado de la búsqueda de empleados
+        $cantidad = $empleados->count();
+        Log::info("[DEBUG-PAGOS] Empleados encontrados: {$cantidad}");
+
+        if ($empleados->isEmpty()) {
+            Log::warning("[DEBUG-PAGOS] ALERTA: No se encontraron empleados para esta Empresa/Sede. Retornando 0.");
+            return 0;
+        }
+
+        $pagoTotalPlanilla = 0;
+        $contadorProcesados = 0;
+
+        foreach ($empleados as $empleado) {
+
+            // LOG 4: Inicio iteración empleado
+            Log::info("[DEBUG-PAGOS] > Procesando Empleado ID: {$empleado->id}");
+
+            // 1. Evitar duplicados
+            $pagoExistente = Pago::where('idEmpleado', $empleado->id)
+                ->where('idPeriodo', $periodo->id)
+                ->exists();
+
+            if ($pagoExistente) {
+                Log::info("[DEBUG-PAGOS] SKIP: El empleado {$empleado->id} ya tiene pago registrado en este periodo.");
+                continue;
+            }
+
+            // A. SUELDO BASE Y BONOS
+            $salarioBase = $empleado->cargo->salario;
+            $totalBonificaciones = $empleado->bonificaciones->sum('monto');
+
+            // B. VARIABLES (Horas Extra)
+            $totalPagoHorasExtras = 0;
+            if ($empleado->usuario) {
+                $totalPagoHorasExtras = HoraExtras::where('idUsuario', $empleado->usuario->id)
+                    ->where('idPeriodo', $periodo->id)
+                    ->where('estado', 1)
+                    ->sum('pagoTotal');
+            }
+
+            // C. DEDUCCIONES Y ADELANTOS
+            $porcentajeDeduccion = $empleado->deducciones->sum('porcentaje');
+            $montoDeduccionesFijas = round($salarioBase * $porcentajeDeduccion, 2);
+
+            $adelantosSueldo = 0;
+            if ($empleado->usuario) {
+                $adelantosSueldo = AdelantoSueldo::where('idUsuario', $empleado->usuario->id)
+                    ->where('estado', 1)
+                    ->whereBetween('fecha', [$fechaInicio, $fechaFin])
+                    ->sum('monto');
+            }
+
+            // D. VACACIONES
+            $pagoPorDiasVendidos = 0;
+            $diasVendidos = 0;
+            $diasUtilizados = 0;
+
+            if ($empleado->usuario) {
+                $vacaciones = Vacacione::where('idUsuario', $empleado->usuario->id)
+                    ->where('estado', 1)
+                    ->whereBetween('fecha_inicio', [$fechaInicio, $fechaFin])
+                    ->first();
+
+                if ($vacaciones) {
+                    $diasUtilizados = $vacaciones->dias_utilizados ?? 0;
+                    $diasVendidos = $vacaciones->dias_vendidos ?? 0;
+
+                    if ($diasVendidos > 0) {
+                        $pagoPorDiasVendidos = round(($salarioBase / 30) * $diasVendidos, 2);
+                    }
+                }
+            }
+
+            // E. CÁLCULO NETO
+            $totalIngresos = $salarioBase + $totalBonificaciones + $totalPagoHorasExtras + $pagoPorDiasVendidos;
+            $totalEgresos = $montoDeduccionesFijas + $adelantosSueldo;
+
+            if ($totalEgresos > $totalIngresos) {
+                $totalEgresos = $totalIngresos;
+            }
+
+            $salarioNeto = round($totalIngresos - $totalEgresos, 2);
+
+            // LOG 5: Verificar cálculos antes de guardar
+            Log::info("[DEBUG-PAGOS] Datos Calc -> Base: {$salarioBase}, Ingresos: {$totalIngresos}, Egresos: {$totalEgresos}, Neto: {$salarioNeto}");
+
+            // F. GUARDAR PAGO
+            try {
+                $pago = new Pago();
+                $pago->idEmpleado = $empleado->id;
+                $pago->idEmpresa = $idEmpresa;
+                $pago->idPeriodo = $periodo->id;
+
+                $pago->fecha_pago = Carbon::now();
+                $pago->salario_base = $salarioBase;
+                $pago->deducciones = $montoDeduccionesFijas;
+                $pago->bonificaciones = $totalBonificaciones;
+                $pago->horas_extras = round($totalPagoHorasExtras, 2);
+                $pago->adelantoSueldo = round($adelantosSueldo, 2);
+                $pago->dias_vendidos = $diasVendidos;
+                $pago->dias_utilizados = $diasUtilizados;
+                $pago->salario_neto = $salarioNeto;
+
+                $pago->save();
+
+                Log::info("[DEBUG-PAGOS] OK: Pago guardado correctamente (ID Pago: {$pago->id})");
+                $contadorProcesados++;
+            } catch (\Exception $e) {
+                // LOG CRÍTICO: Si falla el save()
+                Log::error("[DEBUG-PAGOS] ERROR FATAL al guardar pago empleado {$empleado->id}: " . $e->getMessage());
+                throw $e; // Re-lanzar para que falle la transacción
+            }
+
+            $pagoTotalPlanilla += $salarioNeto;
+        }
+
+        Log::info("--- [DEBUG-PAGOS] FIN. Total procesados: {$contadorProcesados}. Monto Total: {$pagoTotalPlanilla} ---");
+
+        return $pagoTotalPlanilla;
     }
 }
