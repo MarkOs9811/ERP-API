@@ -260,19 +260,14 @@ class UsuarioController extends Controller
                 'message' => 'El cambio de sede se realizó correctamente.',
                 'nombreSede' => $sede->nombre,
             ], 200);
-
         } catch (\Exception $e) {
-            \Log::error('Error al cambiar de sede: ' . $e->getMessage());
+            Log::error('Error al cambiar de sede: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Ocurrió un error al intentar cambiar la sede.'
             ], 500);
         }
     }
-
-
-
-
 
     public function eliminarUsuario($id)
     {

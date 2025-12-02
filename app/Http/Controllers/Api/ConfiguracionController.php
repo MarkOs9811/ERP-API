@@ -26,6 +26,7 @@ class ConfiguracionController extends Controller
     public function actualizarConfiguracion(Request $request)
     {
         try {
+            $user = Auth()->user();
             // Validar los datos del formulario
             $validated = $request->validate([
                 'nombre' => 'required|string|max:255',
@@ -37,19 +38,19 @@ class ConfiguracionController extends Controller
             ]);
 
             // Obtener la primera empresa
-            $empresa = MiEmpresa::first();
+            $empresa = MiEmpresa::find($user->idEmpresa);
 
             if ($empresa) {
-                // Verificar si se ha cargado un nuevo logo
+
                 if ($request->hasFile('logo')) {
-                    // Eliminar el logo anterior si existe
+
                     if ($empresa->logo) {
                         Storage::disk('public')->delete($empresa->logo);
                     }
-                    // Guardar el nuevo logo en la carpeta 'miEmpresa' dentro del almacenamiento público
+
                     $logoPath = $request->file('logo')->store('miEmpresa', 'public');
                 } else {
-                    // Mantener el logo anterior si no se ha cargado uno nuevo
+
                     $logoPath = $empresa->logo;
                 }
 
@@ -75,7 +76,12 @@ class ConfiguracionController extends Controller
     public function getEmpresa()
     {
         try {
-            $empresa = MiEmpresa::first();
+            $user = Auth::user();
+
+            if (!$user) {
+                return response()->json(['message' => 'No autenticado'], 401);
+            }
+            $empresa = MiEmpresa::find($user->idEmpresa);
             if ($empresa) {
                 $empresa->logo = $empresa->logo ? Storage::url($empresa->logo) : null;
                 return response()->json($empresa);
@@ -87,7 +93,7 @@ class ConfiguracionController extends Controller
         } catch (\Exception $e) {
             Log::error('Error al obtener la configuración: ' . $e->getMessage());
             return response()->json([
-                'success' => true,
+                'success' => false,
                 'message' => $e->getMessage()
             ], 500);
         }
@@ -589,6 +595,52 @@ class ConfiguracionController extends Controller
         } catch (\Exception $e) {
 
             return response()->json(['success' => false, "message" => "Error de servidor: " . $e->getMessage()], 500);
+        }
+    }
+
+    public function actualizarColorTema($colorTema)
+    {
+        try {
+            $user = auth()->user();
+
+            // 1. Reconstruir el color (Agregamos el # que quitamos en el front)
+            // Si por alguna razón llega con #, esto lo maneja, pero asumimos que llega "FF0000"
+            $hexColor = '#' . str_replace('#', '', $colorTema);
+
+            // 2. Validar que sea un Hexadecimal válido
+            // Creamos un validador "al vuelo" para una variable simple
+            $validator = Validator::make(['color' => $hexColor], [
+                'color' => ['required', 'regex:/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/']
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El código de color no es válido.'
+                ], 422);
+            }
+
+            Configuraciones::updateOrCreate(
+
+                ['idEmpresa' => $user->idEmpresa, 'tipo' => 'estilos'],
+                [
+                    'nombre' => 'tema',
+                    'clave'  => $hexColor
+                ]
+            );
+
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Color del tema actualizado correctamente.',
+                'data'    => ['color' => $hexColor]
+            ], 200);
+        } catch (\Exception $e) {
+            Log::error('Error actualizando color: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error interno al guardar la configuración.'
+            ], 500);
         }
     }
 }

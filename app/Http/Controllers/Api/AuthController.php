@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Configuraciones;
 use App\Models\MiEmpresa;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -48,7 +49,9 @@ class AuthController extends Controller
 
             if ($user->idEmpresa) {
                 $empresa = MiEmpresa::find($user->idEmpresa);
-
+                $confiEmpresa = Configuraciones::where('idEmpresa', $user->idEmpresa)
+                    ->where('tipo', 'estilos')
+                    ->get();
                 if (!$empresa) {
                     return response()->json(['success' => false, 'message' => 'Empresa no válida o desactivada'], 403);
                 }
@@ -97,6 +100,7 @@ class AuthController extends Controller
                 'token' => $token,
                 'caja' => $caja,
                 'empresa' => $empresa,
+                'estiloEmpresa' => $confiEmpresa,
             ], 200);
         } catch (\Throwable $e) {
             Log::error('Error en login', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);

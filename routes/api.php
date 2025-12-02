@@ -34,6 +34,7 @@ use App\Http\Controllers\Api\FacturacionSunatController;
 use App\Http\Controllers\Api\FinanzasController;
 use App\Http\Controllers\api\GoogleCalendarController;
 use App\Http\Controllers\Api\MesasController;
+use App\Http\Controllers\Api\MiPerfilController;
 use App\Http\Controllers\Api\NotificacionesController;
 use App\Http\Controllers\api\PedidosWebController;
 use App\Http\Controllers\Api\PeriodoNominaController;
@@ -105,6 +106,10 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::get('/configuracion/getMiEmpresa', [ConfiguracionController::class, 'getEmpresa']);
     Route::post('/configuracion/updateMiempresa', [ConfiguracionController::class, 'actualizarConfiguracion']);
     Route::get('/configuraciones/serieCorrelativo', [ConfiguracionController::class, 'getConfiSerieCorrelativo']);
+
+
+    // CRUD PARA MI PERFIL ACTUALIZACION
+    Route::post('/miPerfilUpdate', [MiPerfilController::class, 'actualizarPerfil']);
 
     // CRUD PARA LA SERIE Y CORRELATIVOS
     Route::get('/configuraciones/serieCorrelativo', [ConfiguracionController::class, 'getConfiSerieCorrelativo']);
@@ -239,6 +244,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::post('/areasAll', [AreaController::class, 'saveArea']);
 
     // RUTAS PAARA SEDES
+
     Route::get('/sedesAll', [SedesController::class, 'getSedes']);
     Route::post('/sedes', [SedesController::class, 'saveSedes']);
     Route::put('/sedes/{id}', [SedesController::class, 'upDateSedes']);
@@ -423,6 +429,8 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     Route::get('/getEstadoConfig/{nombreConfi}', [ConfiguracionController::class, 'getEstadoConfig']);
 
+    //ESTILOS CONFIGURAICON GENERALES
+    Route::put('/estiloGeneral/{temaColor}', [ConfiguracionController::class, 'actualizarColorTema']);
 
     // RUTAS PARA TODOS LOS REPORTES A EXCEL
 
@@ -441,6 +449,11 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     Route::get('/reporteKardexExcelSalida', [ReportesController::class, 'reporteKardexSalida']);
     Route::get('/reporteKardexExcelEntrada', [ReportesController::class, 'reporteKardexEntrada']);
+
+
+
+    // CRUD ACTUALIZACIONES PARA EL PROGRESO DE BINVENIDA
+    Route::put('/empresasSteps/{estado}', [EmpresasAdminController::class, 'pasosCompletadosTours']);
 });
 
 

@@ -21,6 +21,7 @@ class SedesController extends Controller
         }
     }
 
+
     public function saveSedes(Request $request)
     {
         try {

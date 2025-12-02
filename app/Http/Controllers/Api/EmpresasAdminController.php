@@ -363,4 +363,60 @@ class EmpresasAdminController extends Controller
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
+
+    public function pasosCompletadosTours($idEstado)
+    {
+        // 1. Log de entrada
+        Log::info('pasosCompletadosTours: Inicio de petición recibida.');
+
+        try {
+            $user = auth()->user();
+
+            // 2. Verificar usuario
+            if (!$user) {
+                Log::warning('pasosCompletadosTours: Intento de acceso sin usuario autenticado.');
+                return response()->json(['success' => false, 'message' => 'No autenticado'], 401);
+            }
+
+            Log::info('pasosCompletadosTours: Usuario identificado.', [
+                'user_id' => $user->id,
+                'email' => $user->email,
+                'idEmpresa_en_user' => $user->idEmpresa
+            ]);
+
+            $empresaId = $user->idEmpresa;
+
+            // 3. Buscar empresa
+            // Usamos findOrFail, si falla saltará al catch
+            $empresa = MiEmpresa::findOrFail($empresaId);
+
+            Log::info('pasosCompletadosTours: Empresa encontrada en BD.', [
+                'empresa_id' => $empresa->id,
+                'nombre' => $empresa->nombre,
+                'setup_steps_anterior' => $empresa->setup_steps
+            ]);
+
+            // 4. Actualizar
+            $empresa->setup_steps = $idEstado;
+            $empresa->save();
+
+            Log::info('pasosCompletadosTours: Guardado exitoso. setup_steps ahora es 5.');
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Configuración inicial de la empresa completada.',
+                'data' => ['id' => $empresa->id]
+            ], 200);
+        } catch (\Exception $e) {
+            // 5. Log de Error (Captura todo)
+            Log::error('pasosCompletadosTours: Ocurrió una excepción.', [
+                'mensaje' => $e->getMessage(),
+                'archivo' => $e->getFile(),
+                'linea' => $e->getLine(),
+                'trace' => $e->getTraceAsString() // Opcional si quieres mucho detalle
+            ]);
+
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
 }
