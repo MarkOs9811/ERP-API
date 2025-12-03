@@ -302,6 +302,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     // RUTAS PARA ASISTENCIA
     Route::get('/asistencia', [AsistenciasController::class, 'getAsistencia']);
+    Route::get('/asistenciaList', [AsistenciasController::class, 'getRegistroAsistencias']);
 
     // RUTAS PARA HORAS EXTRAS - PLANILLA
     Route::get('/horasExtras', [PlanillaController::class, 'getHorasExtras']);
@@ -445,6 +446,8 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::get('/reporteVacaciones', [ReportesController::class, 'reporteVacaciones']);
 
     Route::get('/reporteUsuarios', [ReportesController::class, 'reporteUsuarios']);
+    Route::get('/reporteAsistenciaHoy', [ReportesController::class, 'reporteAsistenciaHoy']);
+    Route::get('/reporte/AsistenciaPersonalizada', [ReportesController::class, 'reporteAsistenciaPersonalizada']);
 
 
     Route::get('/reporteKardexExcelSalida', [ReportesController::class, 'reporteKardexSalida']);

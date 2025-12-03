@@ -23,6 +23,7 @@ use App\Models\User;
 use App\Models\Vacacione;
 use App\Models\Venta;
 use App\Services\GoogleSheetsService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -836,6 +837,107 @@ class ReportesController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error al generar el reporte: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+
+    public function reporteAsistenciaHoy()
+    {
+        try {
+            // 1. Obtenemos la fecha de hoy
+            $hoy = Carbon::today();
+            $asistencias = Asistencia::with('empleado')
+                ->whereDate('fechaEntrada', $hoy)
+                ->orderBy('horaEntrada', 'asc')
+                ->get();
+
+            // 3. Mapeamos los datos para el Excel
+            $data = $asistencias->map(function ($item) {
+                // Usamos optional() por si el empleado fue borrado para que no rompa el reporte
+                $nombre = optional($item->empleado)->nombre ?? 'Desconocido';
+                $apellidos = optional($item->empleado)->apellidos ?? '';
+
+                return [
+                    'ID Asistencia' => $item->id,
+                    'DNI'           => optional($item->empleado)->documento_identidad ?? '-',
+                    'Empleado'      => "$nombre $apellidos",
+                    'Fecha'         => $item->fechaEntrada,
+                    'Hora Entrada'  => $item->horaEntrada,
+                    'Hora Salida'   => $item->horaSalida ?? 'Sin Marcar', // Manejo de nulos
+                    'Estado'        => ucfirst($item->estadoAsistencia),   // Capitalizar (Puntual/Tardanza)
+                ];
+            });
+
+            // 4. Nombre del archivo
+            $filename = 'reporte_asistencia_dia_' . now()->format('d-m-Y_His') . '.xlsx';
+
+            // 5. Descarga directa
+            return (new FastExcel($data))->download($filename);
+        } catch (\Exception $e) {
+            Log::error('Error reporte asistencia: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al generar excel: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function reporteAsistenciaPersonalizada(Request $request)
+    {
+        try {
+
+            $fechaInicio = $request->input('fecha_inicio');
+            $fechaFin    = $request->input('fecha_fin');
+
+
+            $query = Asistencia::with('empleado')
+                ->orderBy('fechaEntrada', 'desc')
+                ->orderBy('horaEntrada', 'asc');
+
+
+            $textoArchivo = "";
+
+            if ($fechaInicio && $fechaFin) {
+
+                $query->whereBetween('fechaEntrada', [$fechaInicio, $fechaFin]);
+                $textoArchivo = "del_{$fechaInicio}_al_{$fechaFin}";
+            } elseif ($fechaInicio) {
+
+                $query->where('fechaEntrada', '>=', $fechaInicio);
+                $textoArchivo = "desde_{$fechaInicio}";
+            } else {
+
+                $query->whereDate('fechaEntrada', Carbon::today());
+                $textoArchivo = "dia_" . now()->format('d-m-Y');
+            }
+
+            $asistencias = $query->get();
+
+            $data = $asistencias->map(function ($item) {
+                $nombre = optional($item->empleado)->nombres ?? optional($item->empleado)->nombre ?? 'Desconocido';
+                $apellidos = optional($item->empleado)->apellidos ?? '';
+
+                return [
+                    'ID'            => $item->id,
+                    'DNI'           => optional($item->empleado)->documento_identidad ?? '-',
+                    'Empleado'      => "$nombre $apellidos",
+                    'Fecha'         => $item->fechaEntrada,
+                    'Hora Entrada'  => $item->horaEntrada,
+                    'Hora Salida'   => $item->horaSalida ?? 'Sin Marcar',
+                    'Estado'        => ucfirst($item->estadoAsistencia ?? 'N/A'),
+                ];
+            });
+
+            // 5. Nombre dinámico del archivo
+            $filename = "reporte_asistencia_{$textoArchivo}_" . now()->format('His') . ".xlsx";
+
+            return (new FastExcel($data))->download($filename);
+        } catch (\Exception $e) {
+            Log::error('Error reporte asistencia: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al generar excel: ' . $e->getMessage()
             ], 500);
         }
     }

@@ -260,4 +260,21 @@ class AsistenciasController extends Controller
             ], 500);
         }
     }
+
+    public function getRegistroAsistencias()
+    {
+        try {
+
+            $asistencias = Asistencia::with(['empleado' => function ($q) {
+                $q->select('documento_identidad', 'nombre', 'apellidos');
+            }])
+                ->orderBy('fechaEntrada', 'desc') // Ordenar por fecha descendente por defecto
+                ->get();
+
+
+            return response()->json(['success' => true, 'data' => $asistencias], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
 }
