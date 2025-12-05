@@ -293,7 +293,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     // RUTAS PARA MODULO PLANILLA - RECURSOS HUMANOS
 
-    Route::get('/nomina', [PlanillaController::class, 'getPlanilla']);
+    Route::get('/getPlanilla', [PlanillaController::class, 'getPlanilla']);
     Route::get('/nominaEmpleado/{id}', [PlanillaController::class, 'getEmpleadoPerfil']);
     Route::post('/planilla', [PlanillaController::class, 'registroPlanillaEmpleado']);
     Route::get('/validaNomina', [PeriodoNominaController::class, 'getDatosParaResolverNomina']);

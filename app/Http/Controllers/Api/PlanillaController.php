@@ -206,124 +206,176 @@ class PlanillaController extends Controller
         }
     }
 
-    public function getPlanilla()
+    public function getPlanilla(Request $request) // <--- Agregamos Request
     {
-
         try {
             $userAuth = Auth::user();
 
             if (!$userAuth) {
-                Log::warning('getPlanilla - Intento de acceso sin autenticación.');
                 return response()->json(['success' => false, 'message' => 'No autenticado.'], 401);
             }
+            $parametroPeriodo = $request->query('periodo'); // Formato esperado: "YYYY-MM"
+            $periodoConsulta = null;
+            if ($parametroPeriodo) {
 
-            Log::info('getPlanilla - Usuario autenticado:', [
-                'userId' => $userAuth->id,
-                'idEmpresa' => $userAuth->idEmpresa,
-                'idSede' => $userAuth->idSede
-            ]);
+                $year = substr($parametroPeriodo, 0, 4);
+                $month = substr($parametroPeriodo, 5, 2);
 
 
-            $periodoActua = PeriodoNomina::where('idEmpresa', $userAuth->idEmpresa)
-                ->where('idSede', $userAuth->idSede)
-                ->whereIn('estado', [1, 2])
-                ->first();
+                $fechaReferencia = Carbon::createFromDate($year, $month, 15)->format('Y-m-d');
 
-            // --- 2. Manejar si no hay un período activo ---
-            if (!$periodoActua) {
-                // Log de advertencia si no se encuentra el período
-                Log::warning('getPlanilla - No se encontró período de nómina activo.', [
-                    'idEmpresa' => $userAuth->idEmpresa,
-                    'idSede' => $userAuth->idSede
-                ]);
-
-                return response()->json([
-                    'success' => false,
-                    'data' => [],
-                    'message' => 'No se encontró un período de nómina activo para esta empresa y sede.',
-                ], 404);
+                // 3. Buscamos el periodo que "envuelva" o contenga esa fecha
+                // Lógica: fecha_inicio <= 15-Dic  Y  fecha_fin >= 15-Dic
+                $periodoConsulta = PeriodoNomina::where('idEmpresa', $userAuth->idEmpresa)
+                    ->where('idSede', $userAuth->idSede)
+                    ->whereDate('fecha_inicio', '<=', $fechaReferencia)
+                    ->whereDate('fecha_fin', '>=', $fechaReferencia)
+                    ->first();
+            } else {
+                // Si no hay filtro, busca el activo (estado 1 o 2)
+                $periodoConsulta = PeriodoNomina::where('idEmpresa', $userAuth->idEmpresa)
+                    ->where('idSede', $userAuth->idSede)
+                    ->whereIn('estado', [1, 2])
+                    ->orderBy('id', 'desc')
+                    ->first();
             }
 
-            // Log del período encontrado
-            Log::info('getPlanilla - Período activo encontrado:', $periodoActua->toArray());
+            if (!$periodoConsulta) {
+                return response()->json([
+                    'success' => true, // Respondemos true pero con data vacía para no romper el front
+                    'data' => [
+                        'resumen' => [
+                            'totalEmpleados' => 0,
+                            'totalPagar' => 0,
+                            'estado' => 'SIN DATOS'
+                        ],
+                        'detalles' => []
+                    ],
+                    'message' => 'No se encontraron registros para el periodo solicitado.',
+                ], 200);
+            }
 
-            // --- 3. Consulta base con "Constrained Eager Loading" ---
             $query = User::with([
                 'empleado.persona',
                 'empleado.cargo',
-                'empleado.horario',
-                'empleado.contrato',
                 'empleado.area',
-                'empleado.asistencias' => function ($query) use ($periodoActua) {
-                    $query->where('idPeriodo', $periodoActua->id);
+
+                'empleado.pagos' => function ($q) use ($periodoConsulta) {
+                    $q->where('idPeriodo', $periodoConsulta->id);
                 },
-                'empleado.pagos' => function ($query) use ($periodoActua) {
-                    $query->where('idPeriodo', $periodoActua->id);
+                'empleado.asistencias' => function ($q) use ($periodoConsulta) {
+                    $q->where('idPeriodo', $periodoConsulta->id);
                 },
             ])
                 ->where('idEmpresa', $userAuth->idEmpresa)
                 ->where('idSede', $userAuth->idSede)
-                ->orderBy('id', 'desc');
+                ->whereHas('empleado', function ($q) {
+                    $q->where('estado', 1);
+                });
 
             $usuarios = $query->get();
 
+            // 3. PROCESAMIENTO DE DATOS
 
-            $fechaInicio = Carbon::parse($periodoActua->fecha_inicio);
-            $fechaFin = Carbon::parse($periodoActua->fecha_fin);
-            $totalDiasPeriodo = $fechaInicio->diffInDays($fechaFin) + 1;
+            $detalles = [];
+            $totalPagarMes = 0;
+            $empleadosEnPlanilla = 0;
 
-            $usuariosArray = $usuarios->map(function ($user) use ($totalDiasPeriodo) {
+            foreach ($usuarios as $user) {
                 $empleado = $user->empleado;
+                if (!$empleado) continue;
 
-                if (!$empleado) {
+                // Obtenemos el registro de pago ESPECÍFICO de este periodo (gracias al filtro en la consulta principal)
+                $pago = $empleado->pagos->first();
 
-                    Log::warning('getPlanilla - Usuario sin empleado asociado:', ['userId' => $user->id]);
-                    return null;
+                // =================================================================================
+                // 🛑 FILTRO DE SEGURIDAD (CRÍTICO)
+                // =================================================================================
+
+                // CASO A: EL PERIODO YA FUE PAGADO (Histórico)
+                // La regla es simple: Si no hay boleta de pago en la BD, la persona no existe en esa nómina.
+                if ($periodoConsulta->estado == 3) {
+                    if (!$pago) {
+                        continue; // SALTAR: No mostrar fantasmas en nóminas pasadas.
+                    }
                 }
 
-                $diasTrabajados = $empleado->asistencias->count();
+                // CASO B: EL PERIODO ESTÁ ABIERTO (Proyección)
+                // Aquí usamos las fechas porque aún no existen pagos.
+                if ($periodoConsulta->estado < 3) {
+                    // Preferencia: Usar fecha de inicio de contrato, si no, fecha de creación del usuario
+                    // Asegúrate de que tu modelo Empleado tenga la relación 'contrato' cargada o usa created_at
+                    $fechaInicio = $empleado->contrato ? \Carbon\Carbon::parse($empleado->contrato->fecha_inicio) : \Carbon\Carbon::parse($user->created_at);
+                    $fechaFinPeriodo = \Carbon\Carbon::parse($periodoConsulta->fecha_fin);
 
-                $porcentajeDiasTrabajados = $totalDiasPeriodo > 0
-                    ? min(100, ($diasTrabajados / $totalDiasPeriodo) * 100)
-                    : 0;
+                    // Si empezó a trabajar DESPUÉS de que cerró este periodo, no debe salir.
+                    if ($fechaInicio->gt($fechaFinPeriodo)) {
+                        continue; // SALTAR
+                    }
+                }
+                // =================================================================================
 
-                return [
+                // --- 1. CÁLCULOS (Solo se ejecutan si pasó el filtro) ---
+
+                // Si hay pago real, usamos sus datos. Si no, proyectamos ceros.
+                $montoBonificaciones = $pago ? floatval($pago->bonificaciones) : 0;
+                $montoHorasExtras = $pago ? floatval($pago->horas_extras) : 0;
+                $totalBonos = $montoBonificaciones + $montoHorasExtras;
+
+                $montoDeducciones = $pago ? floatval($pago->deducciones) : 0;
+                $montoAdelantos = $pago ? floatval($pago->adelantoSueldo) : 0;
+                $totalDescuentos = $montoDeducciones + $montoAdelantos;
+
+                // Sueldo base: Si ya pagamos, tratamos de sacar el histórico (si lo guardaste), sino el actual
+                $sueldoBase = $pago ? floatval($pago->salario_base) : ($empleado->salario ?? 0);
+
+                // Neto: LA VERDAD es lo que dice la tabla pagos. Si es proyección, calculamos.
+                $netoPagar = $pago ? floatval($pago->salario_neto) : ($sueldoBase + $totalBonos - $totalDescuentos);
+
+                // Estado INDIVIDUAL del empleado (No del periodo global)
+                $estadoEmpleado = 'PENDIENTE';
+                if ($pago) {
+                    $estadoEmpleado = 'PAGADO'; // Si existe registro en BD, está pagado.
+                }
+
+                // Acumuladores (Solo sumamos a gente válida)
+                $totalPagarMes += $netoPagar;
+                $empleadosEnPlanilla++;
+
+                $detalles[] = [
                     'id' => $user->id,
-                    'nombre_completo' => ucwords(($empleado->persona->nombre ?? '') . ' ' . ($empleado->persona->apellidos ?? '')),
-                    'documento_identidad' => $empleado->persona->documento_identidad ?? '',
-                    'dias_trabajados' => $diasTrabajados,
-                    'porcentaje_dias_trabajados' => round($porcentajeDiasTrabajados, 2),
-                    'cargo' => ucwords($empleado->cargo->nombre ?? ''),
-                    'contrato' => ucwords($empleado->contrato->nombre ?? ''),
-                    'area' => ucwords($empleado->area->nombre ?? ''),
-                    'salario_neto' => optional($empleado->pagos->last())->salario_neto,
-                    'usuario' => [
-                        'fotoPerfil' => $user->fotoPerfil,
-                        'email' => $user->email,
-                    ],
+                    'nombre_completo' => ($empleado->persona->nombre ?? '') . ' ' . ($empleado->persona->apellidos ?? ''),
+                    'cargo' => $empleado->cargo->nombre ?? 'Sin cargo',
+                    'sueldo_base' => $sueldoBase,
+                    'total_bonificaciones' => $totalBonos,
+                    'total_descuentos' => $totalDescuentos,
+                    'neto_pagar' => $netoPagar,
+                    'estado_pago' => $estadoEmpleado, // <--- CORREGIDO: Ahora depende de si tiene boleta
+                    'dias_trabajados' => $empleado->asistencias->count(), // <--- Dato informativo
                 ];
-            })->filter();
+            }
+
+
+            $estadoTexto = 'PENDIENTE';
+            if ($periodoConsulta->estado == 3) $estadoTexto = 'PAGADO';
+            if ($periodoConsulta->estado == 2) $estadoTexto = 'EN VALIDACIÓN';
 
             return response()->json([
                 'success' => true,
-                'data' => $usuariosArray->values(),
-                'message' => 'Datos de planilla obtenidos correctamente.',
+                'data' => [
+                    'resumen' => [
+                        'totalEmpleados' => $empleadosEnPlanilla,
+                        'totalPagar' => round($totalPagarMes, 2),
+                        'estado' => $estadoTexto,
+                        'periodo_id' => $periodoConsulta->id
+                    ],
+                    'detalles' => $detalles
+                ],
+                'message' => 'Datos obtenidos correctamente.'
             ], 200);
         } catch (\Exception $e) {
-
-
-            Log::error('getPlanilla - Ha ocurrido un error:', [
-                'mensaje' => $e->getMessage(),
-                'linea' => $e->getLine(),
-                'archivo' => $e->getFile(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'data' => [],
-                'message' => 'Error al obtener los datos de planilla: ' . $e->getMessage(),
-            ], 500);
+            Log::error('getPlanilla Error: ' . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'Error interno.'], 500);
         }
     }
     public function getEmpleadoPerfil($idEmpleado)

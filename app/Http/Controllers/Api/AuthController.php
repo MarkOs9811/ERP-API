@@ -64,10 +64,6 @@ class AuthController extends Controller
                 $rolesEmpresaIds = DB::table('empresa_roles')
                     ->where('idEmpresa', $empresa->id)
                     ->where('estado', 1)
-                    ->where(function ($query) {
-                        $query->whereNull('fecha_expiracion')
-                            ->orWhere('fecha_expiracion', '>=', now());
-                    })
                     ->pluck('idRole')
                     ->toArray();
 
