@@ -280,8 +280,8 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     // RUTAS PARA REALIZAR VENTAS O VENDER
     Route::get('/vender/getPlatos', [VenderController::class, 'getPlatos']);
     Route::post('/vender/addPlatosPreVentaMesa', [VenderController::class, 'addPlatosPreVentaMesa']);
-    Route::delete('/vender/eliminarPreventaMesa/{idMesa}', [VenderController::class, 'eliminarPreventaMesa']);
     Route::get('/vender/getPreventaMesa/{idMesa}/{idCaja}', [VenderController::class, 'getPreventaMesa']);
+    Route::delete('/vender/eliminarPreventaMesa/{idMesa}', [VenderController::class, 'eliminarPreventaMesa']);
     Route::get('/vender/mesasDisponibles', [VenderController::class, 'getMesasFree']);
     Route::put('/vender/transferirToMesa/{idMesa}', [VenderController::class, 'transferirToMesa']);
     Route::delete('/vender/preventa/deletePlatoPreventa/{idProducto}/{idMesa}', [VenderController::class, 'deletePlatoPreventa']);
@@ -289,6 +289,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     // RUTAS PARA VISTA DE COCINA
     Route::get('/getPedidoCocina', [CocinaController::class, 'getPedidoCocina']);
+    Route::put('/pedidoCocina/{id}', [CocinaController::class, 'cambiarEstadoCocina']);
 
 
     // RUTAS PARA MODULO PLANILLA - RECURSOS HUMANOS

@@ -12,14 +12,15 @@ class EstadoPedidoController
     protected $detallePlatos;
     protected $detalleCliente;
     protected $idRelacion;
-
-    public function __construct($tipoPedido, $idCaja, $detallePlatos, $idRelacion, $detalleCliente = null)
+    protected $numMesa;
+    public function __construct($tipoPedido, $idCaja, $detallePlatos, $idRelacion, $detalleCliente = null, $numMesa = null)
     {
         $this->tipoPedido = $tipoPedido;
         $this->idCaja = $idCaja;
         $this->detallePlatos = $detallePlatos;
         $this->idRelacion = $idRelacion;
         $this->detalleCliente = $detalleCliente;
+        $this->numMesa = $numMesa;
     }
 
     public function registrar()
@@ -29,7 +30,7 @@ class EstadoPedidoController
         $pedido->idCaja = $this->idCaja;
         $pedido->detalle_platos = $this->detallePlatos;
         $pedido->detalle_cliente = $this->detalleCliente;
-
+        $pedido->numeroMesa = $this->numMesa;
         // Asignación según tipo
         switch ($this->tipoPedido) {
             case 'mesa':

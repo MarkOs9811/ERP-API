@@ -27,8 +27,6 @@ class OpenAIService
     }
 
 
-
-
     public function extraerPlatosYCantidades($mensaje)
     {
         try {
@@ -82,19 +80,20 @@ class OpenAIService
                 throw new \Exception("OpenAI no está configurado.");
             }
 
-            $ventasSemanales = $ventas->map(function ($venta) {
-                return [
-                    'fecha' => $venta->fechaVenta,
-                    'total' => $venta->total,
-                ];
-            });
+            $ventasArray = $ventas->toArray();
 
-            // Generamos las fechas para los próximos 7 días
+            // Calculamos promedio de referencia
+            $totales = array_column($ventasArray, 'total');
+            $diasConVenta = array_filter($totales, fn($t) => $t > 0);
+            $promedio = count($diasConVenta) > 0 ? array_sum($diasConVenta) / count($diasConVenta) : 0;
+
+            // Preparamos fechas futuras
             $proximosDias = [];
-            for ($i = 1; $i <= 7; $i++) {
+            for ($i = 0; $i < 7; $i++) {
+                $date = now()->addDays($i + 1);
                 $proximosDias[] = [
-                    'fecha' => now()->addDays($i)->format('Y-m-d'),
-                    'total' => 0, // el modelo llenará este valor
+                    'fecha' => $date->format('Y-m-d'),
+                    'dia_semana' => $date->locale('es')->dayName
                 ];
             }
 
@@ -103,39 +102,65 @@ class OpenAIService
                 'messages' => [
                     [
                         'role' => 'system',
-                        'content' => "Eres un analista de datos experto en ventas. 
-                    Tu tarea es analizar los datos históricos y predecir el TOTAL DE VENTAS en soles para los próximos 7 días.
+                        'content' => "Eres una API que SOLO devuelve JSON.
+                    
+                    CONTEXTO:
+                    Analiza 30 días de ventas de un restaurante.
+                    Promedio activo aprox: {$promedio}.
+                    
+                    TAREA:
+                    Predice ventas para 7 días futuros basándote en patrones semanales (fines de semana vs lunes).
+                    
+                    REGLAS ESTRICTAS:
+                    1. Tu respuesta debe contener SOLO el JSON crudo.
+                    2. NO incluyas explicaciones, ni saludos, ni texto introductorio.
+                    3. NO uses bloques de código Markdown (```json).
+                    4. Si el historial tiene ceros, sé conservador pero marca tendencia.
 
-                    ⚡ REGLAS IMPORTANTES:
-                    1. Analiza los datos históricos de ventas (fecha y total).
-                    2. Considera tendencias: picos, días bajos, posibles repeticiones semanales.
-                    3. Devuelve SOLO un JSON válido en este formato exacto:
-                    {\"predicciones\": [{\"fecha\": \"YYYY-MM-DD\", \"total\": numero}]}
-                    4. El campo \"total\" debe estar en soles (números decimales), usando la misma escala observada en los datos (ejemplo: entre 0 y 1000).
-                    5. NO devuelvas explicaciones ni texto adicional, solo el JSON.
-                    6.NO siempre el resultado tendra que ser exacto, porfavor has una suposicion u aproximación logica."
+                    ESTRUCTURA EXACTA:
+                    {\"predicciones\": [{\"fecha\": \"YYYY-MM-DD\", \"total\": 120.50}]}
+                    "
                     ],
                     [
                         'role' => 'user',
-                        'content' => "Aquí tienes los datos históricos de ventas: " . json_encode($ventasSemanales) .
-                            ". Devuelve los totales para estas fechas futuras: " . json_encode($proximosDias)
+                        'content' => "Historial: " . json_encode($ventasArray) .
+                            ". Futuro: " . json_encode($proximosDias)
                     ]
                 ],
-                'temperature' => 0.3,
-                'max_tokens' => 500
+                'temperature' => 0.5,
+                'max_tokens' => 600
             ]);
 
-            $respuesta = json_decode($response->choices[0]->message->content, true);
+            $content = $response->choices[0]->message->content;
+
+            Log::info("Respuesta cruda OpenAI: " . $content);
+            $cleanContent = str_replace(["```json", "```"], "", $content);
+            $inicio = strpos($cleanContent, '{');
+            $fin = strrpos($cleanContent, '}');
+
+            if ($inicio !== false && $fin !== false) {
+                $cleanContent = substr($cleanContent, $inicio, $fin - $inicio + 1);
+            }
+
+            $respuesta = json_decode($cleanContent, true);
+
+
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                Log::error("Error JSON Decode: " . json_last_error_msg());
+                throw new \Exception("La IA devolvió un formato inválido.");
+            }
 
             return $respuesta['predicciones'] ?? [];
         } catch (\Exception $e) {
-            Log::error("Error OpenAI: " . $e->getMessage());
-            return [];
+            Log::error("Error OpenAI o Parsing: " . $e->getMessage());
+            return array_map(function ($dia) use ($promedio) {
+                return [
+                    'fecha' => $dia['fecha'],
+                    'total' => round($promedio, 2)
+                ];
+            }, $proximosDias);
         }
     }
-
-
-
 
     public function generarRecomendacionesIA($ventasReales, $ventasIA)
     {

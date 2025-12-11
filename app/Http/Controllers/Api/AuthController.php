@@ -41,7 +41,7 @@ class AuthController extends Controller
             }
 
             // 4. Cargar usuario con relaciones
-            $user = User::with('empleado.persona', 'empleado.cargo', 'roles')->find(Auth::id());
+            $user = User::with('empleado.persona', 'empleado.cargo', 'roles', 'sede')->find(Auth::id());
 
             // 5. Lógica de Empresa y Roles Efectivos
             $empresa = null;

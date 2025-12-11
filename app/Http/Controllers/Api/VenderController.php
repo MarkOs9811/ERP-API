@@ -61,7 +61,8 @@ class VenderController extends Controller
 
     public function addPlatosPreVentaMesa(Request $request)
     {
-        $data = $request->input('pedidos'); // Se espera un array de pedidos en el campo 'pedidos'
+        $data = $request->input('pedidos');
+
         // Si el array viene vacío, salir sin registrar nada
         if (empty($data)) {
             return response()->json([
@@ -71,8 +72,8 @@ class VenderController extends Controller
         }
 
         Log::info($data);
-        // Validar la estructura de los datos entrantes
-        $validated = $request->validate([
+
+        $request->validate([
             'pedidos' => 'required|array',
             'pedidos.*.idCaja' => 'required|integer|exists:cajas,id',
             'pedidos.*.idPlato' => 'required|integer|exists:platos,id',
@@ -83,9 +84,21 @@ class VenderController extends Controller
 
         try {
             DB::beginTransaction();
+
             $user = auth()->user();
-            // Buscar si ya existe un pedido abierto para la mesa y usuario
+
+            // Asumimos que todos los pedidos del array van a la misma mesa (usamos el primero como referencia)
             $idMesa = $data[0]['idMesa'];
+            $idCaja = $data[0]['idCaja'];
+
+            // 1. Validar la Mesa (UNA SOLA VEZ fuera del bucle para optimizar)
+            $mesa = Mesa::find($idMesa);
+            if (!$mesa) {
+                // Usamos Exception para que vaya al catch y haga rollback
+                throw new \Exception('Mesa no encontrada.');
+            }
+
+            // 2. Buscar si ya existe un pedido abierto para la mesa y usuario
             $pedidoExistente = PedidoMesaRegistro::where('idUsuario', $user->id)
                 ->where('estado', 0)
                 ->whereHas('preVentas', function ($q) use ($idMesa) {
@@ -105,21 +118,27 @@ class VenderController extends Controller
 
                 $idPedido = $registroPedido->id;
             }
-            $detallePlatosArray = [];
-            foreach ($data as $pedido) {
 
+            $detallePlatosArray = [];
+
+            // 3. Procesar cada plato
+            foreach ($data as $pedido) {
+                // Seguridad: verificar que no mezclen mesas en un mismo envío
+                if ($pedido['idMesa'] != $idMesa) {
+                    throw new \Exception('Error de integridad: Se detectaron IDs de mesa diferentes en una sola petición.');
+                }
 
                 $preventaExistente = PreventaMesa::where('idCaja', $pedido['idCaja'])
                     ->where('idPlato', $pedido['idPlato'])
                     ->where('idMesa', $pedido['idMesa'])
                     ->where('idUsuario', $user->id)
+                    ->where('idPedido', $idPedido) // Asegurar que pertenece al mismo pedido padre
                     ->first();
 
                 if ($preventaExistente) {
                     // Si ya existe el plato en preventa, sumamos la cantidad
                     $preventaExistente->cantidad += $pedido['cantidad'];
-                    $preventaExistente->precio = $pedido['precio']; // Opcional: actualizar el precio
-                    $preventaExistente->idPedido = $idPedido;
+                    $preventaExistente->precio = $pedido['precio'];
                     $preventaExistente->save();
                 } else {
                     // Si no existe, creamos un nuevo registro
@@ -134,39 +153,39 @@ class VenderController extends Controller
                     $preventaMesa->save();
                 }
 
-                // Cambiar el estado de la mesa a ocupado (estado = 0)
-                $idMesa = $pedido['idMesa'];
-                $mesa = Mesa::find($idMesa);
-                if (!$mesa) {
-                    return response()->json(['success' => false, 'message' => 'Mesa no encontrada al cambiar el estado'], 422);
-                }
-
-                $mesa->estado = 0;
-                $mesa->save();
-
+                // Buscar nombre del plato
                 $plato = Plato::find($pedido['idPlato']);
                 if (!$plato) {
-                    return response()->json(['success' => false, 'message' => 'Plato no encontrado'], 422);
+                    throw new \Exception('Plato con ID ' . $pedido['idPlato'] . ' no encontrado.');
                 }
 
                 $detallePlatosArray[] = [
-                    'nombre' => $plato->nombre, // ✅ Nombre del plato
+                    'nombre' => $plato->nombre,
                     'cantidad' => $pedido['cantidad']
                 ];
             }
-            // Ahora sí, convertir todos los platos en un solo JSON
+
+            // 4. Cambiar el estado de la mesa a ocupado (Si no lo está ya)
+            if ($mesa->estado !== 0) {
+                $mesa->estado = 0;
+                $mesa->save();
+            }
+
+            // Convertir todos los platos en un solo JSON para el ticket
             $detallePlatos = json_encode($detallePlatosArray);
 
-            // Buscar EstadoPedido abierto para este pedido
+            // 5. Lógica del Ticket de Cocina (EstadoPedido)
             $estadoPedido = EstadoPedido::where('idPedidoMesa', $idPedido)
                 ->where('estado', 0)
                 ->first();
 
             if ($estadoPedido) {
+                // === ACTUALIZAR TICKET EXISTENTE ===
+
                 // Decodificar el JSON actual
                 $detalleActual = json_decode($estadoPedido->detalle_platos, true) ?? [];
 
-                // Indexar por nombre para sumar cantidades fácilmente
+                // Indexar por nombre para sumar cantidades
                 $platosIndexados = [];
                 foreach ($detalleActual as $item) {
                     $platosIndexados[$item['nombre']] = $item['cantidad'];
@@ -181,7 +200,7 @@ class VenderController extends Controller
                     }
                 }
 
-                // Reconstruir el array para guardar como JSON
+                // Reconstruir el array
                 $nuevoDetalle = [];
                 foreach ($platosIndexados as $nombre => $cantidad) {
                     $nuevoDetalle[] = [
@@ -192,7 +211,8 @@ class VenderController extends Controller
 
                 $estadoPedido->detalle_platos = json_encode($nuevoDetalle);
                 $estadoPedido->save();
-                // Lanzar el evento en tiempo real
+
+                // Evento
                 event(new PedidoCocinaEvent(
                     $estadoPedido->id,
                     $nuevoDetalle,
@@ -200,14 +220,19 @@ class VenderController extends Controller
                     $estadoPedido->estado
                 ));
             } else {
-                // Crear uno nuevo solo si no existe
+                // === CREAR NUEVO TICKET USANDO TU SERVICIO ===
+
+                // Instanciamos tu servicio (que llamaste Controller) manualmente como pediste.
+                // Asegúrate de importar la clase arriba: use App\Services\EstadoPedidoController;
                 $estadoService = new EstadoPedidoController(
-                    'mesa',
-                    $data[0]['idCaja'],
-                    $detallePlatos,
-                    $idPedido,
-                    null // detalle_cliente no es necesario para mesas
+                    'mesa',             // Tipo
+                    $idCaja,            // ID Caja
+                    $detallePlatos,     // JSON de platos
+                    $idPedido,          // ID Pedido Mesa
+                    null,                // detalle_cliente (null para mesas)
+                    $mesa->numero,      // Referencia (Número de mesa)
                 );
+
                 $estadoService->registrar();
             }
 
@@ -218,7 +243,7 @@ class VenderController extends Controller
                 'message' => 'Pedidos registrados exitosamente.',
             ], 200);
         } catch (\Exception $e) {
-            DB::rollBack();
+            DB::rollBack(); // Fundamental para revertir cambios si algo falló
             Log::error('Error al registrar los pedidos: ' . $e->getMessage());
 
             return response()->json([
@@ -595,7 +620,7 @@ class VenderController extends Controller
                 ];
             }
 
-            // ENVIAR Y REISTRAR EL ESTADO DEL PEDIDO A COCINA
+            // ENVIAR Y REGISTRAR EL ESTADO DEL PEDIDO A COCINA
             if ($tipoVenta === 'llevar') {
                 // Ahora sí, convertir todos los platos en un solo JSON
                 $detallePlatos = json_encode($detallePlatosArray);

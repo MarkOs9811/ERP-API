@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Scopes\EmpresaScope;
 use App\Models\Scopes\SedeScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -19,6 +20,7 @@ class EstadoPedido extends Model
         'idPedidoLlevar',
         'idPedidoWsp',
         'detalle_cliente',
+        'numeroMesa',
         'estado',
     ];
 
@@ -45,10 +47,20 @@ class EstadoPedido extends Model
 
     protected static function booted()
     {
+        static::addGlobalScope(new EmpresaScope);
         static::addGlobalScope(new SedeScope);
-        static::creating(function ($estadoPedido) {
-            if (auth()->check() && empty($estadoPedido->idSede)) {
-                $estadoPedido->idSede = auth()->user()->idSede;
+
+        static::creating(function ($pedido) {
+            $user = auth()->user();
+
+            if ($user) {
+                if (empty($pedido->idSede)) {
+                    $pedido->idSede = $user->idSede;
+                }
+
+                if (empty($pedido->idEmpresa)) {
+                    $pedido->idEmpresa = $user->idEmpresa;
+                }
             }
         });
     }

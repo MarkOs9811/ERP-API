@@ -5,6 +5,7 @@ namespace App\Http\Controllers\api;
 use App\Http\Controllers\Controller;
 use App\Models\Venta;
 use App\Services\OpenAIService;
+use Carbon\CarbonPeriod;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -40,21 +41,47 @@ class VentasController extends Controller
     public function getVentasIA()
     {
         try {
-            // Obtener las ventas de los últimos 30 días
-            $ventas = Venta::selectRaw('DATE(fechaVenta) as fecha, SUM(total) as total')
-                ->where('fechaVenta', '>=', now()->subDays(7))
+            // 1. Aumentamos el rango a 30 días para que la IA detecte patrones semanales
+            $fechaInicio = now()->subDays(30)->startOfDay();
+            $fechaFin = now()->subDay()->endOfDay(); // Hasta ayer
+
+            // 2. Consulta a BD (Solo trae días con ventas)
+            $ventasBD = Venta::selectRaw('DATE(fechaVenta) as fecha, SUM(total) as total')
+                ->whereBetween('fechaVenta', [$fechaInicio, $fechaFin])
                 ->groupBy('fecha')
                 ->orderBy('fecha')
-                ->get();
+                ->get()
+                ->keyBy('fecha'); // Indexamos por fecha para buscar rápido
 
+            // 3. RELLENADO DE HUECOS (La clave para arreglar tu gráfica)
+            $historialCompleto = [];
+            $periodo = CarbonPeriod::create($fechaInicio, $fechaFin);
 
-            // Usar el servicio para predecir las ventas
-            $resultados = $this->openAIService->predecirVentas($ventas);
+            foreach ($periodo as $date) {
+                $fechaStr = $date->format('Y-m-d');
+
+                // Si existe venta en BD la usamos, si no, ponemos 0
+                $totalDia = isset($ventasBD[$fechaStr]) ? (float)$ventasBD[$fechaStr]->total : 0;
+
+                $historialCompleto[] = [
+                    'fecha' => $fechaStr,
+                    'total' => $totalDia, // Aquí le decimos a la IA explícitamente que fue 0
+                ];
+            }
+
+            Log::info("Enviando a OpenAI:", $historialCompleto); // <--- VERIFICA ESTO EN TU LOG
+            $resultados = $this->openAIService->predecirVentas(collect($historialCompleto));
+
             Log::info("Resultados de la IA: ", ['resultados' => $resultados]);
-            return response()->json(['success' => true, 'data' => $resultados], 200);
+
+            return response()->json([
+                'success' => true,
+                'data' => $resultados,
+                'historial' => $historialCompleto // Enviamos también el historial corregido al front
+            ], 200);
         } catch (\Exception $e) {
             Log::error("Error en getVentasIA: " . $e->getMessage());
-            return response()->json(['success' => false, 'message' => 'Error al predecir las ventas.'], 500);
+            return response()->json(['success' => false, 'message' => 'Error al predecir ventas.'], 500);
         }
     }
     public function generarRecomendaciones()
