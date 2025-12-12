@@ -512,8 +512,6 @@ class VenderController extends Controller
 
             $pedidosToVender = "";
 
-
-
             // Lógica para diferentes tipos de venta
             if ($tipoVenta === 'llevar') {
 

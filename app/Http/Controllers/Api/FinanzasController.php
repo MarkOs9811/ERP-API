@@ -202,7 +202,8 @@ class FinanzasController extends Controller
                 'totalDebitos' => $totalDebitos,
                 'totalCreditos' => $totalCreditos,
                 'balance' => $balance,
-                'resultadoEjercicio' => $resultado
+                'resultadoEjercicio' => $resultado,
+                'registroEjercicio' => $registroEjercicio
             ];
             return response()->json([
                 'success' => true,
@@ -213,6 +214,293 @@ class FinanzasController extends Controller
                 'success' => false,
                 'message' => 'Error al obtener el libro mayor',
                 'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    // CERRAR VENTAS ANTES DE CARGAR AL LIBRO MAYOR
+    public function procesarCierreVentasAnual(Request $request)
+    {
+        $user = Auth()->user();
+        $idEmpresa = $user->idEmpresa;
+        // Si quieres procesar un año específico, envíalo, sino usa el actual
+        $anio = $request->input('anio', date('Y'));
+
+        DB::beginTransaction();
+
+        try {
+            // PASO 1: Obtener ventas agrupadas por día
+            // Esto es mucho más eficiente que traerlas todas y sumarlas con PHP
+            $ventasPorDia = DB::table('ventas')
+                ->where('idEmpresa', $idEmpresa)
+                ->whereYear('fechaVenta', $anio) // Filtramos por el año
+                ->where('estado', 1) // Solo ventas activas
+                ->select(
+                    'fechaVenta',
+                    DB::raw('SUM(total) as total_dia'),
+                    DB::raw('SUM(igv) as igv_dia'),
+                    DB::raw('SUM(subtotal) as subtotal_dia'), // O la columna que uses para la base imponible
+                    DB::raw('COUNT(id) as cantidad_ventas')
+                )
+                ->groupBy('fechaVenta')
+                ->get();
+
+            if ($ventasPorDia->isEmpty()) {
+                return response()->json(['success' => false, 'message' => "No se encontraron ventas en el año $anio."], 404);
+            }
+
+            $asientosCreados = 0;
+
+            // PASO 2: Recorrer cada día y crear su asiento contable
+            foreach ($ventasPorDia as $dia) {
+
+                // Verificamos si YA existe un cierre para ese día específico para no duplicar
+                $existe = LibroDiario::where('idEmpresa', $idEmpresa)
+                    ->where('fecha', $dia->fechaVenta)
+                    ->where('descripcion', 'LIKE', 'Cierre diario de ventas%')
+                    ->exists();
+
+                if ($existe) {
+                    continue; // Saltamos este día si ya estaba procesado
+                }
+
+                // A. Crear Cabecera del Asiento
+                $libro = new LibroDiario();
+                $libro->idEmpresa = $idEmpresa;
+                $libro->idUsuario = $user->id;
+                $libro->fecha = $dia->fechaVenta; // La fecha del asiento es la fecha de la venta
+                $libro->estado = 1; // 1 = Confirmado/Activo
+                $libro->descripcion = "Cierre diario de ventas (" . $dia->cantidad_ventas . " ops)";
+                $libro->save();
+
+                // B. Crear Detalles (Asiento Contable)
+
+                // 1. CUENTA 12 - CLIENTES (Total a Cobrar) - DEBE
+                // Usamos ID 4 según tu imagen (image_9e3f64)
+                DetalleLibro::create([
+                    'idEmpresa'     => $idEmpresa,
+                    'idLibroDiario' => $libro->id,
+                    'idCuenta'      => 4,
+                    'tipo'          => 'debe',
+                    'monto'         => $dia->total_dia,
+                    'accion'        => 'debe',
+                    'estado'        => 1
+                ]);
+
+                // 2. CUENTA 40 - IGV (Impuesto) - HABER
+                // Usamos ID 11 según tu imagen
+                if ($dia->igv_dia > 0) {
+                    DetalleLibro::create([
+                        'idEmpresa'     => $idEmpresa,
+                        'idLibroDiario' => $libro->id,
+                        'idCuenta'      => 11,
+                        'tipo'          => 'haber',
+                        'monto'         => $dia->igv_dia,
+                        'accion'        => 'haber',
+                        'estado'        => 1
+                    ]);
+                }
+
+                // 3. CUENTA 70 - VENTAS (INGRESO REAL) - HABER
+                // Usamos ID 6 (Venta mercaderia - Grupo 7) según tu imagen
+                // ¡ESTO HARÁ QUE TUS INGRESOS DEJEN DE SER CERO!
+                DetalleLibro::create([
+                    'idEmpresa'     => $idEmpresa,
+                    'idLibroDiario' => $libro->id,
+                    'idCuenta'      => 6,
+                    'tipo'          => 'haber',
+                    'monto'         => $dia->subtotal_dia,
+                    'accion'        => 'haber',
+                    'estado'        => 1
+                ]);
+
+                $asientosCreados++;
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => "Proceso completado. Se generaron $asientosCreados asientos contables para el año $anio."
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al procesar el cierre de ventas',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    public function cargarLibroMayor(Request $request)
+    {
+        $user = Auth()->user();
+        // 1. Validar inputs
+        $anio = $request->input('anio', date('Y'));
+        $idEmpresa = $request->input('idEmpresa', 2);
+
+        DB::beginTransaction();
+
+        try {
+            // --- PASO A: LIMPIEZA PREVIA ---
+            LibroMayor::where('idEmpresa', $idEmpresa)
+                ->whereYear('fecha', $anio)
+                ->delete();
+
+            // --- PASO B: CONSULTA CORREGIDA ---
+            // Ya no pedimos 'debe' ni 'haber', pedimos 'monto' y 'tipo'
+            $movimientos = DB::table('detalle_libros')
+                ->join('libro_diarios', 'detalle_libros.idLibroDiario', '=', 'libro_diarios.id')
+                ->where('libro_diarios.idEmpresa', $idEmpresa)
+                ->whereYear('libro_diarios.fecha', $anio)
+                ->select(
+                    'detalle_libros.idCuenta',
+                    'detalle_libros.monto',    // <--- CAMBIO IMPORTANTE
+                    'detalle_libros.tipo',     // <--- CAMBIO IMPORTANTE
+                    // 'detalle_libros.descripcion', // Lo quité porque no parece existir en tu imagen
+                    'libro_diarios.descripcion as descripcion_asiento',
+                    'libro_diarios.fecha',
+                    'libro_diarios.idEmpresa',
+                    'libro_diarios.id as idAsiento'
+                )
+                ->get();
+
+            if ($movimientos->isEmpty()) {
+                DB::rollBack();
+                return response()->json([
+                    'success' => false,
+                    'message' => "No se encontraron movimientos para el año $anio."
+                ], 404);
+            }
+
+            // --- PASO C: TRANSFORMACIÓN DE DATOS ---
+            $dataToInsert = [];
+            $now = Carbon::now();
+
+            foreach ($movimientos as $mov) {
+                // Lógica para separar Debe y Haber según el 'tipo'
+                $debe = 0;
+                $haber = 0;
+
+                // Convertimos a minúsculas por seguridad y comparamos
+                if (strtolower($mov->tipo) === 'debe') {
+                    $debe = $mov->monto;
+                } else {
+                    $haber = $mov->monto;
+                }
+
+                $nombreTransaccion = 'Transacción N° ' . $mov->idAsiento;
+
+                $dataToInsert[] = [
+                    'idUsuario'   => $user->id,
+                    'idEmpresa'   => $mov->idEmpresa,
+                    'idCuentaContable' => $mov->idCuenta, // Asegúrate que en tu BD sea idCuentaContable o idCuenta
+
+                    // --- CORRECCIÓN AQUÍ ---
+                    'nombreTransaccion' => $nombreTransaccion, // Corregido el typo y asignado valor
+
+                    'fecha'       => $mov->fecha,
+                    'descripcion' => $mov->descripcion_asiento,
+                    'debe'        => $debe,
+                    'haber'       => $haber,
+                    'created_at'  => $now,
+                    'updated_at'  => $now,
+                ];
+            }
+
+            // --- PASO D: INSERCIÓN MASIVA ---
+            $chunks = array_chunk($dataToInsert, 500);
+            foreach ($chunks as $chunk) {
+                LibroMayor::insert($chunk);
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Carga completada. Se procesaron ' . count($dataToInsert) . ' registros.'
+            ], 200);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            // Loguear el error exacto
+            \Illuminate\Support\Facades\Log::error("Error en CargarLibroMayor: " . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error interno al cargar el libro mayor.',
+                'error'   => $e->getMessage()
+            ], 500);
+        }
+    }
+    public function cierreEjercicio(Request $request)
+    {
+        // 1. Obtener usuario autenticado
+        $user = Auth()->user();
+
+        $idEmpresa = $user->idEmpresa;
+
+        $anio = $request->input('anio', date('Y'));
+
+        if (!$idEmpresa) {
+            return response()->json(['success' => false, 'message' => 'El usuario no tiene empresa asignada'], 400);
+        }
+
+        DB::beginTransaction();
+
+        try {
+
+            $ingresos = DB::table('libro_mayors')
+                ->join('cuentas_contables', 'libro_mayors.idCuentaContable', '=', 'cuentas_contables.id')
+                ->where('libro_mayors.idEmpresa', $idEmpresa) // Usa el ID del usuario
+                ->whereYear('libro_mayors.fecha', $anio)
+                ->where('cuentas_contables.idGrupoCuenta', 7)
+                ->sum(DB::raw('libro_mayors.haber - libro_mayors.debe'));
+
+            // 2. Calcular GASTOS (idGrupoCuenta = 6)
+            $gastos = DB::table('libro_mayors')
+                ->join('cuentas_contables', 'libro_mayors.idCuentaContable', '=', 'cuentas_contables.id')
+                ->where('libro_mayors.idEmpresa', $idEmpresa) // Usa el ID del usuario
+                ->whereYear('libro_mayors.fecha', $anio)
+                ->where('cuentas_contables.idGrupoCuenta', 6)
+                ->sum(DB::raw('libro_mayors.debe - libro_mayors.haber'));
+
+            $ingresos = $ingresos ?? 0;
+            $gastos = $gastos ?? 0;
+
+            // 3. Guardar registro
+            $registro = RegistrosEjercicios::updateOrCreate(
+                [
+                    'idEmpresa' => $idEmpresa,
+                    'temporada' => $anio
+                ],
+                [
+                    'idUsuario'   => $user->id,
+                    'fechaInicio' => Carbon::createFromDate($anio, 1, 1)->format('Y-m-d'),
+                    'fechaFin'    => Carbon::createFromDate($anio, 12, 31)->format('Y-m-d'),
+                    'ingresos'    => $ingresos,
+                    'gastos'      => $gastos,
+                    'created_at'  => Carbon::now(),
+                    'updated_at'  => Carbon::now()
+                ]
+            );
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => "Cierre del ejercicio $anio calculado correctamente.",
+                'data'    => [
+                    'ingresos'  => number_format($ingresos, 2),
+                    'gastos'    => number_format($gastos, 2),
+                    'resultado' => number_format($ingresos - $gastos, 2)
+                ]
+            ], 200);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al calcular el cierre del ejercicio',
+                'error'   => $e->getMessage()
             ], 500);
         }
     }
@@ -326,9 +614,9 @@ class FinanzasController extends Controller
 
             // Registrar en `detalle_libros` usando el método privado
             $this->registrarDetalleLibro($libroDiario->id, [
-                ['codigo' => '101', 'accion' => 'debe', 'monto' => $montoTotal],      // Banco/Caja (DEBE)
-                ['codigo' => '4212', 'accion' => 'haber', 'monto' => $montoNeto],     // Cuentas por Pagar a Proveedores (HABER)
-                ['codigo' => '4011', 'accion' => 'haber', 'monto' => $montoIGV],      // IGV por Pagar (HABER)
+                ['codigo' => '101', 'accion' => 'debe', 'monto' => $cuota->monto],
+
+                ['codigo' => '1212', 'accion' => 'haber', 'monto' => $cuota->monto]
             ]);
 
             // Confirmar la transacción
@@ -549,9 +837,10 @@ class FinanzasController extends Controller
             // Registrar en la tabla `libro_diario`
             $libroDiario = new LibroDiario();
             $libroDiario->idUsuario = auth()->id();
+            $libroDiario->idEmpresa = auth()->user()->idEmpresa; // IMPORTANTE
             $libroDiario->fecha = Carbon::now();
-            $libroDiario->estado = 0; // Estado pendiente por defecto
-            $libroDiario->descripcion = $descripcion;
+            $libroDiario->estado = 1;
+            $libroDiario->descripcion = "Cobro de cuota #" . $cuota->id;
             $libroDiario->save();
 
             // Calcular el IGV y el monto neto
@@ -562,9 +851,9 @@ class FinanzasController extends Controller
 
             // Registrar en `detalle_libros` usando el método privado
             $this->registrarDetalleLibro($libroDiario->id, [
-                ['codigo' => '101', 'accion' => 'debe', 'monto' => $montoTotal],      // Caja/Banco (DEBE)
-                ['codigo' => '1212', 'accion' => 'haber', 'monto' => $montoNeto],    // Cuentas por Cobrar Comerciales (HABER)
-                ['codigo' => '4011', 'accion' => 'haber', 'monto' => $montoIGV],     // IGV por Pagar (HABER)
+                ['codigo' => '101', 'accion' => 'debe', 'monto' => $cuota->monto],
+
+                ['codigo' => '1212', 'accion' => 'haber', 'monto' => $cuota->monto]
             ]);
 
             // Confirmar la transacción

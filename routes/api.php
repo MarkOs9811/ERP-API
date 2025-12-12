@@ -384,9 +384,11 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     // MODULO FINANZAS - LIBRO DIARIO
     Route::get('/libroDiario', [FinanzasController::class, 'getLibroDiario']);
-
+    Route::post('/finanzas/cargarLibroMayor', [FinanzasController::class, 'cargarLibroMayor']);
+    Route::post('/finanzas/cierreVentasAnual', [FinanzasController::class, 'procesarCierreVentasAnual']);
     // MODULO FINANZAS - LIBRO MAYOR
     Route::get('/libroMayor', [FinanzasController::class, 'getLibroMayor']);
+    Route::post('/finanzas/cierreEjercicio', [FinanzasController::class, 'cierreEjercicio']);
 
     // MODULO FINANZAS - CUENTAS POR COBRAR
     Route::get('/cuentasPorCobrar', [FinanzasController::class, 'getCuentasPorCobrar']);
