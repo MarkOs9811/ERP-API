@@ -484,7 +484,10 @@ class VenderController extends Controller
             $tipoVenta = $request->input('tipoVenta');
             $numeroCuotas = $request->input('cuotas');
 
+            $tasaIgv = (float)(ConfiguracionHelper::clave('impuestos') ?? 0.18);
 
+            // Creamos el factor divisor (ej: 1 + 0.18 = 1.18)
+            $factorDivisor = 1 + $tasaIgv;
 
             $dniCliente = null;
             $ClienteId = null;
@@ -523,15 +526,17 @@ class VenderController extends Controller
                         'message' => 'No se recibieron pedidos válidos para llevar.',
                     ]);
                 }
-                $pedidosToVender = collect($pedidoToLlevar)->map(function ($pedido) {
+                $pedidosToVender = collect($pedidoToLlevar)->map(function ($pedido) use ($factorDivisor) {
+                    $precioTotal = (float)$pedido['precio'] * $pedido['cantidad'];
                     return (object)[
                         "idPlato" => $pedido['id'],
                         "cantidad" => $pedido['cantidad'],
                         "descripcion" => $pedido['nombre'],
-                        "valor_unitario" => (float)$pedido['precio'] / 1.18,
-                        "valor_total" => (float)$pedido['precio'] * $pedido['cantidad'] / 1.18,
+                        "valor_unitario" => (float)$pedido['precio'] / $factorDivisor,
+                        "valor_total" => $precioTotal / $factorDivisor,
                         "precio_unitario" => (float)$pedido['precio'],
-                        "igv" => ((float)$pedido['precio'] * $pedido['cantidad']) - ((float)$pedido['precio'] * $pedido['cantidad'] / 1.18),
+
+                        "igv" => $precioTotal - ($precioTotal / $factorDivisor),
                     ];
                 });
             } elseif ($tipoVenta === 'web') {
@@ -539,16 +544,18 @@ class VenderController extends Controller
 
                 $pedidosToVender = DetallePedidosWeb::where('idPedido', $idPedidoWeb)->get();
 
-                $pedidosToVender = $pedidosToVender->map(function ($preventa) {
+                $pedidosToVender = $pedidosToVender->map(function ($preventa) use ($factorDivisor) {
                     $platoNombre = Plato::find($preventa->idPlato)->nombre ?? 'Plato desconocido';
+                    $precioTotal = (float)$preventa->precio * $preventa->cantidad;
+
                     return (object)[
                         "idPlato" => $preventa->idPlato,
                         "cantidad" => $preventa->cantidad,
                         "descripcion" => $platoNombre,
-                        "valor_unitario" => (float)$preventa->precio / 1.18,
-                        "valor_total" => (float)$preventa->precio * $preventa->cantidad / 1.18,
+                        "valor_unitario" => (float)$preventa->precio / $factorDivisor, // [MODIFICADO]
+                        "valor_total" => $precioTotal / $factorDivisor, // [MODIFICADO]
                         "precio_unitario" => (float)$preventa->precio,
-                        "igv" => ((float)$preventa->precio * $preventa->cantidad) - ((float)$preventa->precio * $preventa->cantidad / 1.18),
+                        "igv" => $precioTotal - ($precioTotal / $factorDivisor), // [MODIFICADO]
                     ];
                 });
             } else {
@@ -566,18 +573,18 @@ class VenderController extends Controller
                     ]);
                 }
 
-                $pedidosToVender = $pedidosToVender->map(function ($preventa) {
+                $pedidosToVender = $pedidosToVender->map(function ($preventa) use ($factorDivisor) {
                     $platoNombre = Plato::find($preventa->idPlato)->nombre ?? 'Plato desconocido';
-
+                    $precioTotal = (float)$preventa->precio * $preventa->cantidad;
 
                     return (object)[
                         "idPlato" => $preventa->idPlato,
                         "cantidad" => $preventa->cantidad,
                         "descripcion" => $platoNombre,
-                        "valor_unitario" => (float)$preventa->precio / 1.18,
-                        "valor_total" => (float)$preventa->precio * $preventa->cantidad / 1.18,
+                        "valor_unitario" => (float)$preventa->precio / $factorDivisor,
+                        "valor_total" => $precioTotal / $factorDivisor,
                         "precio_unitario" => (float)$preventa->precio,
-                        "igv" => ((float)$preventa->precio * $preventa->cantidad) - ((float)$preventa->precio * $preventa->cantidad / 1.18),
+                        "igv" => $precioTotal - ($precioTotal / $factorDivisor),
                     ];
                 });
             }
@@ -633,8 +640,8 @@ class VenderController extends Controller
             }
 
             // Calcular totales
-            $igv = $totalPrecio * 0.18;
-            $subtotal = $totalPrecio - $igv;
+            $subtotal = $totalPrecio / $factorDivisor;
+            $igv = $totalPrecio - $subtotal;
             $total = $totalPrecio;
 
 

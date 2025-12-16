@@ -603,12 +603,10 @@ class ConfiguracionController extends Controller
         try {
             $user = auth()->user();
 
-            // 1. Reconstruir el color (Agregamos el # que quitamos en el front)
-            // Si por alguna razón llega con #, esto lo maneja, pero asumimos que llega "FF0000"
+
             $hexColor = '#' . str_replace('#', '', $colorTema);
 
-            // 2. Validar que sea un Hexadecimal válido
-            // Creamos un validador "al vuelo" para una variable simple
+
             $validator = Validator::make(['color' => $hexColor], [
                 'color' => ['required', 'regex:/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/']
             ]);
@@ -628,8 +626,6 @@ class ConfiguracionController extends Controller
                     'clave'  => $hexColor
                 ]
             );
-
-
             return response()->json([
                 'success' => true,
                 'message' => 'Color del tema actualizado correctamente.',
@@ -637,6 +633,42 @@ class ConfiguracionController extends Controller
             ], 200);
         } catch (\Exception $e) {
             Log::error('Error actualizando color: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error interno al guardar la configuración.'
+            ], 500);
+        }
+    }
+
+    public function actualizarIgv($porcentaje)
+    {
+        try {
+            $user = auth()->user();
+
+            $igvValue = floatval($porcentaje);
+
+            if ($igvValue < 0 || $igvValue > 100) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El porcentaje de IGV debe estar entre 0 y 100.'
+                ], 422);
+            }
+
+            Configuraciones::updateOrCreate(
+
+                ['idEmpresa' => $user->idEmpresa, 'tipo' => 'impuestos'],
+                [
+                    'nombre' => 'igv',
+                    'clave'  => $igvValue
+                ]
+            );
+            return response()->json([
+                'success' => true,
+                'message' => 'Porcentaje de IGV actualizado correctamente.',
+                'data'    => ['igv' => $igvValue]
+            ], 200);
+        } catch (\Exception $e) {
+            Log::error('Error actualizando IGV: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Error interno al guardar la configuración.'

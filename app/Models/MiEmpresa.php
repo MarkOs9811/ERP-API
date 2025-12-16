@@ -35,7 +35,7 @@ class MiEmpresa extends Model
     public function roles()
     {
         return $this->belongsToMany(Role::class, 'empresa_roles', 'idEmpresa', 'idRole')
-            ->withPivot('estado', 'fecha_expiracion')
+            ->withPivot('estado')
             ->withTimestamps();
     }
 }

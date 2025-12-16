@@ -124,11 +124,19 @@ class ComprasController extends Controller
                 $libroDiario->estado = 0;
                 $libroDiario->save();
 
+                // --- CORRECCIÓN AQUÍ ---
                 $this->registrarDetalleLibro($libroDiario->id, [
-                    ['codigo' => '101', 'accion' => 'debe', 'monto' => $request->totalPagado],
-                    ['codigo' => '601', 'accion' => 'haber', 'monto' => $montoBase],
-                    ['codigo' => '4011', 'accion' => 'haber', 'monto' => $igv],
+                    // 1. El Gasto (Mercadería/Compra) va al DEBE (Aumenta el gasto)
+                    ['codigo' => '601', 'accion' => 'debe', 'monto' => $montoBase],
+
+                    // 2. El IGV va al DEBE (Es un crédito fiscal a tu favor)
+                    ['codigo' => '4011', 'accion' => 'debe', 'monto' => $igv],
+
+                    // 3. La Caja va al HABER (El dinero sale de tu bolsillo)
+                    ['codigo' => '101', 'accion' => 'haber', 'monto' => $request->totalPagado],
                 ]);
+
+
                 Log::info('Libro diario registrado.');
             }
 

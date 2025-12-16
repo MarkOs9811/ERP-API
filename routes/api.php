@@ -435,6 +435,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     //ESTILOS CONFIGURAICON GENERALES
     Route::put('/estiloGeneral/{temaColor}', [ConfiguracionController::class, 'actualizarColorTema']);
+    Route::put('/configIgv/{porcentaje}', [ConfiguracionController::class, 'actualizarIgv']);
 
     // RUTAS PARA TODOS LOS REPORTES A EXCEL
 
