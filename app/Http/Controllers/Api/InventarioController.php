@@ -17,7 +17,7 @@ class InventarioController extends Controller
     public function getInventario()
     {
         try {
-            $inventario = Inventario::orderBy('id','desc')->with('categoria', 'unidad')->get();
+            $inventario = Inventario::orderBy('id', 'desc')->with('categoria', 'unidad')->get();
             return response()->json(['success' => true, 'data' => $inventario, 'message' => 'Inventario obtenido'], 200);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
@@ -38,7 +38,7 @@ class InventarioController extends Controller
                     // Aquí aplicas tu regla personalizada
                     $this->uniqueEmpresaSede('inventarios', 'nombre', $id),
                 ],
-                 'marca' => [
+                'marca' => [
                     'nullable',
                     'string',
                     'max:255',

@@ -15,6 +15,14 @@ class Configuraciones extends Model
         'idEmpresa',
         'tipo',
         'clave',
+        'valor 1',
+        'valor 2',
+        'valor 3',
+        'valor 4',
+        'valor 5',
+        'valor 6',
+        'descripcion',
+        'estado',
     ];
 
     protected static function booted()

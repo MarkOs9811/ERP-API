@@ -5,10 +5,12 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Area;
 use App\Models\Cargo;
+use App\Models\Configuraciones;
 use App\Models\Empleado;
 use App\Models\Horario;
 use App\Models\MiEmpresa;
 use App\Models\Persona;
+use App\Models\Sede;
 use App\Models\User;
 use Exception;
 use Google\Service\ServiceControl\Auth;
@@ -90,6 +92,14 @@ class EmpresasAdminController extends Controller
                 'idEmpresa' => $empresa->id
             ]);
 
+            $sede = Sede::create([
+                'codigo'    => $this->codigoSedeRandom(), // Generamos el código
+                'nombre'    => 'Sede Principal',          // Nombre por defecto
+                'direccion' => $request->direccion,       // Hereda dirección de la empresa
+                'telefono'  => $request->telefono,        // Hereda teléfono
+                'idEmpresa' => $empresa->id               // FORZAMOS el ID para ignorar el auth()->user() del modelo
+            ]);
+
             $horario = Horario::create([
                 'nombre' => 'Horario General',
                 'horaEntrada' => '08:00:00',
@@ -133,15 +143,20 @@ class EmpresasAdminController extends Controller
             $empleado->idHorario = $horario->id;
             $empleado->salario = 3000.00;
 
+
+
             if (in_array('idEmpresa', $empleado->getFillable())) {
                 $empleado->idEmpresa = $empresa->id;
             }
             $empleado->save();
+            // 6. Crear integracion TWILIO, GOOGLE, OPENAI
+            $this->crearConfiguracionIntegracion($empresa->id);
 
             // 7. Crear Usuario de Sistema
             $user = new User();
             $user->idEmpleado = $empleado->id;
             $user->idEmpresa = $empresa->id;
+            $user->idSede = $sede->id;
             $user->email = $request->email;
             $user->correo = $request->email;
             $user->password = Hash::make('123');
@@ -173,7 +188,69 @@ class EmpresasAdminController extends Controller
             return response()->json(['message' => 'Error interno al crear empresa', 'error' => $e->getMessage()], 500);
         }
     }
+    private function crearConfiguracionIntegracion($empresaId)
+    {
+        // Definimos los datos exactos que me pasaste
+        $configs = [
+            [
+                'nombre'      => 'Open AI',
+                'descripcion' => '
+                Clave de API y parámetros para la integración con los servicios de OpenAI. Permite el acceso a funcionalidades de inteligencia artificial como generación de texto, análisis y otros servicios de IA provistos por OpenAI.',
+                'clave'       => '',
+                'valor1'      => null,
+                'valor2'      => null,
+                'valor3'      => null,
+                'valor4'      => null,
+            ],
+            [
+                'nombre'      => 'Google Service',
+                'descripcion' => 'Credenciales y parámetros para la integración OAuth2 con Google. Permite la autenticación de usuarios mediante Google y habilita el acceso a servicios de Google Cloud como Calendar, Drive y Sheets.',
+                'clave'       => '',
+                'valor1'      => '',
+                'valor2'      => '',
+                'valor3'      => null,
+                'valor4'      => '',
+            ],
+            [
+                'nombre'      => 'Twilio',
+                'descripcion' => 'Número de WhatsApp empresarial conectado vía Twilio para recibir pedidos y atender clientes directamente desde el sistema.',
+                'clave'       => null,
+                'valor1'      => '',
+                'valor2'      => '',
+                'valor3'      => '',
+                'valor4'      => null,
+            ]
+        ];
 
+        // Recorremos y creamos cada configuración individualmente
+        foreach ($configs as $data) {
+            $configuracion = new Configuraciones();
+
+            $configuracion->idEmpresa   = $empresaId;
+            $configuracion->nombre      = $data['nombre'];
+            $configuracion->tipo        = "integracion";
+            $configuracion->descripcion = $data['descripcion'];
+            $configuracion->clave       = $data['clave'];
+
+            // Asignación directa controlando nulos
+            if (!empty($data['valor1'])) $configuracion->valor1 = $data['valor1'];
+            if (!empty($data['valor2'])) $configuracion->valor2 = $data['valor2'];
+            if (!empty($data['valor3'])) $configuracion->valor3 = $data['valor3'];
+            if (!empty($data['valor4'])) $configuracion->valor4 = $data['valor4'];
+
+            $configuracion->estado = 0;
+            $configuracion->save();
+        }
+    }
+    private function codigoSedeRandom()
+    {
+        $characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        $codigo = '';
+        for ($i = 0; $i < 6; $i++) {
+            $codigo .= $characters[rand(0, strlen($characters) - 1)];
+        }
+        return $codigo;
+    }
     public function updateEmpresa(Request $request, $id)
     {
         try {
