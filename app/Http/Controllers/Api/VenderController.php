@@ -552,10 +552,10 @@ class VenderController extends Controller
                         "idPlato" => $preventa->idPlato,
                         "cantidad" => $preventa->cantidad,
                         "descripcion" => $platoNombre,
-                        "valor_unitario" => (float)$preventa->precio / $factorDivisor, // [MODIFICADO]
-                        "valor_total" => $precioTotal / $factorDivisor, // [MODIFICADO]
+                        "valor_unitario" => (float)$preventa->precio / $factorDivisor,
+                        "valor_total" => $precioTotal / $factorDivisor,
                         "precio_unitario" => (float)$preventa->precio,
-                        "igv" => $precioTotal - ($precioTotal / $factorDivisor), // [MODIFICADO]
+                        "igv" => $precioTotal - ($precioTotal / $factorDivisor),
                     ];
                 });
             } else {

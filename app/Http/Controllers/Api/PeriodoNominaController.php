@@ -31,9 +31,10 @@ class PeriodoNominaController extends Controller
 
     public function savePeriodoNomina(Request $request)
     {
-
         try {
             DB::beginTransaction();
+
+            // Validación original
             $validatedData = $request->validate([
                 'periodosPreview' => 'required|array|min:1',
                 'periodosPreview.*.nombrePeriodo' => 'required|string|max:100',
@@ -42,16 +43,49 @@ class PeriodoNominaController extends Controller
                 'periodosPreview.*.estado' => 'required|integer|in:0',
             ]);
 
-
             $periodosParaGuardar = $validatedData['periodosPreview'];
 
+            // ---------------------------------------------------------------------
+            // PASO CLAVE: Verificar el estado del último periodo existente en BD
+            // ---------------------------------------------------------------------
+
+            // NOTA: Si tu sistema maneja empresas, asegúrate de filtrar aquí por idEmpresa
+            // Ejemplo: ->where('idEmpresa', $request->idEmpresa)
+            $ultimoPeriodoBD = PeriodoNomina::orderBy('fecha_fin', 'desc')->first();
+
+            $debeAbrirPrimerPeriodo = false;
+
+            // Si existe un periodo anterior Y está en estado 3 (Cerrado)
+            if ($ultimoPeriodoBD && $ultimoPeriodoBD->estado == 3) {
+                $debeAbrirPrimerPeriodo = true;
+            }
+
+            // Si NO existe ningún periodo (es la primera vez que se usa el sistema), 
+            // tal vez quieras que el primero sea abierto también. Descomenta si deseas eso:
+            // if (!$ultimoPeriodoBD) { $debeAbrirPrimerPeriodo = true; }
+
+            // ---------------------------------------------------------------------
+
             // 3. Iterar y guardar
-            foreach ($periodosParaGuardar as $periodoData) {
+            foreach ($periodosParaGuardar as $index => $periodoData) {
+
+                $estadoAInsertar = $periodoData['estado']; // Por defecto viene en 0
+
+                // Si es la PRIMERA iteración del bucle ($index === 0)
+                // Y la lógica nos dice que debemos abrirlo
+                if ($index === 0 && $debeAbrirPrimerPeriodo) {
+                    $estadoAInsertar = 1; // Forzamos estado 1 (Abierto)
+                }
+
                 PeriodoNomina::create([
                     'nombrePeriodo' => $periodoData['nombrePeriodo'],
                     'fecha_inicio'  => $periodoData['fecha_inicio'],
                     'fecha_fin'     => $periodoData['fecha_fin'],
-                    'estado'        => $periodoData['estado'],
+                    'estado'        => $estadoAInsertar, // <--- Usamos la variable calculada
+
+                    // Asegúrate de enviar idEmpresa/idSede si son necesarios, 
+                    // ya que vi en tu foto que la tabla los tiene pero el create no.
+                    // 'idEmpresa' => $request->idEmpresa, 
                 ]);
             }
 
@@ -60,18 +94,14 @@ class PeriodoNominaController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Periodos generados y guardados correctamente.'
-            ], 201); // 201 = Creado
-
+                'message' => 'Periodos generados correctamente. ' . ($debeAbrirPrimerPeriodo ? 'El primer periodo se ha abierto automáticamente.' : '')
+            ], 201);
         } catch (\Exception $e) {
-
             DB::rollBack();
-
-            // Devolvemos un error 500 (Error Interno del Servidor)
             return response()->json([
                 'success' => false,
                 'message' => 'Ocurrió un error interno al guardar los periodos.',
-                'error'   => $e->getMessage() // Opcional: para depuración
+                'error'   => $e->getMessage()
             ], 500);
         }
     }
