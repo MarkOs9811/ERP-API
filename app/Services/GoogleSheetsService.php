@@ -20,13 +20,14 @@ class GoogleSheetsService
 
     // 1. CONSTRUCTOR ACTUALIZADO
     // Ya no recibe un User, usa la configuración central
+    // 1. CONSTRUCTOR ACTUALIZADO Y CORREGIDO
     public function __construct()
     {
         // Obtener credenciales desde la fila "Google Service"
         $clientId     = ConfiguracionHelper::valor1('Google Service');
         $clientSecret = ConfiguracionHelper::valor2('Google Service');
         $redirectUri  = ConfiguracionHelper::valor3('Google Service');
-        $refreshToken = ConfiguracionHelper::valor4('Google Service'); // <-- Leemos de valor4
+        $refreshToken = ConfiguracionHelper::valor4('Google Service');
 
         if (!$refreshToken) {
             Log::error("Google Refresh Token no está configurado en 'valor4' de 'Google Service'");
@@ -38,23 +39,35 @@ class GoogleSheetsService
         $this->client->setClientSecret($clientSecret);
         $this->client->setRedirectUri($redirectUri);
         $this->client->setAccessType('offline');
+        $this->client->setPrompt('consent'); // Recomendado agregar esto
         $this->client->setScopes(config('services.google.scopes'));
 
-        // Refrescar el token de acceso
+        // --- AQUÍ ESTÁ LA CORRECCIÓN CLAVE ---
         try {
-            $this->client->fetchAccessTokenWithRefreshToken($refreshToken);
+            // 1. Obtenemos el array con el token de acceso
+            $accessToken = $this->client->fetchAccessTokenWithRefreshToken($refreshToken);
 
-            // (Opcional) Si Google da un *nuevo* refresh token, lo guardamos
-            $newToken = $this->client->getAccessToken();
-            if (isset($newToken['refresh_token']) && $newToken['refresh_token'] !== $refreshToken) {
+            // 2. Verificamos si hubo error al canjearlo
+            if (isset($accessToken['error'])) {
+                Log::error('Error al refrescar token de Google: ' . json_encode($accessToken));
+                throw new \Exception("Error de autenticación con Google: " . ($accessToken['error_description'] ?? 'Error desconocido'));
+            }
+
+            // 3. ¡ESTA ES LA LÍNEA QUE FALTABA! 
+            // Forzamos al cliente a usar este token de acceso para las siguientes llamadas
+            $this->client->setAccessToken($accessToken);
+
+            // 4. (Tu lógica original) Si Google da un *nuevo* refresh token, lo guardamos
+            if (isset($accessToken['refresh_token']) && $accessToken['refresh_token'] !== $refreshToken) {
                 Log::info('Google emitió un nuevo Refresh Token. Guardando en valor4.');
-                ConfiguracionHelper::guardarValorColumna('Google Service', 'valor4', $newToken['refresh_token']);
+                ConfiguracionHelper::guardarValorColumna('Google Service', 'valor4', $accessToken['refresh_token']);
             }
         } catch (\Exception $e) {
             Log::error('Error al renovar el token central de Google: ' . $e->getMessage());
             throw new \Exception('No se pudo autenticar con Google: ' . $e->getMessage());
         }
 
+        // Ahora los servicios se inician con un cliente YA AUTENTICADO
         $this->sheetsService = new GoogleSheets($this->client);
         $this->driveService = new GoogleDrive($this->client);
     }
