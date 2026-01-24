@@ -33,37 +33,33 @@ class OpenAIService
             if (!$this->client) {
                 throw new \Exception("OpenAI no está configurado.");
             }
+
+            // Obtenemos solo los nombres para no gastar tantos tokens
             $platosMenu = Plato::all()->pluck('nombre')->toArray();
-            $ejemploMenu = implode(", ", $platosMenu); // Mostrar TODOS los platos
+            $listaMenu = implode(", ", $platosMenu);
 
             $response = $this->client->chat()->create([
                 'model' => 'gpt-3.5-turbo',
                 'messages' => [
                     [
                         'role' => 'system',
-                        'content' => "Eres un asistente experto de restaurante. Tu tarea es identificar exactamente qué platos y cantidades pide el cliente, incluso si los escribe con errores ortográficos. 
-                    
-                    MENÚ COMPLETO: $ejemploMenu
-                    
-                    REGLAS:
-                    1. Analiza cuidadosamente el texto del cliente para identificar nombres de platos y cantidades.
-                    2. Si el cliente no especifica cantidad, asume 1.
-                    3. Conserva EXACTAMENTE el texto que el cliente usó para cada plato.
-                    4. Si un plato no está en el menú, inclúyelo igualmente.
-                    5. Devuelve SOLO un JSON válido en este formato exacto: 
-                    {\"platos\": [{\"nombre\": \"texto exacto del cliente\", \"cantidad\": número}]}
-                    
-                    EJEMPLOS:
-                    - Cliente dice: 'quiero 2 hamburguesa de pollo y 1 lomo saltado'
-                    - Respuesta: {\"platos\": [{\"nombre\": \"hamburguesa de pollo\", \"cantidad\": 2}, {\"nombre\": \"lomo saltado\", \"cantidad\": 1}]}"
+                        'content' => "Eres un mesero experto. Tu misión es entender el pedido del cliente y compararlo con nuestro MENÚ OFICIAL.
+
+                    MENÚ OFICIAL: [$listaMenu]
+
+                    REGLAS OBLIGATORIAS:
+                    1. Si el cliente escribe un plato con errores o sinónimos (ej: 'amburgesa' en vez de 'Hamburguesa'), DEBES devolver el nombre EXACTO del MENÚ OFICIAL.
+                    2. Si el cliente pide algo que NO se parece a nada del menú (ej: pide 'Ceviche' y no está en la lista), devuelve el nombre tal cual lo escribió el cliente.
+                    3. Asume cantidad 1 si no se especifica.
+                    4. Devuelve SOLO JSON: {\"platos\": [{\"nombre\": \"NombreDelMenu\", \"cantidad\": 1}]}"
                     ],
                     [
                         'role' => 'user',
                         'content' => $mensaje
                     ]
                 ],
-                'temperature' => 0.1,
-                'max_tokens' => 150 // Aumentar tokens para asegurar respuesta completa
+                'temperature' => 0.0, // Bajamos a 0 para máxima precisión
+                'max_tokens' => 200
             ]);
 
             $respuesta = json_decode($response->choices[0]->message->content, true);

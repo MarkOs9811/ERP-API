@@ -72,42 +72,38 @@ class WhatsAppController extends Controller
 
     public function manejarMensaje(Request $request)
     {
+        // [LOG 1] Inicio
+        // Log::info("📡 --- NUEVO MENSAJE ---");
+
         $numero_cliente = $request->input('From');
         $mensaje = trim($request->input('Body'));
 
+        // 1. CAPTURA DE COORDENADAS (CRUCIAL PARA DELIVERY)
+        $latitud = $request->input('Latitude');
+        $longitud = $request->input('Longitude');
+
+        // [LOG 2] Validación Inteligente
+        // Si hay coordenadas, permitimos que el mensaje venga vacío.
+        if (empty($numero_cliente) || (empty($mensaje) && empty($latitud))) {
+            Log::error("❌ ERROR: Datos incompletos (Ni texto ni ubicación).");
+            return response()->json(['status' => 'error', 'message' => 'Datos incompletos'], 400);
+        }
+
         try {
             $estadoTwilio = ConfiguracionHelper::estado("twilio");
-            $cajas = Caja::get();
-            Log::info($cajas);
 
-            // Si Twilio está desactivado
+            // Validación: Twilio desactivado
             if ($estadoTwilio === 0) {
-                Log::info("Twilio desactivado para el cliente: {$numero_cliente}");
-
-                $this->enviarMensajeWhatsApp(
-                    $numero_cliente,
-                    "🙋‍♂️ Estimado cliente, nuestro servicio de pedidos por WhatsApp no está disponible en este momento.  
-        ⏳ Por favor, vuelva a intentarlo más tarde. ¡Gracias por su comprensión! 🍽️"
-                );
-
+                $this->enviarMensajeWhatsApp($numero_cliente, "🙋‍♂️ Nuestro servicio no está disponible por ahora. ⏳");
                 return response()->json(['status' => 'disabled']);
             }
 
-            // Si no hay ninguna caja abierta (estadoCaja === 1)
+            $cajas = Caja::get();
+            // Validación: Cajas cerradas
             if (!$cajas->contains('estadoCaja', 1)) {
-                Log::info("No hay cajas abiertas para el cliente: {$numero_cliente}");
-
-                $this->enviarMensajeWhatsApp(
-                    $numero_cliente,
-                    "🕒 Estimado cliente, en estos momentos no hay atención disponible.  
-        Nuestro horario de atención es de *6:00 PM a 11:00 PM*.  
-        ¡Lo esperamos más tarde para atender su pedido! 🍴"
-                );
-
+                $this->enviarMensajeWhatsApp($numero_cliente, "🕒 Estamos cerrados. Horario: 6:00 PM - 11:00 PM. 🍴");
                 return response()->json(['status' => 'closed']);
             }
-
-
 
             // Buscar pedido activo
             $pedido = PedidosWebRegistro::where('numero_cliente', $numero_cliente)
@@ -120,53 +116,111 @@ class WhatsAppController extends Controller
                 return $this->iniciarPedido($numero_cliente);
             }
 
-            // Procesamiento rápido del mensaje
+            // Procesamiento del mensaje
             $mensajeLimpio = strtolower($mensaje);
             $estadoActual = $pedido->estado_pedido;
 
-            // Handlers por estado
+            // DEFINICIÓN DE HANDLERS
+            // Importante: Agregamos 'use ($request)' para poder leer la ubicación dentro de las funciones
             $handlers = [
+                // [ESTADO 1] CONFIRMACIÓN INICIAL
                 1 => function () use ($pedido, $mensaje, $mensajeLimpio) {
                     if ($mensajeLimpio === 'corregir') {
-                        $pedido->update([
-                            'pedido_temporal' => null,
-                            'estado_pedido' => 1
-                        ]);
-                        $this->enviarMensajeWhatsApp(
-                            $pedido->numero_cliente,
-                            "✏️ Has elegido corregir tu pedido.\n\nSelecciona nuevamente los platillos del menú.\n\nEscribe nuevamente tu pedido:"
-                        );
+                        $pedido->update(['pedido_temporal' => null, 'estado_pedido' => 1]);
+                        $this->enviarMensajeWhatsApp($pedido->numero_cliente, "✏️ Pedido reiniciado. Escribe tu pedido nuevamente:");
                         return true;
                     }
 
                     if ($mensajeLimpio === 'confirmar') {
-                        $pedido->update(['estado_pedido' => 2]);
-                        $this->confirmarPedido($pedido, $mensaje);
+                        // Pasamos a preguntar si es Delivery o Recojo
+                        $pedido->update(['estado_pedido' => 9]);
+                        $this->enviarMensajeWhatsApp(
+                            $pedido->numero_cliente,
+                            "🛵 **¿Cómo deseas recibir tu pedido?** 🥡\n\n1️⃣ Delivery (Te lo llevamos)\n2️⃣ Recojo en tienda\n\nResponde con el número."
+                        );
                         return true;
                     }
 
                     if ($mensajeLimpio === 'cancelar') {
-                        $this->enviarMensajeWhatsApp(
-                            $pedido->numero_cliente,
-                            "❌ Tu pedido ha sido cancelado con éxito. Si deseas hacer un nuevo pedido, escribe *Hola*."
-                        );
+                        $this->enviarMensajeWhatsApp($pedido->numero_cliente, "❌ Pedido cancelado.");
                         $pedido->delete();
                         return true;
                     }
 
+                    // Procesamiento NLP si no es comando exacto
                     if ($this->esMensajeNLP($mensaje)) {
                         $this->procesarSeleccionPlatoNLP($pedido, $mensaje);
                     }
                     return true;
                 },
-                8 => fn() => $this->procesarCantidadPlato($pedido, $mensaje),
-                2 => fn() => $this->seleccionarMetodoPago($pedido, $mensaje),
-                3 => function () use ($pedido) {
-                    $estadoPago = ($pedido->estado_pago === 'pagado') ? "✅ Pago confirmado" : "⏳ Pago pendiente";
+
+                // [ESTADO 9] SELECCIÓN DELIVERY / RECOJO
+                9 => function () use ($pedido, $mensajeLimpio) {
+                    if ($mensajeLimpio === '1' || str_contains($mensajeLimpio, 'delivery')) {
+                        // Opción 1: Delivery -> Pedimos Nombre
+                        $pedido->update(['estado_pedido' => 10, 'tipo_entrega' => 'delivery']);
+                        $this->enviarMensajeWhatsApp($pedido->numero_cliente, "📝 Para el delivery, por favor **escribe tu Nombre y Apellido**:");
+                    } elseif ($mensajeLimpio === '2' || str_contains($mensajeLimpio, 'recojo')) {
+                        // Opción 2: Recojo -> Flujo Normal
+                        $pedido->update(['estado_pedido' => 2, 'tipo_entrega' => 'recojo']);
+                        // Aquí sí usamos confirmarPedido porque es el flujo estándar de caja
+                        $this->confirmarPedido($pedido, "confirmado");
+                    } else {
+                        $this->enviarMensajeWhatsApp($pedido->numero_cliente, "⚠️ Responde **1** para Delivery o **2** para Recojo.");
+                    }
+                    return true;
+                },
+
+                // [ESTADO 10] GUARDAR NOMBRE
+                10 => function () use ($pedido, $mensaje) {
+                    $pedido->update(['nombre_cliente' => $mensaje, 'estado_pedido' => 11]);
                     $this->enviarMensajeWhatsApp(
                         $pedido->numero_cliente,
-                        "💰 *ESTADO DE PAGO* 💰\n\n🔹 Estado actual: *$estadoPago*\n\nSi necesitas ayuda, escribe *soporte* o espera la confirmación de tu pedido. ¡Gracias por tu compra! 🍽️"
+                        "📍 Hola " . $mensaje . ", ahora envía tu ubicación.\n\n📎 Presiona el **clip (adjuntar)** en WhatsApp ➡️ Ubicación ➡️ **Enviar mi ubicación actual**."
                     );
+                    return true;
+                },
+
+                // [ESTADO 11] GUARDAR UBICACIÓN Y MOSTRAR PAGO DELIVERY
+                11 => function () use ($pedido, $request) {
+                    $lat = $request->input('Latitude');
+                    $lon = $request->input('Longitude');
+
+                    if ($lat && $lon) {
+                        // Guardamos ubicación y pasamos directo a Estado 2 (Pago)
+                        $pedido->update([
+                            'latitud' => $lat,
+                            'longitud' => $lon,
+                            'estado_pedido' => 2
+                        ]);
+
+                        // Forzamos actualización del modelo para asegurar que los datos estén frescos
+                        $pedido->refresh();
+
+                        // MENSAJE PERSONALIZADO PARA DELIVERY
+                        // Ya no preguntamos por "Caja", sino por "Contraentrega"
+                        $menuPago = "✅ Ubicación recibida.\n\n💳 **MÉTODO DE PAGO** 💳\n\n1️⃣ PAGAR AHORA (Yape/Plin)\n2️⃣ PAGO CONTRAENTREGA (Efectivo/Yape al recibir)\n\nResponde con el número de tu opción.";
+
+                        $this->enviarMensajeWhatsApp($pedido->numero_cliente, $menuPago);
+                        return true;
+                    } else {
+                        $this->enviarMensajeWhatsApp($pedido->numero_cliente, "⚠️ No recibí la ubicación. Por favor usa el clip 📎 y selecciona 'Ubicación'.");
+                        return true;
+                    }
+                },
+
+                // [ESTADO 2] PROCESAR SELECCIÓN DE PAGO
+                2 => function () use ($pedido, $mensaje) {
+                    // Aquí interceptamos para asegurarnos que la lógica de "Caja" funcione para "Contraentrega"
+                    // Asegúrate de que tu función seleccionarMetodoPago maneje el texto correctamente.
+                    return $this->seleccionarMetodoPago($pedido, $mensaje);
+                },
+
+                // ... RESTO DE HANDLERS (8, 3, 33) IGUAL ...
+                8 => fn() => $this->procesarCantidadPlato($pedido, $mensaje),
+                3 => function () use ($pedido) {
+                    $estadoPago = ($pedido->estado_pago === 'pagado') ? "✅ Pago confirmado" : "⏳ Pago pendiente";
+                    $this->enviarMensajeWhatsApp($pedido->numero_cliente, "💰 Estado: *$estadoPago*");
                     return true;
                 },
                 33 => fn() => $this->procesarComprobantePago($pedido, $request->all()),
@@ -177,17 +231,10 @@ class WhatsAppController extends Controller
                 return response()->json(['status' => 'success']);
             }
 
-            // Respuesta por defecto
-            $this->enviarMensajeWhatsApp(
-                $numero_cliente,
-                "No entendí tu mensaje. ¿Deseas hacer un pedido? Escribe *Hola*"
-            );
+            $this->enviarMensajeWhatsApp($numero_cliente, "No entendí. Escribe *Hola* para empezar.");
         } catch (\Exception $e) {
-            Log::error("Error al procesar mensaje: " . $e->getMessage());
-            $this->enviarMensajeWhatsApp(
-                $numero_cliente,
-                "⚠️ Ocurrió un error. Por favor intenta nuevamente."
-            );
+            Log::error("💥 ERROR: " . $e->getMessage());
+            return response()->json(['status' => 'error'], 500);
         }
 
         return response()->json(['status' => 'success']);
@@ -330,7 +377,12 @@ class WhatsAppController extends Controller
             $this->enviarMensajeWhatsApp($pedido->numero_cliente, $mensajeError);
             return;
         }
-
+        // [CORRECCIÓN 2] GUARDAR EN BD
+        // Esto es obligatorio para que el 'Confirmar' posterior funcione
+        $pedido->update([
+            'pedido_temporal' => json_encode($platosEncontrados),
+            'estado_pedido' => 1
+        ]);
         // Generar resumen del pedido (mejorado)
         $this->generarResumenPedido($pedido, $platosEncontrados);
     }
@@ -379,7 +431,6 @@ class WhatsAppController extends Controller
 
         $this->enviarMensajeWhatsApp($pedido->numero_cliente, $resumen);
     }
-
 
     // Confirmar pedido y pasar al pago
     private function confirmarPedido($pedido, $mensaje)
@@ -463,6 +514,30 @@ class WhatsAppController extends Controller
 
     private function seleccionarMetodoPago($pedido, $mensaje)
     {
+        // [CORRECCIÓN CRÍTICA] 🛠️
+        // Antes de procesar el pago, verificamos si los platos ya están en la tabla de detalles.
+        // Si no están (caso del bug de S/ 0), los migramos desde el JSON temporal ahora mismo.
+        $conteoDetalles = detallePedidosWeb::where('idPedido', $pedido->id)->count();
+
+        if ($conteoDetalles == 0 && !empty($pedido->pedido_temporal)) {
+            $items = json_decode($pedido->pedido_temporal, true);
+            if (is_array($items)) {
+                foreach ($items as $item) {
+                    detallePedidosWeb::create([
+                        'idPedido' => $pedido->id,
+                        'idPlato'  => $item['id'], // Asegúrate que tu JSON tenga 'id' del plato
+                        'cantidad' => $item['cantidad'],
+                        'precio'   => $item['precio'],
+                        'subtotal' => $item['cantidad'] * $item['precio'], // Recalculamos por seguridad
+                        'created_at' => now(),
+                        'updated_at' => now()
+                    ]);
+                }
+                Log::info("✅ Platos migrados de JSON a Tabla Detalles para el pedido: " . $pedido->codigo_pedido);
+            }
+        }
+
+        // --- OPCIÓN 1: PAGO YAPE/PLIN (Igual para ambos casos) ---
         if ($mensaje === '1') {
             $codigoPago = $pedido->codigo_pedido;
             $pedido->update([
@@ -470,31 +545,31 @@ class WhatsAppController extends Controller
                 'codigo_pago' => $codigoPago
             ]);
 
-            // Monto total del pedido
+            // Calcular Monto Total
             $detallesPrecios = detallePedidosWeb::where('idPedido', $pedido->id)->get();
             $montoTotal = 0;
             foreach ($detallesPrecios as $detalle) {
-                $montoTotal += $detalle->precio;
+                $montoTotal += $detalle->precio * $detalle->cantidad; // Ojo: Multiplicar precio x cantidad
             }
             $montoTotal = number_format($montoTotal, 2);
 
-            // Obtener la URL del QR personal ya guardado en public/qrs/QRPAGAR.jpg
-            $qrUrl = asset("storage/qrs/QRPAGAR.jpeg"); // Asegúrate de que el archivo esté en public/storage/qrs o usa un symlink a public/qrs
+            $qrUrl = asset("storage/qrs/QRPAGAR.jpeg");
 
-            Log::info("QR personal enviado desde: $qrUrl");
-
-            // Enviar mensaje con instrucciones de pago
+            // Mensaje YAPE
             $this->enviarMensajeWhatsApp(
                 $pedido->numero_cliente,
-                " *PAGO POR YAPE/PLIN* \n" .
+                "📱 *PAGO POR YAPE/PLIN* \n" .
                     "══════════════════════════\n" .
-                    "Escanea este QR para realizar tu pago al número *977951520*.\n" .
+                    "Escanea este QR o yapea al número *977951520*.\n" .
                     "💰 Monto total: S/ {$montoTotal}\n" .
                     "📌 Código de pedido: *{$codigoPago}*\n" .
-                    "⚠️ Envía el comprobante para validar tu pago.",
+                    "⚠️ Envía la captura del comprobante aquí para validar.",
                 $qrUrl
             );
-        } elseif ($mensaje === '2') {
+        }
+        // --- OPCIÓN 2: PAGO CONTRAENTREGA O CAJA ---
+        elseif ($mensaje === '2') {
+
             // Obtener detalles del pedido
             $detalles = detallePedidosWeb::with('plato')
                 ->where('idPedido', $pedido->id)
@@ -503,22 +578,35 @@ class WhatsAppController extends Controller
             // Construir resumen de platos
             $resumenPlatos = "";
             $totalPagar = 0;
+
             foreach ($detalles as $detalle) {
-                $subtotal = $detalle->cantidad * $detalle->plato->precio;
+                $subtotal = $detalle->cantidad * $detalle->plato->precio; // Usamos el precio actualizado del plato o del detalle
                 $resumenPlatos .= "🍽️ {$detalle->plato->nombre}\n";
-                $resumenPlatos .= "   Cantidad: {$detalle->cantidad} x S/ {$detalle->plato->precio} = S/ {$subtotal}\n\n";
+                $resumenPlatos .= "   Cant: {$detalle->cantidad} x S/ {$detalle->plato->precio} = S/ {$subtotal}\n\n";
                 $totalPagar += $subtotal;
             }
 
+            // Actualizamos estado
             $pedido->update([
-                'estado_pedido' => 3, // 3 = Listo para preparar (pago en caja)
+                'estado_pedido' => 3,
                 'estado_pago' => 'por pagar'
             ]);
 
+            // [LÓGICA DINÁMICA DE TEXTO] 🛵 vs 🏪
+            if ($pedido->tipo_entrega === 'delivery') {
+                $titulo = "🛵 PAGO CONTRAENTREGA";
+                $instruccion1 = "Esperar en la ubicación enviada";
+                $instruccion3 = "Pagas al recibir el pedido";
+            } else {
+                $titulo = "💰 PAGO EN CAJA";
+                $instruccion1 = "Presenta este código al recoger: *{$pedido->codigo_pedido}*";
+                $instruccion3 = "Pagas al momento de recoger";
+            }
+
             $this->enviarMensajeWhatsApp(
                 $pedido->numero_cliente,
-                "💰 *PAGO EN CAJA - RESUMEN DE PEDIDO* 💰\n" .
-                    "Se le enviará una notificación del estado de tu pedido\n" .
+                "{$titulo} - RESUMEN 📄\n" .
+                    "Te enviaremos una notificación cuando salga tu pedido.\n" .
                     "══════════════════════════\n" .
                     "📋 *Pedido #{$pedido->codigo_pedido}*\n" .
                     "🕒 Fecha: " . now()->format('d/m/Y H:i') . "\n" .
@@ -529,29 +617,32 @@ class WhatsAppController extends Controller
                     "💰 *Total a pagar:* S/ {$totalPagar}\n" .
                     "══════════════════════════\n\n" .
                     "📌 *Instrucciones:*\n" .
-                    "1. Presenta este código al recoger: *{$pedido->codigo_pedido}*\n" .
-                    "2. Horario de atención: 9am - 10pm\n" .
-                    "3. Pagas al momento de recoger\n\n" .
-                    "¡Gracias por tu compra! 🍽️"
+                    "1. {$instruccion1}\n" .
+                    "2. Horario: 9am - 10pm\n" .
+                    "3. {$instruccion3}\n\n" .
+                    "¡Gracias por tu compra! 🔥🍔"
             );
 
-            // ENVIAMOS DATOS AL EVENTO CON PUSHER
+            // Evento Pusher
             Event::dispatch(new PedidoCreadoEvent(
                 $pedido->codigo_pedido,
                 $pedido->numero_cliente,
                 $pedido->estado_pago
             ));
-            Log::info("Evento PedidoCreadoEvent disparado para: " . $pedido->codigo_pedido);
-        } else {
+        }
+        // --- MENÚ DE SELECCIÓN (Si manda algo que no es 1 ni 2) ---
+        else {
+            // Personalizamos también el menú de opciones
+            $opcion2 = ($pedido->tipo_entrega === 'delivery')
+                ? "2️⃣ *PAGO CONTRAENTREGA*\n   - Pagas al recibir en tu ubicación"
+                : "2️⃣ *PAGAR EN CAJA*\n   - Pagas al recoger en tienda";
+
             $this->enviarMensajeWhatsApp(
                 $pedido->numero_cliente,
                 "🔷 *SELECCIONA MÉTODO DE PAGO* 🔷\n\n" .
                     "1️⃣ *PAGAR AHORA* (Yape/Plin)\n" .
-                    "   - Pago electrónico inmediato\n" .
-                    "   - Envía comprobante\n\n" .
-                    "2️⃣ *PAGAR EN CAJA*\n" .
-                    "   - Pagas al recoger tu pedido\n" .
-                    "   - Recibirás resumen detallado\n\n" .
+                    "   - Pago rápido y sin contacto\n\n" .
+                    $opcion2 . "\n\n" .
                     "Responde *1* o *2*"
             );
         }
