@@ -769,9 +769,29 @@ class VenderController extends Controller
             DB::commit();
             Log::info('==== VENTA FINALIZADA CON ÉXITO ====');
 
+            // Cargamos la relación de la venta con sus detalles (ajusta según tus modelos)
+            // Asumimos que $venta tiene una relación con los platos vendidos
+            $ticketData = [
+                'id' => $venta->id,
+                'serie_correlativo' => $venta->serie . '-' . $venta->correlativo, // Si manejas series
+                'tipo_comprobante' => $tipoComprobante == 'F' ? 'FACTURA ELECTRÓNICA' : 'BOLETA DE VENTA',
+                'metodo_pago' => $nombreMetodo,
+                'fecha' => date('d/m/Y H:i:s'),
+                'cliente' => [
+                    'nombre' => $datosCliente['nombre'] ?? ($datosCliente['razonSocial'] ?? 'CLIENTE GENERICO'),
+                    'documento' => $datosCliente['dni'] ?? ($datosCliente['ruc'] ?? '00000000'),
+                    'direccion' => $datosCliente['direccion'] ?? '',
+                ],
+                'productos' => $pedidosToVender, // Aquí ya tienes la colección con descripciones y totales
+                'subtotal' => round($subtotal, 2),
+                'igv' => round($igv, 2),
+                'total' => round($total, 2),
+            ];
+            Log::info('Datos del ticket generados', $ticketData);
             return response()->json([
                 'success' => true,
-                'message' => 'Venta realizada correctamente.'
+                'message' => 'Venta realizada correctamente.',
+                'ticket' => $ticketData // <--- Agregamos esto
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
