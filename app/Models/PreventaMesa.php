@@ -13,6 +13,7 @@ class PreventaMesa extends Model
         'idCaja',
         'idPlato',
         'idMesa',
+        'idPedido',
         'cantidad',
         'precio',
     ];
@@ -32,5 +33,9 @@ class PreventaMesa extends Model
     public function caja()
     {
         return $this->belongsTo(caja::class, 'idCaja');
+    }
+    public function pedido()
+    {
+        return $this->belongsTo(PedidoMesaRegistro::class, 'idPedido');
     }
 }

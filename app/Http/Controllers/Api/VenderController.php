@@ -238,9 +238,15 @@ class VenderController extends Controller
 
             DB::commit();
 
+            $pedidoCompleto = PedidoMesaRegistro::with(['preVentas.plato'])
+                ->find($idPedido);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Pedidos registrados exitosamente.',
+                'data' => [
+                    'pedidoRegistro' => $pedidoCompleto->preVentas
+                ]
             ], 200);
         } catch (\Exception $e) {
             DB::rollBack(); // Fundamental para revertir cambios si algo falló
@@ -259,10 +265,15 @@ class VenderController extends Controller
         try {
             $user = Auth()->user();
             log::info($user->id); // Ahora correctamente accedemos al ID del usuario
-            $preVenta = PreventaMesa::with('usuario', 'mesa', 'caja', 'plato')->where('idCaja', $idCaja)
+            $preVenta = PreventaMesa::with('pedido', 'usuario', 'mesa', 'caja', 'plato')->where('idCaja', $idCaja)
                 ->where('idMesa', $idMesa)
                 ->where('idUsuario', $user->id)
-                ->get();
+                ->get()
+                ->map(function ($item) {
+                    $estadoPedido = EstadoPedido::where('idPedidoMesa', $item->idPedido)->first();
+                    $item->estadoPedido = $estadoPedido;
+                    return $item;
+                });
             return response()->json(['success' => true, 'data' => $preVenta, 'message' => 'Preventa Encontrada'], 200);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 200);
@@ -273,11 +284,8 @@ class VenderController extends Controller
     public function eliminarPreventaMesa($idMesa)
     {
         try {
-            // Buscar todas las preventas que coincidan con el idMesa
-            $preventasMesa = PreventaMesa::where('idMesa', $idMesa);
-
             // Verificar si existen registros para eliminar
-            if (!$preventasMesa->exists()) {
+            if (!PreventaMesa::where('idMesa', $idMesa)->exists()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'No se encontraron preventas para la mesa especificada.'
@@ -285,7 +293,7 @@ class VenderController extends Controller
             }
 
             // Obtener el idPedido de la primera preventa (todas deberían tener el mismo)
-            $primerPreventa = $preventasMesa->first();
+            $primerPreventa = PreventaMesa::where('idMesa', $idMesa)->first();
             $idPedido = $primerPreventa ? $primerPreventa->idPedido : null;
 
             // Cambiar el estado de la mesa a disponible
@@ -295,8 +303,8 @@ class VenderController extends Controller
                 $mesa->save();
             }
 
-            // Eliminar los registros encontrados en PreventaMesa
-            $preventasMesa->delete();
+            // Eliminar TODOS los registros encontrados en PreventaMesa con este idMesa
+            PreventaMesa::where('idMesa', $idMesa)->delete();
 
             // Eliminar el registro de EstadoPedido relacionado
             if ($idPedido) {
@@ -317,6 +325,13 @@ class VenderController extends Controller
                         'idPedidoMesa' => $idPedido
                     ]);
                 }
+
+                // Eliminar el registro de PedidoMesaRegistro
+                PedidoMesaRegistro::where('id', $idPedido)->delete();
+                Log::info("PedidoMesaRegistro eliminado", [
+                    'idPedido' => $idPedido,
+                    'idMesa' => $idMesa
+                ]);
             }
 
             return response()->json([
@@ -740,7 +755,7 @@ class VenderController extends Controller
             $sunatActivo = $sunatConfig && $sunatConfig->estado == 1;
 
 
-            if ($sunatActivo) {
+            if ($sunatActivo && $tipoComprobante !== 'S') {
 
 
                 $datosFactura = [
@@ -774,7 +789,7 @@ class VenderController extends Controller
             $ticketData = [
                 'id' => $venta->id,
                 'serie_correlativo' => $venta->serie . '-' . $venta->correlativo, // Si manejas series
-                'tipo_comprobante' => $tipoComprobante == 'F' ? 'FACTURA ELECTRÓNICA' : 'BOLETA DE VENTA',
+                'tipo_comprobante' => $tipoComprobante == 'F' ? 'FACTURA ELECTRÓNICA' : ($tipoComprobante == 'B' ? 'BOLETA DE VENTA' : 'BOLETA SIMPLE'),
                 'metodo_pago' => $nombreMetodo,
                 'fecha' => date('d/m/Y H:i:s'),
                 'cliente' => [
