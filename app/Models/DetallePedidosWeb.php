@@ -21,7 +21,7 @@ class DetallePedidosWeb extends Model
     // Relación con Plato
     public function plato()
     {
-        return $this->belongsTo(Plato::class, 'idPlato');
+        return $this->belongsTo(Plato::class, 'idPlato', 'id');
     }
 
     // Relación con Pedido

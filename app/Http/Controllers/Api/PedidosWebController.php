@@ -42,6 +42,7 @@ class PedidosWebController extends Controller
     {
         try {
             $pedidosPendientes = PedidosWebRegistro::with('detallesPedido.plato')->where('estado_pedido', 3)->orderBy("created_at", "desc")->get();
+            Log::info("✅ Pedidos pendientes obtenidos correctamente.", $pedidosPendientes->toArray());
             return response()->json(['success' => true, 'data' => $pedidosPendientes], 200);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error' . $e->getMessage()], 500);
@@ -52,6 +53,7 @@ class PedidosWebController extends Controller
     {
         try {
             $pedidosEnProceso = PedidosWebRegistro::with('detallesPedido.plato')->where('estado_pedido', 4)->orderBy("created_at", "desc")->get();
+            Log::info("✅ Pedidos en proceso obtenidos correctamente.", $pedidosEnProceso->toArray());
             return response()->json(['success' => true, 'data' => $pedidosEnProceso], 200);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error' . $e->getMessage()], 500);
@@ -62,6 +64,7 @@ class PedidosWebController extends Controller
     {
         try {
             $pedidosListos = PedidosWebRegistro::with('detallesPedido.plato')->where('estado_pedido', 5)->orderBy("created_at", "desc")->get();
+            Log::info("✅ Pedidos listos obtenidos correctamente.", $pedidosListos->toArray());
             return response()->json(['success' => true, 'data' => $pedidosListos], 200);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error' . $e->getMessage()], 500);
@@ -77,10 +80,9 @@ class PedidosWebController extends Controller
                 'nuevoEstado' => 'required|integer|in:3,4,5', // Acepta los estados válidos
             ]);
 
-            Log::info('Datos recibidos: ' . json_encode($request->all()));
 
             // Buscar el pedido
-            $pedido = PedidosWebRegistro::findOrFail($request->idPedido);
+            $pedido = PedidosWebRegistro::with('detallesPedido.plato')->findOrFail($request->idPedido);
 
             // Solo permitir cambios entre estados válidos
             if (in_array($pedido->estado_pedido, [3, 4, 5])) {

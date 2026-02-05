@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Session;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Cache;
 use Twilio\Rest\Client;
 use Illuminate\Support\Str;
 use App\Services\OpenAIService;
@@ -54,6 +55,42 @@ class WhatsAppController extends Controller
         8 => 'Esperando cantidad', // Nuevo estado
     ];
 
+    /**
+     * ⚡ SISTEMA DE BLOQUEO OPTIMIZADO
+     * ────────────────────────────────────────────
+     * 🔒 Se implementó un sistema de bloqueo por cliente (lock) para evitar:
+     * 
+     * ❌ Problema original: Si un cliente escribe múltiples mensajes rápidamente
+     *    antes de que el bot termine de responder, se ejecutaban en paralelo
+     *    causando:
+     *    • Cambios de estado confusos
+     *    • Duplicación de respuestas
+     *    • Inconsistencia de datos
+     * 
+     * ✅ Solución implementada:
+     * • Lock por cliente durante el procesamiento (clave: whatsapp_processing_NUMERO)
+     * • Tiempo máximo de espera: 60 segundos
+     * • Duración del lock: 30 segundos (evita bloqueos indefinidos)
+     * • Si hay lock: El cliente recibe mensaje "⏳ Aún estamos procesando..."
+     * • El lock se libera automáticamente al completar o en caso de error
+     * 
+     * ⚙️ Funcionamiento:
+     * 1. Cliente envía mensaje → Verifica si hay lock
+     * 2. Si hay lock → Espera 100ms y reintenta (max 60 segundos)
+     * 3. Si persiste el lock → Responde "por favor espera"
+     * 4. Si no hay lock → Crea lock (30s) y procesa el mensaje
+     * 5. Al terminar → Libera el lock inmediatamente
+     * 6. En caso de error → Libera lock en catch
+     * 
+     * 📊 Flujo de estados MANTIENE TODO IGUAL (números sin cambios):
+     * 1, 2, 3, 33, 8, 9, 10, 11
+     * La optimización es TRANSPARENTE y no interfiere con la lógica de negocio.
+     * 
+     * 🔧 Nota técnica:
+     * Usa Cache Driver (recomendado Redis en producción)
+     * Si no hay Redis: Funciona con driver:file pero más lento
+     */
+
     public function __construct()
     {
         $this->openAIService = new OpenAIService();
@@ -89,6 +126,27 @@ class WhatsAppController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Datos incompletos'], 400);
         }
 
+        // ⚡ [OPTIMIZACIÓN] Verificar si ya hay una respuesta en proceso para este cliente
+        $lockKey = 'whatsapp_processing_' . $numero_cliente;
+        $maxWaitTime = 60; // Máximo 60 segundos de espera
+        $waited = 0;
+
+        // Si hay lock, esperar o rechazar
+        while (Cache::has($lockKey) && $waited < $maxWaitTime) {
+            usleep(100000); // Esperar 100ms antes de reintentar
+            $waited += 0.1;
+        }
+
+        // Si sigue bloqueado después de esperar, responder al cliente
+        if (Cache::has($lockKey)) {
+            Log::warning("⏳ Cliente $numero_cliente envió mensaje mientras se procesaba el anterior");
+            $this->enviarMensajeWhatsApp($numero_cliente, "⏳ Aún estamos procesando tu anterior mensaje. Por favor espera un momento...");
+            return response()->json(['status' => 'processing']);
+        }
+
+        // Crear lock para esta conversación
+        Cache::put($lockKey, true, now()->addSeconds(30)); // Lock de 30 segundos
+
         try {
             $estadoTwilio = ConfiguracionHelper::estado("twilio");
 
@@ -98,10 +156,11 @@ class WhatsAppController extends Controller
                 return response()->json(['status' => 'disabled']);
             }
 
-            $cajas = Caja::get();
+            $cajas = $this->obtenerCajasConCache();
             // Validación: Cajas cerradas
             if (!$cajas->contains('estadoCaja', 1)) {
                 $this->enviarMensajeWhatsApp($numero_cliente, "🕒 Estamos cerrados. Horario: 6:00 PM - 11:00 PM. 🍴");
+                Cache::forget($lockKey); // Liberar lock
                 return response()->json(['status' => 'closed']);
             }
 
@@ -113,6 +172,7 @@ class WhatsAppController extends Controller
                 ->first(['id', 'estado_pedido', 'estado_pago', 'pedido_temporal', 'numero_cliente', 'codigo_pedido']);
 
             if (!$pedido) {
+                Cache::forget($lockKey); // Liberar lock
                 return $this->iniciarPedido($numero_cliente);
             }
 
@@ -125,13 +185,15 @@ class WhatsAppController extends Controller
             $handlers = [
                 // [ESTADO 1] CONFIRMACIÓN INICIAL
                 1 => function () use ($pedido, $mensaje, $mensajeLimpio) {
-                    if ($mensajeLimpio === 'corregir') {
+                    $comando = $this->detectarComando($mensaje);
+
+                    if ($comando === 'corregir') {
                         $pedido->update(['pedido_temporal' => null, 'estado_pedido' => 1]);
                         $this->enviarMensajeWhatsApp($pedido->numero_cliente, "✏️ Pedido reiniciado. Escribe tu pedido nuevamente:");
                         return true;
                     }
 
-                    if ($mensajeLimpio === 'confirmar') {
+                    if ($comando === 'confirmar') {
                         // Pasamos a preguntar si es Delivery o Recojo
                         $pedido->update(['estado_pedido' => 9]);
                         $this->enviarMensajeWhatsApp(
@@ -141,7 +203,7 @@ class WhatsAppController extends Controller
                         return true;
                     }
 
-                    if ($mensajeLimpio === 'cancelar') {
+                    if ($comando === 'cancelar') {
                         $this->enviarMensajeWhatsApp($pedido->numero_cliente, "❌ Pedido cancelado.");
                         $pedido->delete();
                         return true;
@@ -159,12 +221,11 @@ class WhatsAppController extends Controller
                     if ($mensajeLimpio === '1' || str_contains($mensajeLimpio, 'delivery')) {
                         // Opción 1: Delivery -> Pedimos Nombre
                         $pedido->update(['estado_pedido' => 10, 'tipo_entrega' => 'delivery']);
-                        $this->enviarMensajeWhatsApp($pedido->numero_cliente, "📝 Para el delivery, por favor **escribe tu Nombre y Apellido**:");
+                        $this->enviarMensajeWhatsApp($pedido->numero_cliente, "📝 Por favor **escribe tu Nombre y Apellido**:");
                     } elseif ($mensajeLimpio === '2' || str_contains($mensajeLimpio, 'recojo')) {
-                        // Opción 2: Recojo -> Flujo Normal
-                        $pedido->update(['estado_pedido' => 2, 'tipo_entrega' => 'recojo']);
-                        // Aquí sí usamos confirmarPedido porque es el flujo estándar de caja
-                        $this->confirmarPedido($pedido, "confirmado");
+                        // Opción 2: Recojo -> Pedimos Nombre
+                        $pedido->update(['estado_pedido' => 10, 'tipo_entrega' => 'recojo']);
+                        $this->enviarMensajeWhatsApp($pedido->numero_cliente, "📝 Por favor **escribe tu Nombre y Apellido**:");
                     } else {
                         $this->enviarMensajeWhatsApp($pedido->numero_cliente, "⚠️ Responde **1** para Delivery o **2** para Recojo.");
                     }
@@ -173,11 +234,36 @@ class WhatsAppController extends Controller
 
                 // [ESTADO 10] GUARDAR NOMBRE
                 10 => function () use ($pedido, $mensaje) {
-                    $pedido->update(['nombre_cliente' => $mensaje, 'estado_pedido' => 11]);
-                    $this->enviarMensajeWhatsApp(
-                        $pedido->numero_cliente,
-                        "📍 Hola " . $mensaje . ", ahora envía tu ubicación.\n\n📎 Presiona el **clip (adjuntar)** en WhatsApp ➡️ Ubicación ➡️ **Enviar mi ubicación actual**."
-                    );
+                    // ⚡ Validar nombre
+                    $validacion = $this->validarNombre($mensaje);
+                    if (!$validacion['valido']) {
+                        $this->enviarMensajeWhatsApp($pedido->numero_cliente, $validacion['error']);
+                        return true;
+                    }
+
+                    $pedido->update(['nombre_cliente' => $validacion['nombre']]);
+
+                    // ⚡ Refrescar para obtener tipo_entrega actualizado
+                    $pedido->refresh();
+
+                    // Siguiendo flujo según tipo de entrega
+                    if ($pedido->tipo_entrega === 'delivery') {
+                        // Para delivery: pedir ubicación (estado 11)
+                        $pedido->update(['estado_pedido' => 11]);
+                        $this->enviarMensajeWhatsApp(
+                            $pedido->numero_cliente,
+                            "📍 Hola " . $validacion['nombre'] . ", ahora envía tu ubicación.\n\n📎 Presiona el **clip (adjuntar)** en WhatsApp ➡️ Ubicación ➡️ **Enviar mi ubicación actual**."
+                        );
+                    } else {
+                        // Para recojo: pasar a método de pago (estado 2)
+                        $pedido->update(['estado_pedido' => 2]);
+                        $this->enviarMensajeWhatsApp(
+                            $pedido->numero_cliente,
+                            "💳 *MÉTODO DE PAGO* 💳\n\n" .
+                                "2️⃣ Pagar en caja al recoger\n\n" .
+                                "Responde con la opción 2."
+                        );
+                    }
                     return true;
                 },
 
@@ -186,27 +272,29 @@ class WhatsAppController extends Controller
                     $lat = $request->input('Latitude');
                     $lon = $request->input('Longitude');
 
-                    if ($lat && $lon) {
-                        // Guardamos ubicación y pasamos directo a Estado 2 (Pago)
-                        $pedido->update([
-                            'latitud' => $lat,
-                            'longitud' => $lon,
-                            'estado_pedido' => 2
-                        ]);
-
-                        // Forzamos actualización del modelo para asegurar que los datos estén frescos
-                        $pedido->refresh();
-
-                        // MENSAJE PERSONALIZADO PARA DELIVERY
-                        // Ya no preguntamos por "Caja", sino por "Contraentrega"
-                        $menuPago = "✅ Ubicación recibida.\n\n💳 **MÉTODO DE PAGO** 💳\n\n1️⃣ PAGAR AHORA (Yape/Plin)\n2️⃣ PAGO CONTRAENTREGA (Efectivo/Yape al recibir)\n\nResponde con el número de tu opción.";
-
-                        $this->enviarMensajeWhatsApp($pedido->numero_cliente, $menuPago);
-                        return true;
-                    } else {
-                        $this->enviarMensajeWhatsApp($pedido->numero_cliente, "⚠️ No recibí la ubicación. Por favor usa el clip 📎 y selecciona 'Ubicación'.");
+                    // ⚡ Validar ubicación
+                    $validacionUbicacion = $this->validarUbicacion($lat, $lon);
+                    if (!$validacionUbicacion['valido']) {
+                        $this->enviarMensajeWhatsApp($pedido->numero_cliente, $validacionUbicacion['error']);
                         return true;
                     }
+
+                    // Guardamos ubicación y pasamos directo a Estado 2 (Pago)
+                    $pedido->update([
+                        'latitud' => $validacionUbicacion['lat'],
+                        'longitud' => $validacionUbicacion['lon'],
+                        'estado_pedido' => 2
+                    ]);
+
+                    // Forzamos actualización del modelo para asegurar que los datos estén frescos
+                    $pedido->refresh();
+
+                    // MENSAJE PERSONALIZADO PARA DELIVERY
+                    // Solo contraentrega para delivery
+                    $menuPago = "✅ Ubicación recibida.\n\n💳 **MÉTODO DE PAGO** 💳\n\n2️⃣ PAGO CONTRAENTREGA (Efectivo/Yape al recibir)\n\nResponde con la opción 2.";
+
+                    $this->enviarMensajeWhatsApp($pedido->numero_cliente, $menuPago);
+                    return true;
                 },
 
                 // [ESTADO 2] PROCESAR SELECCIÓN DE PAGO
@@ -228,12 +316,15 @@ class WhatsAppController extends Controller
 
             if (isset($handlers[$estadoActual])) {
                 $handlers[$estadoActual]();
+                Cache::forget($lockKey); // ✅ Liberar lock al completar
                 return response()->json(['status' => 'success']);
             }
 
             $this->enviarMensajeWhatsApp($numero_cliente, "No entendí. Escribe *Hola* para empezar.");
+            Cache::forget($lockKey); // ✅ Liberar lock
         } catch (\Exception $e) {
             Log::error("💥 ERROR: " . $e->getMessage());
+            Cache::forget($lockKey); // ✅ Liberar lock incluso en error
             return response()->json(['status' => 'error'], 500);
         }
 
@@ -246,8 +337,138 @@ class WhatsAppController extends Controller
         return !is_numeric(trim($mensaje)) &&
             !in_array(strtolower(trim($mensaje)), ['continuar', 'hola']);
     }
+
+    /**
+     * ⚡ FUZZY MATCHING - Detecta comandos con variaciones de escritura
+     * Ejemplos: "confirma", "confirmación", "cofirmar" → reconoce como "confirmar"
+     */
+    private function detectarComando($texto): ?string
+    {
+        $texto = strtolower(trim($texto));
+
+        // Comandos permitidos con variaciones
+        $comandos = [
+            'confirmar' => ['confirmar', 'confirma', 'confirmación', 'confimar', 'cofirmar', 'confirmr', 'confirmo'],
+            'corregir' => ['corregir', 'corrige', 'corrección', 'correguir', 'coregir', 'corregira', 'corrigir'],
+            'cancelar' => ['cancelar', 'cancela', 'cancelación', 'canclar', 'canceló', 'canselar', 'cancelacion'],
+        ];
+
+        foreach ($comandos as $comando => $variaciones) {
+            // Búsqueda exacta
+            if (in_array($texto, $variaciones)) {
+                return $comando;
+            }
+
+            // Búsqueda por similitud (Levenshtein)
+            foreach ($variaciones as $var) {
+                $distancia = levenshtein($texto, $var);
+                // Si la distancia es <= 2 caracteres de diferencia, es válido
+                if ($distancia <= 2 && strlen($var) >= 4) {
+                    return $comando;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * ⚡ CACHÉS - Optimización para múltiples usuarios
+     */
+    private function obtenerCajasConCache()
+    {
+        return Cache::remember('cajas_estado', now()->addMinutes(5), function () {
+            return Caja::get();
+        });
+    }
+
+    private function obtenerPlatosConCache()
+    {
+        return Cache::remember('platos_menu', now()->addMinutes(15), function () {
+            return Plato::all(['id', 'nombre', 'precio'])->toArray();
+        });
+    }
+
+    /**
+     * ⚡ VALIDACIONES DE ENTRADA
+     */
+    private function validarNombre($nombre): array
+    {
+        $nombre = trim($nombre);
+
+        if (empty($nombre)) {
+            return ['valido' => false, 'error' => '⚠️ El nombre no puede estar vacío.'];
+        }
+
+        if (strlen($nombre) > 100) {
+            return ['valido' => false, 'error' => '⚠️ El nombre es demasiado largo (máx 100 caracteres).'];
+        }
+
+        if (strlen($nombre) < 3) {
+            return ['valido' => false, 'error' => '⚠️ El nombre es demasiado corto (mín 3 caracteres).'];
+        }
+
+        // Permitir letras, espacios, guiones y apóstrofes
+        if (!preg_match("/^[a-záéíóúñ\s\-']+$/i", $nombre)) {
+            return ['valido' => false, 'error' => '⚠️ El nombre contiene caracteres no permitidos. Solo letras, espacios y guiones.'];
+        }
+
+        return ['valido' => true, 'nombre' => $nombre];
+    }
+
+    private function validarCantidad($cantidad): array
+    {
+        $cantidad = trim($cantidad);
+
+        if (!ctype_digit($cantidad)) {
+            return ['valido' => false, 'error' => '⚠️ La cantidad debe ser un número.'];
+        }
+
+        $cantidad = (int)$cantidad;
+
+        if ($cantidad < 1) {
+            return ['valido' => false, 'error' => '⚠️ La cantidad debe ser mayor a 0.'];
+        }
+
+        if ($cantidad > 999) {
+            return ['valido' => false, 'error' => '⚠️ La cantidad no puede exceder 999 unidades.'];
+        }
+
+        return ['valido' => true, 'cantidad' => $cantidad];
+    }
+
+    private function validarUbicacion($lat, $lon): array
+    {
+        if (empty($lat) || empty($lon)) {
+            return ['valido' => false, 'error' => '⚠️ No recibí la ubicación. Por favor usa el clip 📎 y selecciona "Ubicación".'];
+        }
+
+        $lat = floatval($lat);
+        $lon = floatval($lon);
+
+        // Rangos válidos para latitud y longitud
+        if ($lat < -90 || $lat > 90) {
+            return ['valido' => false, 'error' => '⚠️ Ubicación inválida. Por favor intenta de nuevo.'];
+        }
+
+        if ($lon < -180 || $lon > 180) {
+            return ['valido' => false, 'error' => '⚠️ Ubicación inválida. Por favor intenta de nuevo.'];
+        }
+
+        return ['valido' => true, 'lat' => $lat, 'lon' => $lon];
+    }
     private function iniciarPedido($numero_cliente)
     {
+        // ⚡ Evitar duplicados: si ya existe un pedido activo, no crear otro
+        $pedidoExistente = PedidosWebRegistro::where('numero_cliente', $numero_cliente)
+            ->where('estado', 1)
+            ->where('estado_pedido', '!=', 6)
+            ->exists();
+
+        if ($pedidoExistente) {
+            return response()->json(['status' => 'already_exists']);
+        }
+
         $codigoPedido = 'PED-' . Str::upper(Str::random(6));
 
         PedidosWebRegistro::create([
@@ -264,6 +485,19 @@ class WhatsAppController extends Controller
     private function enviarMenu($numero_cliente)
     {
         try {
+            // ⚡ Rutas originales
+            $imagenes = [
+                'storage/miEmpresa/CARTAS.jpg',
+                'storage/miEmpresa/CARTABURGUER.jpg',
+            ];
+
+            // 1️⃣ PRIMERO: Enviar imágenes
+            foreach ($imagenes as $imgPath) {
+                $urlOptimizada = $this->optimizarImagenV3($imgPath);
+                $this->enviarMensajeWhatsApp($numero_cliente, '', $urlOptimizada);
+            }
+
+            // 2️⃣ DESPUÉS: Enviar mensaje de bienvenida
             $mensaje = <<<EOT
             ¡Hola! Bienvenido a *FIRE WOK* 🔥🍔
 
@@ -272,17 +506,6 @@ class WhatsAppController extends Controller
             EOT;
 
             $this->enviarMensajeWhatsApp($numero_cliente, $mensaje);
-
-            // Rutas originales
-            $imagenes = [
-                'storage/miEmpresa/CARTAS.jpg',
-                'storage/miEmpresa/CARTABURGUER.jpg',
-            ];
-
-            foreach ($imagenes as $imgPath) {
-                $urlOptimizada = $this->optimizarImagenV3($imgPath);
-                $this->enviarMensajeWhatsApp($numero_cliente, '', $urlOptimizada);
-            }
         } catch (\Throwable $e) {
             Log::error("Error al enviar menú a $numero_cliente: {$e->getMessage()}");
         }
@@ -301,8 +524,8 @@ class WhatsAppController extends Controller
         // Extraer platos con OpenAI
         $pedidosExtraidos = $this->openAIService->extraerPlatosYCantidades($mensaje);
 
-        // Obtener los platos del menú desde la base de datos
-        $platosMenu = Plato::all(['id', 'nombre', 'precio'])->toArray();
+        // ⚡ Obtener los platos del menú desde caché
+        $platosMenu = $this->obtenerPlatosConCache();
         $platosEncontrados = [];
         $platosNoEncontrados = [];
 
@@ -455,13 +678,12 @@ class WhatsAppController extends Controller
                 'pedido_temporal' => null
             ]);
 
-            // Preguntar por método de pago
+            // Preguntar por método de pago (solo caja para recojo)
             $this->enviarMensajeWhatsApp(
                 $pedido->numero_cliente,
                 "💳 *MÉTODO DE PAGO* 💳\n\n" .
-                    "1️⃣ Pagar ahora con Yape/Plin\n" .
                     "2️⃣ Pagar en caja al recoger\n\n" .
-                    "Responde con el número de tu opción."
+                    "Responde con la opción 2."
             );
         } else {
             $this->enviarMensajeWhatsApp(
@@ -473,15 +695,14 @@ class WhatsAppController extends Controller
 
     private function procesarCantidadPlato($pedido, $mensaje)
     {
-        if (!ctype_digit($mensaje) || $mensaje < 1) {
-            $this->enviarMensajeWhatsApp(
-                $pedido->numero_cliente,
-                "⚠️ Cantidad inválida. Ingresa un número mayor a 0."
-            );
+        // ⚡ Validar cantidad
+        $validacion = $this->validarCantidad($mensaje);
+        if (!$validacion['valido']) {
+            $this->enviarMensajeWhatsApp($pedido->numero_cliente, $validacion['error']);
             return;
         }
 
-        $cantidad = (int)$mensaje;
+        $cantidad = $validacion['cantidad'];
 
         try {
             $detalle = detallePedidosWeb::where('idPedido', $pedido->id)
@@ -499,7 +720,7 @@ class WhatsAppController extends Controller
                 $this->enviarMensajeWhatsApp(
                     $pedido->numero_cliente,
                     "✅ Actualizado: {$cantidad} x {$detalle->plato->nombre}\n" .
-                        "Subtotal: S/ " . ($detalle->plato->precio * $cantidad) . "\n\n" .
+                        "Subtotal: S/ " . number_format($detalle->plato->precio * $cantidad, 2) . "\n\n" .
                         "¿Deseas agregar otro plato? (Escribe el número) o escribe *Continuar*"
                 );
             }
@@ -514,6 +735,21 @@ class WhatsAppController extends Controller
 
     private function seleccionarMetodoPago($pedido, $mensaje)
     {
+        // ⚡ Validación: Solo aceptar método válido según tipo de entrega
+        if ($pedido->tipo_entrega === 'delivery' && $mensaje !== '2') {
+            $this->enviarMensajeWhatsApp(
+                $pedido->numero_cliente,
+                "⚠️ Para delivery solo está disponible CONTRAENTREGA.\n\nResponde *2*"
+            );
+            return;
+        } elseif ($pedido->tipo_entrega === 'recojo' && $mensaje !== '2') {
+            $this->enviarMensajeWhatsApp(
+                $pedido->numero_cliente,
+                "⚠️ Para recojo solo está disponible PAGO EN CAJA.\n\nResponde *2*"
+            );
+            return;
+        }
+
         // [CORRECCIÓN CRÍTICA] 🛠️
         // Antes de procesar el pago, verificamos si los platos ya están en la tabla de detalles.
         // Si no están (caso del bug de S/ 0), los migramos desde el JSON temporal ahora mismo.
@@ -630,21 +866,26 @@ class WhatsAppController extends Controller
                 $pedido->estado_pago
             ));
         }
-        // --- MENÚ DE SELECCIÓN (Si manda algo que no es 1 ni 2) ---
+        // --- MENÚ DE SELECCIÓN (Si manda algo que no es válido) ---
         else {
-            // Personalizamos también el menú de opciones
-            $opcion2 = ($pedido->tipo_entrega === 'delivery')
-                ? "2️⃣ *PAGO CONTRAENTREGA*\n   - Pagas al recibir en tu ubicación"
-                : "2️⃣ *PAGAR EN CAJA*\n   - Pagas al recoger en tienda";
-
-            $this->enviarMensajeWhatsApp(
-                $pedido->numero_cliente,
-                "🔷 *SELECCIONA MÉTODO DE PAGO* 🔷\n\n" .
-                    "1️⃣ *PAGAR AHORA* (Yape/Plin)\n" .
-                    "   - Pago rápido y sin contacto\n\n" .
-                    $opcion2 . "\n\n" .
-                    "Responde *1* o *2*"
-            );
+            // Solo mostrar la opción aplicable según tipo de entrega
+            if ($pedido->tipo_entrega === 'delivery') {
+                $this->enviarMensajeWhatsApp(
+                    $pedido->numero_cliente,
+                    "🔷 *MÉTODO DE PAGO* 🔷\n\n" .
+                        "2️⃣ *PAGO CONTRAENTREGA*\n" .
+                        "   - Pagas al recibir en tu ubicación\n\n" .
+                        "Responde *2*"
+                );
+            } else {
+                $this->enviarMensajeWhatsApp(
+                    $pedido->numero_cliente,
+                    "🔷 *MÉTODO DE PAGO* 🔷\n\n" .
+                        "2️⃣ *PAGAR EN CAJA*\n" .
+                        "   - Pagas al recoger en tienda\n\n" .
+                        "Responde *2*"
+                );
+            }
         }
     }
 
@@ -879,32 +1120,53 @@ class WhatsAppController extends Controller
         }
     }
 
+    /**
+     * ⚡ Enviar mensaje con reintentos automáticos
+     * Intenta hasta 3 veces antes de fallar
+     */
     private function enviarMensajeWhatsApp($to, $message, $mediaUrl = null)
     {
-        try {
-            if (empty($this->twilioClient)) {
-                throw new \RuntimeException('Twilio client not initialized');
+        $maxReintentos = 3;
+        $intento = 0;
+
+        while ($intento < $maxReintentos) {
+            try {
+                if (empty($this->twilioClient)) {
+                    throw new \RuntimeException('Twilio client not initialized');
+                }
+
+                $options = [
+                    'from' => $this->twilioNumber,
+                    'body' => $message,
+                ];
+
+                if ($mediaUrl) {
+                    $options['mediaUrl'] = $mediaUrl;
+                }
+
+                $this->twilioClient->messages->create(
+                    $to,
+                    $options
+                );
+
+                Log::info("✅ Mensaje enviado a $to");
+                return true; // Éxito
+            } catch (\Exception $e) {
+                $intento++;
+                Log::warning("⚠️ Error en intento $intento/$maxReintentos enviando a $to: " . $e->getMessage());
+
+                // Si es el último intento, registrar error crítico
+                if ($intento >= $maxReintentos) {
+                    Log::error("❌ FALLO CRÍTICO: No se pudo enviar mensaje a $to después de $maxReintentos intentos");
+                    return false;
+                }
+
+                // Esperar 500ms antes de reintentar
+                usleep(500000);
             }
-
-            $options = [
-                'from' => $this->twilioNumber,
-                'body' => $message,
-            ];
-
-            if ($mediaUrl) {
-                $options['mediaUrl'] = $mediaUrl;
-            }
-
-            $this->twilioClient->messages->create(
-                $to,
-                $options
-            );
-
-            Log::info("Mensaje enviado a $to");
-        } catch (\Exception $e) {
-            Log::error("Error enviando WhatsApp: " . $e->getMessage());
-            // Opcional: reintentar o notificar al administrador
         }
+
+        return false;
     }
 
     private function optimizarImagenV3($rutaOriginal, $ancho = 1000, $calidad = 75)
