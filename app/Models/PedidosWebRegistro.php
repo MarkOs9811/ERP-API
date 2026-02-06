@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Models\Scopes\EmpresaScope;
+use App\Models\Scopes\SedeScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
@@ -11,6 +13,8 @@ class PedidosWebRegistro extends Model
     protected $fillable = [
         'codigo_pedido',
         'idCliente',
+        'idSede',
+        'idEmpresa',
         'fotoComprobante',
         'nombre_cliente',
         'numero_cliente',
@@ -42,5 +46,24 @@ class PedidosWebRegistro extends Model
     public function detallesPedido()
     {
         return $this->hasMany(DetallePedidosWeb::class, 'idPedido');
+    }
+    protected static function booted()
+    {
+        static::addGlobalScope(new EmpresaScope);
+        static::addGlobalScope(new SedeScope);
+
+        static::creating(function ($pedidoDelivery) {
+            $user = auth()->user();
+
+            if ($user) {
+                if (empty($pedidoDelivery->idSede)) {
+                    $pedidoDelivery->idSede = $user->idSede;
+                }
+
+                if (empty($pedidoDelivery->idEmpresa)) {
+                    $pedidoDelivery->idEmpresa = $user->idEmpresa;
+                }
+            }
+        });
     }
 }

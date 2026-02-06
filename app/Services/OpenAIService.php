@@ -13,11 +13,16 @@ use DateTime;
 class OpenAIService
 {
     protected $client;
+    protected $idEmpresa;
+    protected $idSede;
 
     public function __construct()
     {
-        $idEmpresa = MiEmpresa::first();
-        $clave   = ConfiguracionHelper::clave('Open AI', $idEmpresa->id);
+        $miEmpresa = MiEmpresa::first();
+        $this->idEmpresa = $miEmpresa->id;
+        $this->idSede = $miEmpresa->idSede ?? null; // Obtener sede si está disponible
+
+        $clave = ConfiguracionHelper::clave('Open AI', $this->idEmpresa);
 
         if ($clave) {
             $this->client = OpenAI::client($clave);
@@ -27,39 +32,51 @@ class OpenAIService
     }
 
 
-    public function extraerPlatosYCantidades($mensaje)
+    public function extraerPlatosYCantidades($mensaje, $idEmpresa = null, $idSede = null)
     {
         try {
             if (!$this->client) {
                 throw new \Exception("OpenAI no está configurado.");
             }
 
-            // Obtenemos solo los nombres para no gastar tantos tokens
-            $platosMenu = Plato::all()->pluck('nombre')->toArray();
+            // Usar los parámetros pasados o los valores por defecto de la instancia
+            $empresa = $idEmpresa ?? $this->idEmpresa;
+            $sede = $idSede ?? $this->idSede;
+
+            // Filtrar platos por empresa y sede
+            $query = Plato::where('idEmpresa', $empresa);
+
+            if ($sede) {
+                $query->where('idSede', $sede);
+            }
+
+            $platosMenu = $query->pluck('nombre')->toArray();
             $listaMenu = implode(", ", $platosMenu);
+            $listaMenuJSON = json_encode($platosMenu, JSON_UNESCAPED_UNICODE);
 
             $response = $this->client->chat()->create([
                 'model' => 'gpt-3.5-turbo',
                 'messages' => [
                     [
                         'role' => 'system',
-                        'content' => "Eres un mesero experto. Tu misión es entender el pedido del cliente y compararlo con nuestro MENÚ OFICIAL.
+                        'content' => "Eres un extractor de pedidos. Tu misión es identificar qué platos y qué cantidades está pidiendo el cliente.
+                
+                MENÚ DISPONIBLE:
+                $listaMenuJSON
 
-                    MENÚ OFICIAL: [$listaMenu]
-
-                    REGLAS OBLIGATORIAS:
-                    1. Si el cliente escribe un plato con errores o sinónimos (ej: 'amburgesa' en vez de 'Hamburguesa'), DEBES devolver el nombre EXACTO del MENÚ OFICIAL.
-                    2. Si el cliente pide algo que NO se parece a nada del menú (ej: pide 'Ceviche' y no está en la lista), devuelve el nombre tal cual lo escribió el cliente.
-                    3. Asume cantidad 1 si no se especifica.
-                    4. Devuelve SOLO JSON: {\"platos\": [{\"nombre\": \"NombreDelMenu\", \"cantidad\": 1}]}"
+                REGLAS:
+                1. Extrae TODOS los platos que el cliente mencione, incluso si NO están en el menú proporcionado.
+                2. Si el plato está en el menú, usa el nombre exacto o si una palabra esta en el plato lo mostramos en el menú.
+                3. Si el plato NO está en el menú, extrae el nombre tal cual lo dijo el cliente.
+                4. Devuelve SIEMPRE un JSON con este formato:
+                {\"platos\": [{\"nombre\": \"Nombre del plato\", \"cantidad\": 2, \"existe_en_menu\": true/false}]}"
                     ],
                     [
                         'role' => 'user',
                         'content' => $mensaje
                     ]
                 ],
-                'temperature' => 0.0, // Bajamos a 0 para máxima precisión
-                'max_tokens' => 200
+                'temperature' => 0,
             ]);
 
             $respuesta = json_decode($response->choices[0]->message->content, true);
@@ -69,6 +86,8 @@ class OpenAIService
             return [];
         }
     }
+
+
     public function predecirVentas($ventas)
     {
         try {

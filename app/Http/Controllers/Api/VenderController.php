@@ -338,8 +338,11 @@ class VenderController extends Controller
     // TODO PARA PODER REALIZAR LA VENTA TANTO PARA CREDITO O AL CONTADO
     public function venderTodo(Request $request)
     {
-        try {
+        // [LOG] Inicio del proceso
+        Log::info('🔵 === INICIO VENDER TODO ===');
+        Log::info('Datos recibidos del Frontend:', $request->all());
 
+        try {
             // Obtener los datos del formulario
             $idCaja = $request->input('idCaja');
             $idMesa = $request->input('idMesa');
@@ -352,48 +355,52 @@ class VenderController extends Controller
             $tipoVenta = $request->input('tipoVenta');
             $numeroCuotas = $request->input('cuotas');
 
-            $tasaIgv = (float)(ConfiguracionHelper::clave('impuestos') ?? 0.18);
+            // [LOG] Verificando configuración de impuestos
+            $impuestoConfig = ConfiguracionHelper::clave('impuestos');
+            $tasaIgv = (float)($impuestoConfig ?? 0.18);
+            Log::info("Configuración Impuesto: " . ($impuestoConfig ?? 'Default 0.18'));
 
-            // Creamos el factor divisor (ej: 1 + 0.18 = 1.18)
             $factorDivisor = 1 + $tasaIgv;
 
             $dniCliente = null;
             $ClienteId = null;
             $idUsuarioAuth = Auth::id();
 
+            // [LOG] Validación de usuario
             if ($idUsuarioAuth != $idUsuario) {
-
+                Log::warning("⚠️ Error de seguridad: Usuario Auth ($idUsuarioAuth) vs Request ($idUsuario)");
                 return response()->json(['success' => false, 'message' => 'Su codigo no pertenece a esta cuenta.']);
             }
 
-            // Obtener el método de pago
+            // [LOG] Buscando método de pago
             $metodoPago = MetodoPago::where('nombre', $nombreMetodo)->first();
-
             if (!$metodoPago) {
-
+                Log::error("❌ Método de pago no encontrado: $nombreMetodo");
                 return response()->json(['success' => false, 'message' => 'Método de pago no encontrado.']);
             }
-
             $metodoPagoId = $metodoPago->id;
 
+            // [LOG] Buscando caja
+            try {
+                $caja = Caja::findOrFail($idCaja);
+            } catch (\Exception $e) {
+                Log::error("❌ Caja no encontrada ID: $idCaja");
+                throw $e;
+            }
 
-            // Buscar la caja
-            $caja = Caja::findOrFail($idCaja);
-
-
-            $pedidosToVender = "";
+            $pedidosToVender = collect([]);
 
             // Lógica para diferentes tipos de venta
+            Log::info("Procesando tipo de venta: $tipoVenta");
+
             if ($tipoVenta === 'llevar') {
-
-
                 if (empty($pedidoToLlevar) || !is_array($pedidoToLlevar)) {
-
                     return response()->json([
                         'success' => false,
                         'message' => 'No se recibieron pedidos válidos para llevar.',
                     ]);
                 }
+                // Convertimos el array en colección
                 $pedidosToVender = collect($pedidoToLlevar)->map(function ($pedido) use ($factorDivisor) {
                     $precioTotal = (float)$pedido['precio'] * $pedido['cantidad'];
                     return (object)[
@@ -403,19 +410,15 @@ class VenderController extends Controller
                         "valor_unitario" => (float)$pedido['precio'] / $factorDivisor,
                         "valor_total" => $precioTotal / $factorDivisor,
                         "precio_unitario" => (float)$pedido['precio'],
-
                         "igv" => $precioTotal - ($precioTotal / $factorDivisor),
                     ];
                 });
             } elseif ($tipoVenta === 'web') {
-
-
                 $pedidosToVender = DetallePedidosWeb::where('idPedido', $idPedidoWeb)->get();
-
+                // ... (tu lógica de mapeo web igual)
                 $pedidosToVender = $pedidosToVender->map(function ($preventa) use ($factorDivisor) {
                     $platoNombre = Plato::find($preventa->idPlato)->nombre ?? 'Plato desconocido';
                     $precioTotal = (float)$preventa->precio * $preventa->cantidad;
-
                     return (object)[
                         "idPlato" => $preventa->idPlato,
                         "cantidad" => $preventa->cantidad,
@@ -428,23 +431,21 @@ class VenderController extends Controller
                 });
             } else {
                 // Venta de mesa
-
                 $pedidosToVender = PreventaMesa::where('idCaja', $idCaja)
                     ->where('idMesa', $idMesa)
                     ->get();
 
                 if ($pedidosToVender->isEmpty()) {
-
+                    Log::warning("⚠️ No hay preventas para Mesa $idMesa en Caja $idCaja");
                     return response()->json([
                         'success' => false,
                         'message' => 'No hay preventas para la caja y mesa especificadas.',
                     ]);
                 }
-
+                // ... (tu lógica de mapeo mesa igual)
                 $pedidosToVender = $pedidosToVender->map(function ($preventa) use ($factorDivisor) {
                     $platoNombre = Plato::find($preventa->idPlato)->nombre ?? 'Plato desconocido';
                     $precioTotal = (float)$preventa->precio * $preventa->cantidad;
-
                     return (object)[
                         "idPlato" => $preventa->idPlato,
                         "cantidad" => $preventa->cantidad,
@@ -457,52 +458,47 @@ class VenderController extends Controller
                 });
             }
 
+            Log::info("Cantidad de items a vender: " . $pedidosToVender->count());
+
             // Iniciar transacción
             DB::beginTransaction();
 
-
             // Crear nuevo pedido
             $nuevoPedido = $this->crearNuevoPedido($tipoVenta);
-
+            Log::info("Nuevo Pedido creado ID: " . $nuevoPedido->id);
 
             $totalPrecio = 0;
-
             $detallePlatosArray = [];
+
             foreach ($pedidosToVender as $preventa) {
-
-
                 $producto = Plato::find($preventa->idPlato);
                 if (!$producto) {
-
-                    throw new \Exception('Producto no encontrado.');
+                    Log::error("❌ Producto ID {$preventa->idPlato} no encontrado en base de datos.");
+                    throw new \Exception("Producto con ID {$preventa->idPlato} no encontrado.");
                 }
 
                 $precioUnitario = $this->obtenerPrecioUnitario($preventa->idPlato);
 
-
                 if ($tipoVenta !== 'web') {
-
                     $this->crearDetallePedido($nuevoPedido->id, $preventa->idPlato, $preventa->cantidad, $precioUnitario);
                 }
 
-
                 $totalPrecio += $preventa->cantidad * $precioUnitario;
                 $detallePlatosArray[] = [
-                    'nombre' => $producto->nombre, // ✅ Nombre del plato
+                    'nombre' => $producto->nombre,
                     'cantidad' => $preventa->cantidad
                 ];
             }
 
             // ENVIAR Y REGISTRAR EL ESTADO DEL PEDIDO A COCINA
             if ($tipoVenta === 'llevar') {
-                // Ahora sí, convertir todos los platos en un solo JSON
                 $detallePlatos = json_encode($detallePlatosArray);
                 $estadoService = new EstadoPedidoController(
                     'llevar',
                     $idCaja,
                     $detallePlatos,
                     $nuevoPedido->id,
-                    null // detalle_cliente no es necesario para mesas
+                    null
                 );
                 $estadoService->registrar();
             }
@@ -512,90 +508,81 @@ class VenderController extends Controller
             $igv = $totalPrecio - $subtotal;
             $total = $totalPrecio;
 
+            Log::info("Totales calculados: Subtotal: $subtotal, IGV: $igv, Total: $total");
 
             // Procesar cliente según tipo de comprobante
+            Log::info("Procesando Cliente para comprobante: $tipoComprobante");
+
             if ($tipoComprobante === 'F') {
-
-                $dniCliente = $datosCliente['ruc'];
-                if (!$dniCliente || !$datosCliente['razonSocial'] || !$datosCliente['direccion']) {
-
+                $dniCliente = $datosCliente['ruc'] ?? null;
+                if (!$dniCliente || empty($datosCliente['razonSocial']) || empty($datosCliente['direccion'])) {
+                    Log::error("❌ Faltan datos para Factura", $datosCliente);
                     throw new \Exception('Debe proporcionar todos los datos del cliente para una factura.');
                 }
                 $ClienteId = $this->obtenerORegistrarCliente($dniCliente, $datosCliente);
             } elseif ($tipoComprobante === 'B') {
-
-                if (isset($datosCliente['dni'])) {
+                if (isset($datosCliente['dni']) && !empty($datosCliente['dni'])) {
                     $dniCliente = $datosCliente['dni'];
                     $ClienteId = $this->obtenerORegistrarCliente($dniCliente, $datosCliente);
                 } else {
-
+                    Log::info("Usando Cliente Genérico para Boleta");
                     $datosCliente = [
                         'tipo_documento' => '0',
                         'numero_documento' => '00000000',
                         'nombre' => 'CLIENTE GENERICO',
                     ];
+                    // Asegúrate de que tu lógica maneje clientes genéricos si no se guardan en BD
                 }
             }
 
             // Eliminar preventas (solo para ventas de mesa)
             if ($tipoVenta === 'mesa') {
-
-                $deleted = PreventaMesa::where('idCaja', $idCaja)
+                PreventaMesa::where('idCaja', $idCaja)
                     ->where('idMesa', $idMesa)
                     ->delete();
             }
 
-            // Cambiar estado de la mesa si es venta de mesa
+            // Cambiar estado de la mesa
             if ($tipoVenta === 'mesa') {
-
                 $mesaEncontrar = Mesa::find($idMesa);
-
-                if (!$mesaEncontrar) {
-
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Mesa no encontrada.',
-                    ], 404);
+                if ($mesaEncontrar) {
+                    $mesaEncontrar->estado = 1;
+                    $mesaEncontrar->save();
                 }
-
-                $mesaEncontrar->estado = 1;
-                $mesaEncontrar->save();
             }
 
             // Registrar la venta según tipo
             if ($tipoVenta === 'web') {
-
                 $venta = $this->registrarVentaWeb($idPedidoWeb, $idUsuario, $metodoPagoId, $tipoComprobante, $igv, $subtotal, $total, $ClienteId);
-
-
                 $pedidoWeb = PedidosWebRegistro::find($idPedidoWeb);
-                $pedidoWeb->estado_pedido = 6;
-                $pedidoWeb->estado_pago = "pagado";
-                $pedidoWeb->save();
+                if ($pedidoWeb) {
+                    $pedidoWeb->estado_pedido = 6;
+                    $pedidoWeb->estado_pago = "pagado";
+                    $pedidoWeb->save();
 
-
-                // Notificar al cliente
-                $request = new \Illuminate\Http\Request();
-                $request->merge([
-                    'numero_cliente' => $pedidoWeb->numero_cliente,
-                    'estado_pedido' => $pedidoWeb->estado_pedido,
-                    'codigo_pedido' => $pedidoWeb->codigo_pedido,
-                ]);
-
-
-                $controller = new PedidosWebController();
-                $controller->notificarEstadoCliente($request);
+                    // Notificar
+                    try {
+                        $reqNotif = new \Illuminate\Http\Request();
+                        $reqNotif->merge([
+                            'numero_cliente' => $pedidoWeb->numero_cliente,
+                            'estado_pedido' => $pedidoWeb->estado_pedido,
+                            'codigo_pedido' => $pedidoWeb->codigo_pedido,
+                        ]);
+                        $controller = new PedidosWebController();
+                        $controller->notificarEstadoCliente($reqNotif);
+                    } catch (\Exception $eNotif) {
+                        Log::error("Error notificando cliente web: " . $eNotif->getMessage());
+                    }
+                }
             } else {
-
                 $venta = $this->registrarVenta($nuevoPedido->id, $idUsuario, $metodoPagoId, $tipoComprobante, $igv, $subtotal, $total, $ClienteId);
             }
 
+            Log::info("Venta Registrada ID: " . $venta->id);
 
-            // Procesar crédito si aplica
+            // Procesar crédito
             if (in_array($metodoPago->nombre, ['credito', 'tarjeta credito'])) {
-
                 $cuentasPorCobrar = $this->registrarCuentasPorCobrar($venta, $ClienteId, $idUsuario, $total, $numeroCuotas);
-
                 $this->registrarCuotas($cuentasPorCobrar->id, $numeroCuotas, $total);
             }
 
@@ -603,45 +590,54 @@ class VenderController extends Controller
             $caja->montoVendido += $total;
             $caja->save();
 
-            // Procesar SUNAT si está activo
-            $sunatConfig = ConfiguracionHelper::get('sunat');
-            $sunatActivo = $sunatConfig && $sunatConfig->estado == 1;
+            // =========================================================
+            // PROCESO DE FACTURACIÓN SUNAT (SEGURO)
+            // =========================================================
+            try {
+                $sunatConfig = ConfiguracionHelper::get('sunat');
+                // Validación robusta: verifica si existe, no es null y tiene estado activo
+                $sunatActivo = $sunatConfig && isset($sunatConfig->estado) && $sunatConfig->estado == 1;
 
+                Log::info("Estado Sunat: " . ($sunatActivo ? 'ACTIVO' : 'INACTIVO'));
 
-            if ($sunatActivo && $tipoComprobante !== 'S') {
+                if ($sunatActivo && $tipoComprobante !== 'S') {
+                    Log::info("Intentando emitir comprobante electrónico...");
 
+                    $datosFactura = [
+                        'venta_id' => $venta->id,
+                        'tipo_comprobante' => $tipoComprobante,
+                        'cliente' => $datosCliente,
+                        'detalle' => $pedidosToVender,
+                        'subtotal' => $subtotal,
+                        'igv' => $igv,
+                        'total' => $total,
+                    ];
 
-                $datosFactura = [
-                    'venta_id' => $venta->id,
-                    'tipo_comprobante' => $tipoComprobante,
-                    'cliente' => $datosCliente,
-                    'detalle' => $pedidosToVender,
-                    'subtotal' => $subtotal,
-                    'igv' => $igv,
-                    'total' => $total,
-                ];
+                    $facturacionSunatController = new FacturacionSunatController();
+                    $respuesta = $facturacionSunatController->generarFactura($datosFactura);
 
-                $facturacionSunatController = new FacturacionSunatController();
-                $respuesta = $facturacionSunatController->generarFactura($datosFactura);
+                    $estado = $respuesta['estado'];
+                    $observaciones = !empty($respuesta['observaciones']) ? implode(', ', $respuesta['observaciones']) : null;
+                    $rutaXml = $respuesta['rutaXml'] ?? null;
+                    $rutaCdr = $respuesta['rutaCdr'] ?? null;
 
-                $estado = $respuesta['estado'];
-                $observaciones = !empty($respuesta['observaciones']) ? implode(', ', $respuesta['observaciones']) : null;
-                $rutaXml = $respuesta['rutaXml'] ?? null;
-                $rutaCdr = $respuesta['rutaCdr'] ?? null;
-
-
-
-                $this->registrarComprobante($venta, $tipoComprobante, $estado, $observaciones, $rutaXml, $rutaCdr);
+                    $this->registrarComprobante($venta, $tipoComprobante, $estado, $observaciones, $rutaXml, $rutaCdr);
+                    Log::info("Comprobante emitido. Estado: $estado");
+                }
+            } catch (\Exception $eSunat) {
+                // 🚨 IMPORTANTE: Capturamos error Sunat pero NO detenemos la venta
+                Log::error("❌ ERROR CRÍTICO SUNAT (Venta guardada localmente): " . $eSunat->getMessage());
+                Log::error($eSunat->getTraceAsString());
             }
+            // =========================================================
 
             DB::commit();
-            Log::info('==== VENTA FINALIZADA CON ÉXITO ====');
+            Log::info('🟢 ==== VENTA FINALIZADA CON ÉXITO ====');
 
-            // Cargamos la relación de la venta con sus detalles (ajusta según tus modelos)
-            // Asumimos que $venta tiene una relación con los platos vendidos
+            // Respuesta Exitosa
             $ticketData = [
                 'id' => $venta->id,
-                'serie_correlativo' => $venta->serie . '-' . $venta->correlativo, // Si manejas series
+                'serie_correlativo' => $venta->serie . '-' . $venta->correlativo,
                 'tipo_comprobante' => $tipoComprobante == 'F' ? 'FACTURA ELECTRÓNICA' : ($tipoComprobante == 'B' ? 'BOLETA DE VENTA' : 'BOLETA SIMPLE'),
                 'metodo_pago' => $nombreMetodo,
                 'fecha' => date('d/m/Y H:i:s'),
@@ -650,26 +646,28 @@ class VenderController extends Controller
                     'documento' => $datosCliente['dni'] ?? ($datosCliente['ruc'] ?? '00000000'),
                     'direccion' => $datosCliente['direccion'] ?? '',
                 ],
-                'productos' => $pedidosToVender, // Aquí ya tienes la colección con descripciones y totales
+                'productos' => $pedidosToVender,
                 'subtotal' => round($subtotal, 2),
                 'igv' => round($igv, 2),
                 'total' => round($total, 2),
             ];
-            Log::info('Datos del ticket generados', $ticketData);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Venta realizada correctamente.',
-                'ticket' => $ticketData // <--- Agregamos esto
+                'ticket' => $ticketData
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error("ERROR EN VENTA: " . $e->getMessage());
+            // [LOG] Error General
+            Log::error("🔴 ERROR FATAL EN VENDER TODO: " . $e->getMessage());
+            Log::error("Archivo: " . $e->getFile() . " Línea: " . $e->getLine());
             Log::error($e->getTraceAsString());
 
             return response()->json([
                 'error' => true,
-                'message' => 'Error: ' . $e->getMessage()
-            ]);
+                'message' => 'Error del servidor: ' . $e->getMessage() // Mensaje para el frontend
+            ], 500); // Retornamos 500 explícito para que axios lo detecte como error
         }
     }
 

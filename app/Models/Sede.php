@@ -17,6 +17,14 @@ class Sede extends Model
         'telefono',
         'idEmpresa',
     ];
+    public function cajas()
+    {
+        // Primer parámetro: El modelo relacionado (Caja)
+        // Segundo parámetro: La llave foránea en la tabla 'cajas' (idSede)
+        // Tercer parámetro: La llave local en la tabla 'sedes' (id)
+        return $this->hasMany(Caja::class, 'idSede', 'id');
+    }
+
     protected static function booted()
     {
         static::addGlobalScope(new EmpresaScope);
