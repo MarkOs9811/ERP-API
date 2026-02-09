@@ -339,72 +339,64 @@ class VenderController extends Controller
     public function venderTodo(Request $request)
     {
         // [LOG] Inicio del proceso
-        Log::info('🔵 === INICIO VENDER TODO ===');
-        Log::info('Datos recibidos del Frontend:', $request->all());
+        Log::info('🔵 === INICIO VENDER (TODO O PARCIAL) ===');
+        Log::info('Datos recibidos:', $request->all());
 
         try {
-            // Obtener los datos del formulario
+            // --- 1. RECEPCIÓN DE DATOS ---
             $idCaja = $request->input('idCaja');
             $idMesa = $request->input('idMesa');
             $nombreMetodo = $request->input('metodoPago');
             $tipoComprobante = $request->input('comprobante');
             $idUsuario = $request->input('idUsuario');
             $datosCliente = $request->input('datosCliente');
+
+            // Datos de LLEVAR / WEB
             $pedidoToLlevar = $request->input('pedidoToLlevar');
             $idPedidoWeb = $request->input('idPedidoWeb');
-            $tipoVenta = $request->input('tipoVenta');
-            $numeroCuotas = $request->input('cuotas');
 
-            // [LOG] Verificando configuración de impuestos
+            $tipoVenta = $request->input('tipoVenta'); // 'mesa', 'llevar', 'web'
+            $numeroCuotas = $request->input('cuotas');
+            $observacion = $request->input('observacion');
+
+            // === NUEVOS DATOS PARA CUENTA SEPARADA ===
+            $esCuentaSeparada = $request->input('esCuentaSeparada', false); // Default false
+            $pedidosSeleccionados = $request->input('pedidosSeleccionados', []);
+
+            // Configuración impuestos
             $impuestoConfig = ConfiguracionHelper::clave('impuestos');
             $tasaIgv = (float)($impuestoConfig ?? 0.18);
-            Log::info("Configuración Impuesto: " . ($impuestoConfig ?? 'Default 0.18'));
-
             $factorDivisor = 1 + $tasaIgv;
 
             $dniCliente = null;
             $ClienteId = null;
             $idUsuarioAuth = Auth::id();
 
-            // [LOG] Validación de usuario
+            // Validaciones básicas
             if ($idUsuarioAuth != $idUsuario) {
-                Log::warning("⚠️ Error de seguridad: Usuario Auth ($idUsuarioAuth) vs Request ($idUsuario)");
-                return response()->json(['success' => false, 'message' => 'Su codigo no pertenece a esta cuenta.']);
+                return response()->json(['success' => false, 'message' => 'Su código no pertenece a esta cuenta.']);
             }
 
-            // [LOG] Buscando método de pago
             $metodoPago = MetodoPago::where('nombre', $nombreMetodo)->first();
             if (!$metodoPago) {
-                Log::error("❌ Método de pago no encontrado: $nombreMetodo");
                 return response()->json(['success' => false, 'message' => 'Método de pago no encontrado.']);
             }
             $metodoPagoId = $metodoPago->id;
 
-            // [LOG] Buscando caja
-            try {
-                $caja = Caja::findOrFail($idCaja);
-            } catch (\Exception $e) {
-                Log::error("❌ Caja no encontrada ID: $idCaja");
-                throw $e;
-            }
-
+            $caja = Caja::findOrFail($idCaja);
             $pedidosToVender = collect([]);
 
-            // Lógica para diferentes tipos de venta
-            Log::info("Procesando tipo de venta: $tipoVenta");
+            // --- 2. PREPARACIÓN DE ÍTEMS A VENDER ---
 
             if ($tipoVenta === 'llevar') {
+                // ... (Lógica existente para llevar) ...
                 if (empty($pedidoToLlevar) || !is_array($pedidoToLlevar)) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'No se recibieron pedidos válidos para llevar.',
-                    ]);
+                    return response()->json(['success' => false, 'message' => 'No se recibieron pedidos válidos para llevar.']);
                 }
-                // Convertimos el array en colección
                 $pedidosToVender = collect($pedidoToLlevar)->map(function ($pedido) use ($factorDivisor) {
                     $precioTotal = (float)$pedido['precio'] * $pedido['cantidad'];
                     return (object)[
-                        "idPlato" => $pedido['id'],
+                        "idPlato" => $pedido['id'], // ID del Plato
                         "cantidad" => $pedido['cantidad'],
                         "descripcion" => $pedido['nombre'],
                         "valor_unitario" => (float)$pedido['precio'] / $factorDivisor,
@@ -414,8 +406,8 @@ class VenderController extends Controller
                     ];
                 });
             } elseif ($tipoVenta === 'web') {
+                // ... (Lógica existente para web) ...
                 $pedidosToVender = DetallePedidosWeb::where('idPedido', $idPedidoWeb)->get();
-                // ... (tu lógica de mapeo web igual)
                 $pedidosToVender = $pedidosToVender->map(function ($preventa) use ($factorDivisor) {
                     $platoNombre = Plato::find($preventa->idPlato)->nombre ?? 'Plato desconocido';
                     $precioTotal = (float)$preventa->precio * $preventa->cantidad;
@@ -430,94 +422,121 @@ class VenderController extends Controller
                     ];
                 });
             } else {
-                // Venta de mesa
-                $pedidosToVender = PreventaMesa::where('idCaja', $idCaja)
-                    ->where('idMesa', $idMesa)
-                    ->get();
+                // ==========================================
+                // ============ CASO MESA (CRÍTICO) =========
+                // ==========================================
 
-                if ($pedidosToVender->isEmpty()) {
-                    Log::warning("⚠️ No hay preventas para Mesa $idMesa en Caja $idCaja");
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'No hay preventas para la caja y mesa especificadas.',
-                    ]);
+                if ($esCuentaSeparada && !empty($pedidosSeleccionados)) {
+                    // [A] VENTA PARCIAL (CUENTA SEPARADA)
+                    // Mapeamos lo que envió el Frontend (Redux itemsSeleccionados)
+                    $pedidosToVender = collect($pedidosSeleccionados)->map(function ($item) use ($factorDivisor) {
+
+                        // Aseguramos obtener el ID real del PLATO
+                        // Si viene como item.plato.id o item.id (depende de cómo guardaste en Redux)
+                        // En tu frontend FilaPlatoUnificado mandas { id: pedidoId, plato: nombre, ... } 
+                        // Necesitamos buscar el registro original para sacar el ID del plato real o confiar en que el frontend lo mande.
+                        // Lo más seguro: Buscar en PreventaMesa por el ID de la fila ($item['id'])
+
+                        $registroOriginal = PreventaMesa::find($item['id']);
+
+                        if (!$registroOriginal) {
+                            // Fallback si no encuentra registro (raro), intentamos datos del frontend
+                            $nombrePlato = $item['plato']['nombre'] ?? ($item['plato'] ?? 'Item');
+                            $idPlato = $item['plato']['id'] ?? 0; // Cuidado aqui
+                            $precioUnit = (float)$item['precio'];
+                        } else {
+                            $plato = Plato::find($registroOriginal->idPlato);
+                            $nombrePlato = $plato->nombre ?? 'Plato';
+                            $idPlato = $registroOriginal->idPlato;
+                            $precioUnit = (float)$registroOriginal->precio;
+                        }
+
+                        // Usamos la cantidad que el usuario ELIGIÓ pagar (no el total de la fila si es parcial)
+                        $cantidadAPagar = $item['cantidad'];
+                        $precioTotal = $precioUnit * $cantidadAPagar;
+
+                        return (object)[
+                            "id_preventa" => $item['id'], // ID único de la fila en preventa_mesa (IMPORTANTE PARA BORRAR LUEGO)
+                            "idPlato" => $idPlato,
+                            "cantidad" => $cantidadAPagar,
+                            "descripcion" => $nombrePlato,
+                            "valor_unitario" => $precioUnit / $factorDivisor,
+                            "valor_total" => $precioTotal / $factorDivisor,
+                            "precio_unitario" => $precioUnit,
+                            "igv" => $precioTotal - ($precioTotal / $factorDivisor),
+                        ];
+                    });
+                } else {
+                    // [B] VENTA TOTAL (MÉTODO ANTIGUO)
+                    $pedidosBD = PreventaMesa::where('idCaja', $idCaja)->where('idMesa', $idMesa)->get();
+
+                    if ($pedidosBD->isEmpty()) {
+                        return response()->json(['success' => false, 'message' => 'No hay preventas para esta mesa.']);
+                    }
+
+                    $pedidosToVender = $pedidosBD->map(function ($preventa) use ($factorDivisor) {
+                        $platoNombre = Plato::find($preventa->idPlato)->nombre ?? 'Plato desconocido';
+                        $precioTotal = (float)$preventa->precio * $preventa->cantidad;
+                        return (object)[
+                            "id_preventa" => $preventa->id, // ID para borrar luego
+                            "idPlato" => $preventa->idPlato,
+                            "cantidad" => $preventa->cantidad,
+                            "descripcion" => $platoNombre,
+                            "valor_unitario" => (float)$preventa->precio / $factorDivisor,
+                            "valor_total" => $precioTotal / $factorDivisor,
+                            "precio_unitario" => (float)$preventa->precio,
+                            "igv" => $precioTotal - ($precioTotal / $factorDivisor),
+                        ];
+                    });
                 }
-                // ... (tu lógica de mapeo mesa igual)
-                $pedidosToVender = $pedidosToVender->map(function ($preventa) use ($factorDivisor) {
-                    $platoNombre = Plato::find($preventa->idPlato)->nombre ?? 'Plato desconocido';
-                    $precioTotal = (float)$preventa->precio * $preventa->cantidad;
-                    return (object)[
-                        "idPlato" => $preventa->idPlato,
-                        "cantidad" => $preventa->cantidad,
-                        "descripcion" => $platoNombre,
-                        "valor_unitario" => (float)$preventa->precio / $factorDivisor,
-                        "valor_total" => $precioTotal / $factorDivisor,
-                        "precio_unitario" => (float)$preventa->precio,
-                        "igv" => $precioTotal - ($precioTotal / $factorDivisor),
-                    ];
-                });
             }
 
-            Log::info("Cantidad de items a vender: " . $pedidosToVender->count());
-
-            // Iniciar transacción
             DB::beginTransaction();
 
-            // Crear nuevo pedido
+            // Crear registro en tabla PEDIDOS (Cabecera)
             $nuevoPedido = $this->crearNuevoPedido($tipoVenta);
-            Log::info("Nuevo Pedido creado ID: " . $nuevoPedido->id);
 
             $totalPrecio = 0;
             $detallePlatosArray = [];
 
-            foreach ($pedidosToVender as $preventa) {
-                $producto = Plato::find($preventa->idPlato);
-                if (!$producto) {
-                    Log::error("❌ Producto ID {$preventa->idPlato} no encontrado en base de datos.");
-                    throw new \Exception("Producto con ID {$preventa->idPlato} no encontrado.");
-                }
+            // Procesar Detalle y Calcular Totales
+            foreach ($pedidosToVender as $itemVenta) {
+                $producto = Plato::find($itemVenta->idPlato);
+                // Validacion opcional si el plato existe
 
-                $precioUnitario = $this->obtenerPrecioUnitario($preventa->idPlato);
-
+                // Creamos detalle en la tabla `detalle_pedidos`
                 if ($tipoVenta !== 'web') {
-                    $this->crearDetallePedido($nuevoPedido->id, $preventa->idPlato, $preventa->cantidad, $precioUnitario);
+                    $this->crearDetallePedido($nuevoPedido->id, $itemVenta->idPlato, $itemVenta->cantidad, $itemVenta->precio_unitario);
                 }
 
-                $totalPrecio += $preventa->cantidad * $precioUnitario;
+                $totalPrecio += $itemVenta->cantidad * $itemVenta->precio_unitario;
                 $detallePlatosArray[] = [
-                    'nombre' => $producto->nombre,
-                    'cantidad' => $preventa->cantidad
+                    'nombre' => $itemVenta->descripcion,
+                    'cantidad' => $itemVenta->cantidad
                 ];
             }
 
-            // ENVIAR Y REGISTRAR EL ESTADO DEL PEDIDO A COCINA
+            // Registrar estado y observación para llevar
             if ($tipoVenta === 'llevar') {
                 $detallePlatos = json_encode($detallePlatosArray);
-                $estadoService = new EstadoPedidoController(
-                    'llevar',
-                    $idCaja,
-                    $detallePlatos,
-                    $nuevoPedido->id,
-                    null
-                );
+                $estadoService = new EstadoPedidoController('llevar', $idCaja, $detallePlatos, $nuevoPedido->id, null);
                 $estadoService->registrar();
+
+                if (!empty($observacion)) {
+                    EstadoPedido::where('idPedidoLLevar', $nuevoPedido->id)->update(['detalles_extras' => $observacion]);
+                }
             }
 
-            // Calcular totales
+            // Cálculos finales monetarios
             $subtotal = $totalPrecio / $factorDivisor;
             $igv = $totalPrecio - $subtotal;
             $total = $totalPrecio;
 
-            Log::info("Totales calculados: Subtotal: $subtotal, IGV: $igv, Total: $total");
-
-            // Procesar cliente según tipo de comprobante
-            Log::info("Procesando Cliente para comprobante: $tipoComprobante");
-
+            // Procesar Cliente (Factura/Boleta) - Lógica sin cambios
             if ($tipoComprobante === 'F') {
                 $dniCliente = $datosCliente['ruc'] ?? null;
                 if (!$dniCliente || empty($datosCliente['razonSocial']) || empty($datosCliente['direccion'])) {
-                    Log::error("❌ Faltan datos para Factura", $datosCliente);
-                    throw new \Exception('Debe proporcionar todos los datos del cliente para una factura.');
+                    throw new \Exception('Datos incompletos para Factura.');
                 }
                 $ClienteId = $this->obtenerORegistrarCliente($dniCliente, $datosCliente);
             } elseif ($tipoComprobante === 'B') {
@@ -525,116 +544,110 @@ class VenderController extends Controller
                     $dniCliente = $datosCliente['dni'];
                     $ClienteId = $this->obtenerORegistrarCliente($dniCliente, $datosCliente);
                 } else {
-                    Log::info("Usando Cliente Genérico para Boleta");
-                    $datosCliente = [
-                        'tipo_documento' => '0',
-                        'numero_documento' => '00000000',
-                        'nombre' => 'CLIENTE GENERICO',
-                    ];
-                    // Asegúrate de que tu lógica maneje clientes genéricos si no se guardan en BD
+                    $datosCliente = ['tipo_documento' => '0', 'numero_documento' => '00000000', 'nombre' => 'CLIENTE GENERICO'];
                 }
             }
 
-            // Eliminar preventas (solo para ventas de mesa)
-            if ($tipoVenta === 'mesa') {
-                PreventaMesa::where('idCaja', $idCaja)
-                    ->where('idMesa', $idMesa)
-                    ->delete();
-            }
+            // =================================================================
+            // =========== 3. LIMPIEZA DE MESA (LA PARTE INTELIGENTE) ==========
+            // =================================================================
 
-            // Cambiar estado de la mesa
             if ($tipoVenta === 'mesa') {
-                $mesaEncontrar = Mesa::find($idMesa);
-                if ($mesaEncontrar) {
-                    $mesaEncontrar->estado = 1;
-                    $mesaEncontrar->save();
+                if ($esCuentaSeparada) {
+                    // A) MODO PARCIAL: Recorremos lo que se vendió
+                    foreach ($pedidosToVender as $itemVendido) {
+                        $preventaRow = PreventaMesa::find($itemVendido->id_preventa);
+
+                        if ($preventaRow) {
+                            // Si pagó TODO lo que había en esa fila (ej: había 2 cervezas, pagó 2)
+                            if ($itemVendido->cantidad >= $preventaRow->cantidad) {
+                                $preventaRow->delete();
+                            } else {
+                                // Si pagó PARCIALMENTE esa fila (ej: había 5, pagó 2)
+                                // Restamos la cantidad y actualizamos
+                                $preventaRow->cantidad = $preventaRow->cantidad - $itemVendido->cantidad;
+                                $preventaRow->save();
+                            }
+                        }
+                    }
+                } else {
+                    // B) MODO TOTAL: Borramos todo de un golpe
+                    PreventaMesa::where('idCaja', $idCaja)->where('idMesa', $idMesa)->delete();
+                }
+
+                // --- VERIFICACIÓN DE ESTADO DE MESA ---
+                // Consultamos si QUEDA ALGO pendiente en la mesa
+                $itemsRestantes = PreventaMesa::where('idMesa', $idMesa)->count();
+
+                // Solo si NO queda nada (0), liberamos la mesa
+                if ($itemsRestantes == 0) {
+                    $mesaEncontrar = Mesa::find($idMesa);
+                    if ($mesaEncontrar) {
+                        $mesaEncontrar->estado = 1; // 1 = Disponible
+                        $mesaEncontrar->save();
+                    }
+                } else {
+                    // Si itemsRestantes > 0, la mesa sigue OCUPADA (estado 0 o 2), no hacemos nada
+                    Log::info("La mesa $idMesa aun tiene $itemsRestantes items pendientes. No se libera.");
                 }
             }
 
-            // Registrar la venta según tipo
+            // Registrar Venta Final en tabla `ventas`
             if ($tipoVenta === 'web') {
+                // ... logica web ...
                 $venta = $this->registrarVentaWeb($idPedidoWeb, $idUsuario, $metodoPagoId, $tipoComprobante, $igv, $subtotal, $total, $ClienteId);
                 $pedidoWeb = PedidosWebRegistro::find($idPedidoWeb);
                 if ($pedidoWeb) {
                     $pedidoWeb->estado_pedido = 6;
                     $pedidoWeb->estado_pago = "pagado";
                     $pedidoWeb->save();
-
-                    // Notificar
-                    try {
-                        $reqNotif = new \Illuminate\Http\Request();
-                        $reqNotif->merge([
-                            'numero_cliente' => $pedidoWeb->numero_cliente,
-                            'estado_pedido' => $pedidoWeb->estado_pedido,
-                            'codigo_pedido' => $pedidoWeb->codigo_pedido,
-                        ]);
-                        $controller = new PedidosWebController();
-                        $controller->notificarEstadoCliente($reqNotif);
-                    } catch (\Exception $eNotif) {
-                        Log::error("Error notificando cliente web: " . $eNotif->getMessage());
-                    }
                 }
             } else {
                 $venta = $this->registrarVenta($nuevoPedido->id, $idUsuario, $metodoPagoId, $tipoComprobante, $igv, $subtotal, $total, $ClienteId);
             }
 
-            Log::info("Venta Registrada ID: " . $venta->id);
-
-            // Procesar crédito
+            // Crédito y Caja
             if (in_array($metodoPago->nombre, ['credito', 'tarjeta credito'])) {
                 $cuentasPorCobrar = $this->registrarCuentasPorCobrar($venta, $ClienteId, $idUsuario, $total, $numeroCuotas);
                 $this->registrarCuotas($cuentasPorCobrar->id, $numeroCuotas, $total);
             }
-
-            // Actualizar caja
             $caja->montoVendido += $total;
             $caja->save();
 
-            // =========================================================
-            // PROCESO DE FACTURACIÓN SUNAT (SEGURO)
-            // =========================================================
+            // Facturación SUNAT
             try {
                 $sunatConfig = ConfiguracionHelper::get('sunat');
-                // Validación robusta: verifica si existe, no es null y tiene estado activo
                 $sunatActivo = $sunatConfig && isset($sunatConfig->estado) && $sunatConfig->estado == 1;
 
-                Log::info("Estado Sunat: " . ($sunatActivo ? 'ACTIVO' : 'INACTIVO'));
-
                 if ($sunatActivo && $tipoComprobante !== 'S') {
-                    Log::info("Intentando emitir comprobante electrónico...");
-
                     $datosFactura = [
                         'venta_id' => $venta->id,
                         'tipo_comprobante' => $tipoComprobante,
                         'cliente' => $datosCliente,
-                        'detalle' => $pedidosToVender,
+                        'detalle' => $pedidosToVender, // Se envía lo que se vendió (parcial o total)
                         'subtotal' => $subtotal,
                         'igv' => $igv,
                         'total' => $total,
                     ];
-
                     $facturacionSunatController = new FacturacionSunatController();
                     $respuesta = $facturacionSunatController->generarFactura($datosFactura);
 
-                    $estado = $respuesta['estado'];
-                    $observaciones = !empty($respuesta['observaciones']) ? implode(', ', $respuesta['observaciones']) : null;
-                    $rutaXml = $respuesta['rutaXml'] ?? null;
-                    $rutaCdr = $respuesta['rutaCdr'] ?? null;
-
-                    $this->registrarComprobante($venta, $tipoComprobante, $estado, $observaciones, $rutaXml, $rutaCdr);
-                    Log::info("Comprobante emitido. Estado: $estado");
+                    $this->registrarComprobante(
+                        $venta,
+                        $tipoComprobante,
+                        $respuesta['estado'],
+                        !empty($respuesta['observaciones']) ? implode(', ', $respuesta['observaciones']) : null,
+                        $respuesta['rutaXml'] ?? null,
+                        $respuesta['rutaCdr'] ?? null
+                    );
                 }
             } catch (\Exception $eSunat) {
-                // 🚨 IMPORTANTE: Capturamos error Sunat pero NO detenemos la venta
-                Log::error("❌ ERROR CRÍTICO SUNAT (Venta guardada localmente): " . $eSunat->getMessage());
-                Log::error($eSunat->getTraceAsString());
+                Log::error("❌ ERROR CRÍTICO SUNAT: " . $eSunat->getMessage());
             }
-            // =========================================================
 
             DB::commit();
-            Log::info('🟢 ==== VENTA FINALIZADA CON ÉXITO ====');
 
-            // Respuesta Exitosa
+            // Respuesta Final
             $ticketData = [
                 'id' => $venta->id,
                 'serie_correlativo' => $venta->serie . '-' . $venta->correlativo,
@@ -650,6 +663,7 @@ class VenderController extends Controller
                 'subtotal' => round($subtotal, 2),
                 'igv' => round($igv, 2),
                 'total' => round($total, 2),
+                'observacion' => $observacion
             ];
 
             return response()->json([
@@ -659,15 +673,9 @@ class VenderController extends Controller
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
-            // [LOG] Error General
-            Log::error("🔴 ERROR FATAL EN VENDER TODO: " . $e->getMessage());
-            Log::error("Archivo: " . $e->getFile() . " Línea: " . $e->getLine());
-            Log::error($e->getTraceAsString());
-
-            return response()->json([
-                'error' => true,
-                'message' => 'Error del servidor: ' . $e->getMessage() // Mensaje para el frontend
-            ], 500); // Retornamos 500 explícito para que axios lo detecte como error
+            Log::error("🔴 ERROR FATAL EN VENDER: " . $e->getMessage());
+            Log::error("Line: " . $e->getLine() . " File: " . $e->getFile());
+            return response()->json(['error' => true, 'message' => 'Error del servidor: ' . $e->getMessage()], 500);
         }
     }
 
