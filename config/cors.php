@@ -9,6 +9,7 @@ return [
     // Orígenes permitidos
     'allowed_origins' => [
         'http://localhost:3000',
+        'http://localhost:4000',
         'https://vv1g8thv-3000.brs.devtunnels.ms',
         'https://playful-genie-d92cb7.netlify.app', // Tu dominio de frontend
         'http://192.168.18.102:3000',

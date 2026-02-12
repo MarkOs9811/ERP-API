@@ -4,10 +4,11 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Laravel\Sanctum\HasApiTokens;
 
 class Persona extends Model
 {
-    use HasFactory;
+    use HasFactory, HasApiTokens;
     protected $fillable = [
         'nombre',
         'idDistrito',
@@ -15,9 +16,12 @@ class Persona extends Model
         'fecha_nacimiento',
         'documento_identidad',
         'telefono',
+        'google_id',
+        'foto',
         'direccion',
         'idDistrito',
         'correo',
+
     ];
 
     public function empleado()

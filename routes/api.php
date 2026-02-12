@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\AlmacenController;
 use App\Http\Controllers\api\AsistenciasController;
 use App\Http\Controllers\Api\CajaController;
 use App\Http\Controllers\Api\CategoriasController;
+use App\Http\Controllers\Api\ClienteController;
 use App\Http\Controllers\Api\CocinaController;
 use App\Http\Controllers\Api\CombosController;
 use App\Http\Controllers\Api\ConfiguracionController;
@@ -36,6 +37,7 @@ use App\Http\Controllers\api\GoogleCalendarController;
 use App\Http\Controllers\Api\MesasController;
 use App\Http\Controllers\Api\MiPerfilController;
 use App\Http\Controllers\Api\NotificacionesController;
+use App\Http\Controllers\Api\PedidosAppController;
 use App\Http\Controllers\api\PedidosWebController;
 use App\Http\Controllers\Api\PeriodoNominaController;
 use App\Http\Controllers\api\PlanillaController;
@@ -470,7 +472,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
 // LOGIN Y CRUD PARA EL SUPERADMIN
 
-Route::post('/login/superadmin', [AuthController::class, 'loginSuperAdmin'])->name('login');
+Route::post('/login/superadmin', [AuthController::class, 'loginSuperAdmin']);
 Route::middleware('auth:sanctum', 'throttle:api')->group(
     function () {
         Route::get('/superadmin/empresas', [EmpresasAdminController::class, 'getEmpresas']);
@@ -485,3 +487,15 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(
         Route::put('/superadmin/empresasSteps/complete-setup', [EmpresasAdminController::class, 'completeSetup']);
     }
 );
+
+// CONSULTAS PARA consutla y logearse con cliente google gmail
+Route::get('/auth/google/redirect/cliente', [GoogleController::class, 'redirectToGoogleCliente']);
+Route::get('/auth/google/callback/cliente', [GoogleController::class, 'handleGoogleCallbackCliente']);
+
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/cliente/perfil', [ClienteController::class, 'perfil']);
+    Route::post('/cliente/logout', [ClienteController::class, 'logout']);
+});
+
+Route::get('/cliente/categoriasPlatos', [PedidosAppController::class, 'getCategorias']);
+Route::get('/cliente/menu', [PedidosAppController::class, 'getMenu']);
