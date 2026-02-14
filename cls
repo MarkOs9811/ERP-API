@@ -1,0 +1,42 @@
+[33m0e9a398[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmaster[m[33m, [m[1;31morigin/master[m[33m, [m[1;31morigin/HEAD[m[33m)[m Se mejoro lso metodos para gestioanr los mensaje del cliente por wsp
+[33m0d32747[m se arreglo la logica de authenticarse para los servicios de google
+[33mb9675db[m Se mejoró la grafica de ventas de este año, asi como el periodo vencido
+[33m8c2e9fb[m se modificaron los metodos para crear sedes automaticamente (claves limpias)
+[33mdf7c95f[m se modificaron metodos y se agregaron el metodo para IGV
+[33m79a3dc2[m Se corrigieron los metodos para finanzas
+[33med4e190[m Se mejoraron los metodos para agrear preventa a la cocina y el analisis de IA
+[33m2ebd46c[m Se realizaron mejoras en el codigo de authenticacion
+[33m1cf136a[m Se agregaron metodos de reporte de asistencia
+[33m4de9c57[m Mjorando metodos de actualziar fotos
+[33mc92e95e[m Se mejoro el metodo que genera los pagos y su validacion
+[33m5eddef7[m Se agregaron los metodos para actualizar la finalización de setUp
+[33m480144a[m Se agregaron restricciones scopes a los modelos
+[33m0aa1d1c[m se agrego metodos para actualziar la mepresa y guardar, a su vez registrar el adminsitrador principal, asi como modulos ara cada empresa
+[33m3559850[m Se creó el metodo de agregar empresa al super admin
+[33m07cc8ee[m se actualizó los escopes para que el admin super pueda ver todo ademas de crear controlador para empresaAdmin
+[33mbf05711[m Metodo de terminado para SEDES
+[33m3129d57[m Agregando mejoras para el modelo de platos, ademas de cambiar la integracion de google srvice para internamente
+[33m4c95520[m Crud para mesas completado
+[33m3761dfa[m CRUD para horarios, deduccion, bonificacion
+[33m99557ea[m Agregando metodos para planilla
+[33m6eb9fb5[m Modificaciones de horas extras
+[33m644cdf3[m Se crearos notiaciones y cronJobs para cuando se venza un fin de periodo, ademas de mejoras en la subsanacion de incidencias
+[33m7d32568[m agregando metodos para el pago de nomina
+[33mf1536c6[m cambios en el metodo de obtener usuario
+[33m7e3639e[m nomina de validacion,a  falta de realziar apgos y validar
+[33m76159a1[m un trait para idPeriodoNomina
+[33me7a5f4c[m Agregando periodos de nominas
+[33mca85690[m metodo de ajustes planilla
+[33m26a8fa3[m Se creó metodos para actrualizar las series y correaltivos, se instalo un generador de PDF, y se corrigieron
+[33m446313d[m Crear la tabla serieCorrelativo
+[33m0276f51[m agregando scope a modelos de compras
+[33ma74fa4b[m actualziacion de traits por sede y empresa
+[33m73a4536[m se creó un traits para valdiar las idSede y idEmpresa
+[33m5532aad[m Cambio de al obtener registro de cajas
+[33m9ff766f[m Creando la actualizacion de almacen
+[33mdd616f4[m Se crearon metodos para visualziar la nomina
+[33m913c74a[m Cambios realizados
+[33m5c5dbdf[m Merge branch 'master' of https://github.com/MarkOs9811/ERP-API
+[33md5d86d5[m probando scope
+[33m3394d0f[m Primer commit - ERP API en nueva compu
+[33me16256f[m Remove greenter from tracking

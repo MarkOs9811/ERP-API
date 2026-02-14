@@ -181,8 +181,16 @@ class GoogleController extends Controller
                 return $persona->createToken('auth_token_cliente')->plainTextToken;
             });
 
-            // 3. Redirigir al Frontend
-            $frontendUrl = "http://localhost:4000";
+            $host = request()->getHost();
+
+            // Si la petición viene de Ngrok o de tu IP local...
+            if (str_contains($host, 'ngrok') || $host === '192.168.18.198') {
+                // ... redirigimos a la IP de tu celular (o tu dominio ngrok del front si tienes)
+                $frontendUrl = "http://192.168.18.198:4000"; 
+            } else {
+                // Caso contrario (estás en tu PC)
+                $frontendUrl = "http://localhost:4000";
+            }
 
             return redirect()->to("$frontendUrl/login-success?token=$token&status=success");
         } catch (\Exception $e) {
