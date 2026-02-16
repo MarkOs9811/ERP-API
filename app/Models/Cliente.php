@@ -26,4 +26,15 @@ class Cliente extends Model
     {
         return $this->belongsTo(Empresa::class, 'idEmpresa');
     }
+    // Relación con Direcciones
+    public function direcciones()
+    {
+        return $this->hasMany(Direccione::class, 'idCliente');
+    }
+
+    // Relación con Métodos de Pago
+    public function metodosPago()
+    {
+        return $this->hasMany(MetodosPagoCliente::class, 'idCliente');
+    }
 }
