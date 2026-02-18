@@ -86,10 +86,10 @@ class VenderAppCliente extends Controller
                     'tipo_entrega'  => $request->tipo_entrega,
                     'idMetodoPago'  => $request->idMetodoPago,
                     'estado_pago'   => $request->estado_pago,
-                    'estado_pedido' => 1,
+                    'estado_pedido' => 3,
                     'propina'       => $request->propina,
                     'costo_envio'   => $request->costo_envio,
-                    'prioridad'     => $request->prioridad,
+                    'prioridad'     => $request->prioridad ? 'true' : 'false',
                     'total'         => $request->total,
                     'fecha'         => now(),
                 ]);
@@ -134,13 +134,10 @@ class VenderAppCliente extends Controller
             // 1. Log para verificar si el usuario llega bien
             $cliente = Cliente::where('idPersona', $user->id)->first();
 
-
-
             $idCliente = $cliente->id;
 
             // 2. Ejecutamos la consulta
             $pedidos = PedidosWebRegistro::where('idCliente', $idCliente)
-                ->where('estado_pedido', 3) // Agregado según tu requerimiento previo
                 ->with(['detallesPedido.plato'])
                 ->get();
 
