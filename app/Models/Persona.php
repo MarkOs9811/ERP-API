@@ -32,4 +32,9 @@ class Persona extends Model
     {
         return $this->belongsTo(Distrito::class, 'idDistrito', 'id');
     }
+
+    public function cliente()
+    {
+        return $this->belongsTo(Cliente::class, 'idPersona', 'id');
+    }
 }

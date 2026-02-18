@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\ConfiguracionDelivery;
 use App\Models\Configuraciones;
 use App\Models\MiEmpresa;
 use App\Models\SerieCorrelativo;
@@ -673,6 +674,23 @@ class ConfiguracionController extends Controller
                 'success' => false,
                 'message' => 'Error interno al guardar la configuración.'
             ], 500);
+        }
+    }
+
+    public function getConfigDeliveryEmpresa()
+    {
+        try {
+            $idEmpresa = 2;
+
+            $configuracion = ConfiguracionDelivery::where('idEmpresa', $idEmpresa)->first();
+
+            if (!$configuracion) {
+                return response()->json(['success' => false, 'message' => 'No hay configuración para esta empresa'], 404);
+            }
+
+            return response()->json(['success' => true, 'data' => $configuracion], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
 }

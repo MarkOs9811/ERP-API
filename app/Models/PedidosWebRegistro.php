@@ -24,8 +24,17 @@ class PedidosWebRegistro extends Model
         'pedido_temporal',
         'estado_pedido',
         'estado_pago',
-        'estado'
+        'estado',
+
+        // Nuevos campos
+        'idDireccion',
+        'idMetodoPago',
+        'propina',
+        'costo_envio',
+        'prioridad',
+        'total',
     ];
+
     const ESTADOS_PEDIDO = [
         1 => 'Pendiente - Sin confirmar pedido',
         2 => 'Pendiente - Sin confirmar pago',

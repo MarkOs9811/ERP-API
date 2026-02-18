@@ -279,10 +279,6 @@ class VenderController extends Controller
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 200);
         }
     }
-
-
-
-
     public function getMesasFree()
     {
         try {
@@ -332,8 +328,6 @@ class VenderController extends Controller
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
     }
-
-
 
     // TODO PARA PODER REALIZAR LA VENTA TANTO PARA CREDITO O AL CONTADO
     public function venderTodo(Request $request)

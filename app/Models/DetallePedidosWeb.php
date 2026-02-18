@@ -15,6 +15,7 @@ class DetallePedidosWeb extends Model
         'producto',
         'cantidad',
         'precio',
+        'nota',
         'estado'
     ];
 

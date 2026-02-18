@@ -43,6 +43,7 @@ use App\Http\Controllers\Api\PeriodoNominaController;
 use App\Http\Controllers\api\PlanillaController;
 use App\Http\Controllers\Api\ReportesController;
 use App\Http\Controllers\Api\SedesController;
+use App\Http\Controllers\Api\VenderAppCliente;
 use App\Http\Controllers\api\WhatsAppController;
 use App\Http\Controllers\Auth\GoogleController;
 use Google\Service\AdSenseHost\Report;
@@ -495,7 +496,11 @@ Route::get('/auth/google/callback/cliente', [GoogleController::class, 'handleGoo
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/cliente/perfil', [ClienteController::class, 'perfil']);
     Route::post('/cliente/logout', [ClienteController::class, 'logout']);
+    Route::get('/cliente/metodosPagos', [ClienteController::class, 'getMetodosPagos']);
+    Route::get('/cliente/direcciones', [ClienteController::class, 'getDirecciones']);
+    Route::post('/cliente/pedidos/crear', [VenderAppCliente::class, 'store']);
+    Route::get('/cliente/misPedidos', [VenderAppCliente::class, 'getMisPedidos']);
 });
-
+Route::get('/cliente/configDeliveryEmpresa', [ConfiguracionController::class, 'getConfigDeliveryEmpresa']);
 Route::get('/cliente/categoriasPlatos', [PedidosAppController::class, 'getCategorias']);
 Route::get('/cliente/menu', [PedidosAppController::class, 'getMenu']);
