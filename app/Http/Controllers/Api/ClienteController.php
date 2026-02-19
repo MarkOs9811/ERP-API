@@ -110,4 +110,44 @@ class ClienteController extends Controller
             ], 500);
         }
     }
+
+    public function addDireccion(Request $request)
+    {
+        try {
+            $persona = $request->user();
+
+            $cliente = Cliente::where('idPersona', $persona->id)->first();
+
+            if (!$cliente) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se encontró un perfil de Cliente asociado a esta Persona.'
+                ], 404);
+            }
+
+            // Crear nueva dirección
+            $direccion = new Direccione();
+            $direccion->idCliente = $cliente->id;
+            $direccion->alias = $request->alias;
+            $direccion->calle = $request->calle;
+            $direccion->numero = $request->numero;
+            $direccion->detalles = $request->detalles;
+            $direccion->longitud = $request->longitud;
+            $direccion->latitud = $request->latitud;
+            $direccion->estado = 0; // Activada por defecto
+            $direccion->save();
+
+            return response()->json([
+                'success' => true,
+                'data' => $direccion,
+                'message' => 'Dirección agregada correctamente'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error crítico en addDireccion: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => "Error del servidor: " . $e->getMessage(),
+            ], 500);
+        }
+    }
 }

@@ -500,6 +500,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/cliente/direcciones', [ClienteController::class, 'getDirecciones']);
     Route::post('/cliente/pedidos/crear', [VenderAppCliente::class, 'store']);
     Route::get('/cliente/misPedidos', [VenderAppCliente::class, 'getMisPedidos']);
+
+    // GESTION DE DIRECCIONES
+    Route::post('/cliente/direcciones', [ClienteController::class, 'addDireccion']);
+    Route::put('/cliente/direcciones/{id}', [ClienteController::class, 'updateDireccion']);
+    Route::delete('/cliente/direcciones/{id}', [ClienteController::class, 'deleteDireccion']);
 });
 Route::get('/cliente/configDeliveryEmpresa', [ConfiguracionController::class, 'getConfigDeliveryEmpresa']);
 Route::get('/cliente/categoriasPlatos', [PedidosAppController::class, 'getCategorias']);
