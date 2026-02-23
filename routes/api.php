@@ -171,7 +171,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::get('/pedidosPendientes', [PedidosWebController::class, 'getPedidosPendientes']);
     Route::get('/pedidosEnProceso', [PedidosWebController::class, 'getPedidosEnProceso']);
     Route::get('/pedidosListos', [PedidosWebController::class, 'getPedidosListos']);
-
+    Route::get('/pedidosEnCamino', [PedidosWebController::class, 'getPedidosEnCamino']);
     Route::put('/pedidosPendientes/cambiarEstado', [PedidosWebController::class, 'cambiarEstado']);
     // RUTAS ACCIOENS PEDIDOS
     Route::get('/pedidosWeb/{id}', [PedidosWebController::class, 'getPedidosWeb']);
@@ -504,6 +504,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // GESTION DE DIRECCIONES
     Route::post('/cliente/direcciones', [ClienteController::class, 'addDireccion']);
     Route::put('/cliente/direcciones/{id}', [ClienteController::class, 'updateDireccion']);
+    Route::put('/cliente/direccionesPredeterminada/{id}', [ClienteController::class, 'updateDireccionPredeterminada']);
     Route::delete('/cliente/direcciones/{id}', [ClienteController::class, 'deleteDireccion']);
 });
 Route::get('/cliente/configDeliveryEmpresa', [ConfiguracionController::class, 'getConfigDeliveryEmpresa']);

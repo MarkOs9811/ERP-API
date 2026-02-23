@@ -7,6 +7,7 @@ use App\Models\Cliente;
 use App\Models\Direccione;
 use App\Models\MetodosPagoCliente;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class ClienteController extends Controller
@@ -144,6 +145,105 @@ class ClienteController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('Error crítico en addDireccion: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => "Error del servidor: " . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function updateDireccionPredeterminada(Request $request, $id)
+    {
+        try {
+            $persona = $request->user();
+            $cliente = Cliente::where('idPersona', $persona->id)->first();
+
+            if (!$cliente) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se encontró un perfil de Cliente asociado a esta Persona.'
+                ], 404);
+            }
+
+            // 1. Buscar la dirección por ID y verificar que pertenezca al cliente
+            $direccion = Direccione::where('id', $id)
+                ->where('idCliente', $cliente->id)
+                ->first();
+
+            if (!$direccion) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se encontró la dirección o no pertenece al cliente.'
+                ], 404);
+            }
+
+            // 2. Iniciamos una transacción para proteger la base de datos
+            DB::beginTransaction();
+
+            try {
+                // Paso A: Poner TODAS las direcciones de este cliente en estado 0 (No predeterminada)
+                Direccione::where('idCliente', $cliente->id)->update(['estado' => 0]);
+
+                // Paso B: Poner SOLO la dirección seleccionada en estado 1 (Predeterminada)
+                $direccion->estado = 1;
+                $direccion->save();
+
+                // Confirmamos los cambios en la BD
+                DB::commit();
+            } catch (\Exception $ex) {
+                // Si algo falla al guardar, revertimos los cambios para no afectar la data
+                DB::rollBack();
+                throw $ex;
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $direccion,
+                'message' => 'Dirección predeterminada actualizada correctamente'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error crítico en updateDireccionPredeterminada: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => "Error del servidor: " . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function deleteDireccion(Request $request, $id)
+    {
+        try {
+            $persona = $request->user();
+            $cliente = Cliente::where('idPersona', $persona->id)->first();
+
+            if (!$cliente) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se encontró un perfil de Cliente asociado a esta Persona.'
+                ], 404);
+            }
+
+            // Buscar la dirección por ID y verificar que pertenezca al cliente
+            $direccion = Direccione::where('id', $id)
+                ->where('idCliente', $cliente->id)
+                ->first();
+
+            if (!$direccion) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se encontró la dirección o no pertenece al cliente.'
+                ], 404);
+            }
+
+            // Eliminar la dirección
+            $direccion->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Dirección eliminada correctamente'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error crítico en deleteDireccion: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => "Error del servidor: " . $e->getMessage(),

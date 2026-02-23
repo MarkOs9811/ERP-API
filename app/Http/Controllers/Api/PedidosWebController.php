@@ -71,13 +71,24 @@ class PedidosWebController extends Controller
         }
     }
 
+    function getPedidosEnCamino()
+    {
+        try {
+            $pedidosEnCamino = PedidosWebRegistro::with('detallesPedido.plato')->where('estado_pedido', 55)->orderBy("created_at", "desc")->get();
+
+            return response()->json(['success' => true, 'data' => $pedidosEnCamino], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error' . $e->getMessage()], 500);
+        }
+    }
+
     public function cambiarEstado(Request $request)
     {
         try {
             // Validar la solicitud
             $request->validate([
                 'idPedido' => 'required|exists:pedidos_web_registros,id',
-                'nuevoEstado' => 'required|integer|in:3,4,5', // Acepta los estados válidos
+                'nuevoEstado' => 'required|integer|in:3,4,5,55,6', // Acepta los estados válidos
             ]);
 
 
@@ -85,15 +96,18 @@ class PedidosWebController extends Controller
             $pedido = PedidosWebRegistro::with('detallesPedido.plato')->findOrFail($request->idPedido);
 
             // Solo permitir cambios entre estados válidos
-            if (in_array($pedido->estado_pedido, [3, 4, 5])) {
+            if (in_array($pedido->estado_pedido, [3, 4, 5, 55, 6]) && in_array($request->nuevoEstado, [3, 4, 5, 55, 6])) {
                 $mensaje = '';
 
                 if ($pedido->estado_pedido == 3 && $request->nuevoEstado == 4) {
                     $mensaje = "🍽️ Su pedido ahora está en proceso. Estamos preparando su comida con mucho cariño.";
                 } elseif ($pedido->estado_pedido == 4 && $request->nuevoEstado == 5) {
                     $mensaje = "✅ Su pedido está listo para recoger. Puede pasar por su pedido en los próximos 10-20 minutos.";
+                } elseif ($pedido->estado_pedido == 5 && $request->nuevoEstado == 55) {
+                    $mensaje = "🚗 Su pedido está en camino. ¡Prepárese para disfrutar de su comida pronto!";
+                } elseif ($pedido->estado_pedido == 55 && $request->nuevoEstado == 6) {
+                    $mensaje = "🎉 ¡Gracias por tu preferencia! 🎉\n\nEn *FIRE WOK* 🍣🍜 estamos encantados de haber podido atenderte. 🙏 \n\n¡Vuelva pronto!🔥😊";
                 }
-
                 // Actualizar el estado
                 $pedido->estado_pedido = $request->nuevoEstado;
                 $pedido->save();
