@@ -777,12 +777,16 @@ class VenderController extends Controller
 
         $usuario = Auth::user();
 
-        if (!$usuario) {
-            // Buena práctica: manejar si el usuario no está logueado
-            throw new Exception("Usuario no autenticado.");
+        // --- CÓDIGO ACTUALIZADO ---
+        // Si hay usuario logueado con idEmpresa lo usa, sino, lo saca de la Venta (Ideal para Delivery Web)
+        $idEmpresa = ($usuario && isset($usuario->idEmpresa)) ? $usuario->idEmpresa : $venta->idEmpresa;
+        $idSede = ($usuario && isset($usuario->idSede)) ? $usuario->idSede : $venta->idSede;
+
+        if (!$idEmpresa || !$idSede) {
+            throw new Exception("No se pudo determinar la Empresa o Sede para el comprobante.");
         }
-        $idEmpresa = $usuario->idEmpresa;
-        $idSede = $usuario->idSede;
+
+
         $tipoSunat = ($tipoComprobante == 'F') ? '01' : '03';
 
         try {

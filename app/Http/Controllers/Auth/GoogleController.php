@@ -173,6 +173,7 @@ class GoogleController extends Controller
                 if (!$cliente) {
                     Cliente::create([
                         'idPersona' => $persona->id,
+                        'idEmpresa' => 2,
                         'estado' => '1',
                     ]);
                 }

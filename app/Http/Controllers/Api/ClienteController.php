@@ -18,6 +18,8 @@ class ClienteController extends Controller
 
         $cliente = Cliente::where('idPersona', $persona->id)
             ->with('persona')
+            ->with('sede')
+            ->with('empresaRest')
             ->with(['direcciones' => function ($query) {
                 $query->where('estado', 1);
             }])
@@ -145,6 +147,37 @@ class ClienteController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('Error crítico en addDireccion: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => "Error del servidor: " . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function updateTelefono(Request $request, $id)
+    {
+        try {
+            $persona = $request->user();
+            $cliente = Cliente::with('persona')->where('idPersona', $persona->id)->first();
+            // Verificar que el ID de la persona coincida con el ID del cliente
+            if (!$cliente) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No tienes permiso para actualizar este teléfono.'
+                ], 403);
+            }
+
+            // Actualizar el teléfono
+            $cliente->persona->telefono = $request->telefono;
+            $cliente->persona->save();
+
+            return response()->json([
+                'success' => true,
+                'data' => $persona,
+                'message' => 'Teléfono actualizado correctamente'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error crítico en updateTelefono: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => "Error del servidor: " . $e->getMessage(),

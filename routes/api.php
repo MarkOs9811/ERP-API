@@ -494,11 +494,13 @@ Route::get('/auth/google/redirect/cliente', [GoogleController::class, 'redirectT
 Route::get('/auth/google/callback/cliente', [GoogleController::class, 'handleGoogleCallbackCliente']);
 
 Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/cliente/direcciones', [ClienteController::class, 'getDirecciones']);
+
     Route::get('/cliente/perfil', [ClienteController::class, 'perfil']);
     Route::post('/cliente/logout', [ClienteController::class, 'logout']);
     Route::get('/cliente/metodosPagos', [ClienteController::class, 'getMetodosPagos']);
     Route::get('/cliente/direcciones', [ClienteController::class, 'getDirecciones']);
-    Route::post('/cliente/pedidos/crear', [VenderAppCliente::class, 'store']);
+    Route::post('/cliente/pedidos/crear', [VenderAppCliente::class, 'Pagar']);
     Route::get('/cliente/misPedidos', [VenderAppCliente::class, 'getMisPedidos']);
 
     // GESTION DE DIRECCIONES
@@ -506,6 +508,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/cliente/direcciones/{id}', [ClienteController::class, 'updateDireccion']);
     Route::put('/cliente/direccionesPredeterminada/{id}', [ClienteController::class, 'updateDireccionPredeterminada']);
     Route::delete('/cliente/direcciones/{id}', [ClienteController::class, 'deleteDireccion']);
+
+    // GESTION DATOS PERFIL CLIENTE
+    Route::put('/cliente/telefono/{id}', [ClienteController::class, 'updateTelefono']);
 });
 Route::get('/cliente/configDeliveryEmpresa', [ConfiguracionController::class, 'getConfigDeliveryEmpresa']);
 Route::get('/cliente/categoriasPlatos', [PedidosAppController::class, 'getCategorias']);

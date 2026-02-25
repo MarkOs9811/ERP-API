@@ -11,7 +11,7 @@ class PedidosAppController extends Controller
 {
     // ID de la empresa por defecto (según tu requerimiento)
     protected $idEmpresa = 2;
-
+    protected $idSede = 1;
     /**
      * Obtener todas las categorías de la empresa 2
      */
@@ -33,11 +33,11 @@ class PedidosAppController extends Controller
      */
     public function getMenu()
     {
-        // Traemos los platos con su categoría (si tienes la relación definida)
-        // Ajusta 'categoria' al nombre real de tu relación en el modelo Plato
+
         $menu = Plato::where('idEmpresa', $this->idEmpresa)
-            ->where('estado', '1') // Solo platos activos
-            ->with('categoria')    // Para poder filtrar/ordenar en el front si quieres
+            ->where('idSede', $this->idSede)
+            ->where('estado', '1')
+            ->with('categoria')
             ->get();
 
         return response()->json([

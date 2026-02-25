@@ -10,7 +10,21 @@ use Illuminate\Database\Eloquent\Model;
 class Venta extends Model
 {
     use HasFactory;
-
+    protected $fillable = [
+        'idEmpresa',
+        'idSede',
+        'idUsuario',
+        'idCliente',
+        'idMetodo',
+        'idPedido',
+        'idPedidoWeb',
+        'igv',
+        'subTotal',
+        'descuento',
+        'total',
+        'fechaVenta',
+        'documento',
+    ];
     public function metodoPago()
     {
         return $this->belongsTo(MetodoPago::class, 'idMetodo');
