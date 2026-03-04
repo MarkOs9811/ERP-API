@@ -511,6 +511,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // GESTION DATOS PERFIL CLIENTE
     Route::put('/cliente/telefono/{id}', [ClienteController::class, 'updateTelefono']);
+    Route::get('/cliente/sedes', [SedesController::class, 'getSedesCliente']);
+
+    // SELECCIONAR SEDE POR DEFECTO DEL CLIENTE
+    Route::put('/cliente/seleccionar-sede/{id}', [ClienteController::class, 'updateSedePredeterminada']);
 });
 Route::get('/cliente/configDeliveryEmpresa', [ConfiguracionController::class, 'getConfigDeliveryEmpresa']);
 Route::get('/cliente/categoriasPlatos', [PedidosAppController::class, 'getCategorias']);

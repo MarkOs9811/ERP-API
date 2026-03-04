@@ -143,15 +143,12 @@ class GoogleController extends Controller
         try {
             $config = config('services.google_cliente');
 
-            // Usamos stateless porque es API y construimos el proveedor igual que arriba
             $googleUser = Socialite::buildProvider(GoogleProvider::class, $config)
                 ->stateless()
                 ->user();
 
-            // --- AQUI VA TU LÓGICA DE BASE DE DATOS (Mantenemos la que hicimos antes) ---
-
-            $token = DB::transaction(function () use ($googleUser) {
-                // A. Buscar o Crear Persona
+            // Guardamos el resultado de la transacción en $authData
+            $authData = DB::transaction(function () use ($googleUser) {
                 $persona = Persona::where('google_id', $googleUser->id)
                     ->orWhere('correo', $googleUser->email)
                     ->first();
@@ -165,10 +162,8 @@ class GoogleController extends Controller
                 $persona->correo = $googleUser->email;
                 $persona->google_id = $googleUser->id;
                 $persona->foto = $googleUser->avatar;
-                // $persona->idDistrito = 1; // Descomenta si es obligatorio y tienes un default
                 $persona->save();
 
-                // B. Crear Cliente si no existe
                 $cliente = Cliente::where('idPersona', $persona->id)->first();
                 if (!$cliente) {
                     Cliente::create([
@@ -178,22 +173,28 @@ class GoogleController extends Controller
                     ]);
                 }
 
-                // C. Retornar Token (Asegúrate que Persona tenga HasApiTokens)
-                return $persona->createToken('auth_token_cliente')->plainTextToken;
+                // Retornamos un array con el token y los datos que quieres en el front
+                return [
+                    'token' => $persona->createToken('auth_token_cliente')->plainTextToken,
+                    'userData' => [
+                        'id' => $persona->id,
+                        'nombre' => $persona->nombre,
+                        'apellidos' => $persona->apellidos,
+                        'correo' => $persona->correo,
+                        'foto' => $persona->foto,
+                        'sede' => $cliente->idSede ? $cliente->idSede : null, // Asumiendo que tienes una relación 'sede' en Cliente
+                    ]
+                ];
             });
 
             $host = request()->getHost();
-
-            // // Si la petición viene de Ngrok o de tu IP local...
-            // if (str_contains($host, 'ngrok') || $host === '192.168.18.198') {
-            //     // ... redirigimos a la IP de tu celular (o tu dominio ngrok del front si tienes)
-            //     $frontendUrl = "http://192.168.18.198:4000";
-            // } else {
-            // Caso contrario (estás en tu PC)
             $frontendUrl = "http://localhost:4000";
-            // }
 
-            return redirect()->to("$frontendUrl/login-success?token=$token&status=success");
+            // Codificamos los datos en JSON y luego en Base64 para que viajen seguros en la URL
+            $userJsonBase64 = base64_encode(json_encode($authData['userData']));
+
+            // Agregamos el parámetro 'user' a la redirección
+            return redirect()->to("$frontendUrl/login-success?token={$authData['token']}&status=success&user={$userJsonBase64}");
         } catch (\Exception $e) {
             return response()->json([
                 'error' => 'Error al autenticar con Google Cliente',

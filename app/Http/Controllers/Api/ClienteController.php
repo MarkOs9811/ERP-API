@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Cliente;
 use App\Models\Direccione;
 use App\Models\MetodosPagoCliente;
+use App\Models\Sede;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -277,6 +278,49 @@ class ClienteController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('Error crítico en deleteDireccion: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => "Error del servidor: " . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function updateSedePredeterminada(Request $request, $id)
+    {
+        try {
+            $persona = $request->user();
+            $cliente = Cliente::where('idPersona', $persona->id)->first();
+
+            if (!$cliente) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se encontró un perfil de Cliente asociado a esta Persona.'
+                ], 404);
+            }
+
+            // Verificar que la sede seleccionada pertenezca a la misma empresa del cliente
+            $sede = Sede::where('id', $id)
+                ->where('idEmpresa', $cliente->idEmpresa)
+                ->first();
+
+            if (!$sede) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se encontró la sede o no pertenece a la empresa del cliente.'
+                ], 404);
+            }
+
+            // Actualizar el cliente para establecer la sede predeterminada
+            $cliente->idSede = $sede->id;
+            $cliente->save();
+
+            return response()->json([
+                'success' => true,
+                'data' => $cliente,
+                'message' => 'Sede predeterminada actualizada correctamente'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error crítico en updateSedePredeterminada: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => "Error del servidor: " . $e->getMessage(),

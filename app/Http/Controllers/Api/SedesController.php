@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Cliente;
 use App\Models\Sede;
 use App\Traits\EmpresaValidation;
 use Illuminate\Http\Request;
@@ -21,6 +22,21 @@ class SedesController extends Controller
         }
     }
 
+    public function getSedesCliente(Request $request)
+    {
+        try {
+            $persona = $request->user();
+            $cliente = Cliente::where('idPersona', $persona->id)->first();
+            if (!$cliente) {
+                return response()->json(['success' => false, 'message' => 'Cliente no encontrado'], 404);
+            }
+
+            $sedes = Sede::where('idEmpresa', $cliente->idEmpresa)->get();
+            return response()->json(['success' => true, 'data' => $sedes], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
 
     public function saveSedes(Request $request)
     {
