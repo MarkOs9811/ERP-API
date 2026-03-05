@@ -519,3 +519,4 @@ Route::middleware('auth:sanctum')->group(function () {
 Route::get('/cliente/configDeliveryEmpresa', [ConfiguracionController::class, 'getConfigDeliveryEmpresa']);
 Route::get('/cliente/categoriasPlatos', [PedidosAppController::class, 'getCategorias']);
 Route::get('/cliente/menu', [PedidosAppController::class, 'getMenu']);
+Route::get('/cliente/empresa-datos', [ClienteController::class, 'getEmpresaDatos']);

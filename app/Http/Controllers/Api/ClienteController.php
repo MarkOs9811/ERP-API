@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Cliente;
 use App\Models\Direccione;
 use App\Models\MetodosPagoCliente;
+use App\Models\MiEmpresa;
 use App\Models\Sede;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -321,6 +322,27 @@ class ClienteController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('Error crítico en updateSedePredeterminada: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => "Error del servidor: " . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function getEmpresaDatos()
+    {
+        try {
+            $idEmpresa = "2";
+
+            $empresaData = MiEmpresa::where('id', $idEmpresa)
+                ->with('sedes')
+                ->first();
+            return response()->json([
+                'success' => true,
+                'data' => $empresaData,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error crítico en getEmpresaDatos: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => "Error del servidor: " . $e->getMessage(),
