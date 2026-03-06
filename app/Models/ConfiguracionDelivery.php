@@ -30,4 +30,8 @@ class ConfiguracionDelivery extends Model
     {
         return $this->belongsTo(MiEmpresa::class, 'idEmpresa', 'id');
     }
+    public function sede()
+    {
+        return $this->belongsTo(Sede::class, 'idSede', 'id');
+    }
 }

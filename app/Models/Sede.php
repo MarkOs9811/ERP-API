@@ -25,6 +25,11 @@ class Sede extends Model
         return $this->hasMany(Caja::class, 'idSede', 'id');
     }
 
+    public function configuracionDelivery()
+    {
+        return $this->hasOne(ConfiguracionDelivery::class, 'idSede', 'id');
+    }
+
     protected static function booted()
     {
         static::addGlobalScope(new EmpresaScope);

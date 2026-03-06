@@ -29,6 +29,7 @@ use App\Http\Controllers\api\UnidadController;
 use App\Http\Controllers\Api\VenderController;
 use App\Http\Controllers\api\VentasController;
 use App\Http\Controllers\api\ComprasController;
+use App\Http\Controllers\Api\DeliveryController;
 use App\Http\Controllers\Api\EmpresasAdminController;
 use App\Http\Controllers\Api\EventosController;
 use App\Http\Controllers\Api\FacturacionSunatController;
@@ -426,6 +427,9 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     Route::get('/combos/ia', [CombosController::class, 'generarComboIA']);
 
+    // MODULOS PARA DELIVERY
+    Route::get('/delivery/promociones', [DeliveryController::class, 'getPromociones']);
+    // ========================================================
 
     // RUTAS PARA EL MODULO DE CONFIGURACION
 

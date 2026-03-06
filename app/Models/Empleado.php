@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Models\Scopes\EmpresaScope;
+use App\Models\Scopes\SedeScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
@@ -68,5 +70,20 @@ class Empleado extends Model
     public function usuario()
     {
         return $this->hasOne(User::class, 'idEmpleado', 'id');
+    }
+    protected static function booted()
+    {
+        static::addGlobalScope(new EmpresaScope);
+        static::addGlobalScope(new SedeScope);
+
+        static::creating(function ($usuarioEmpleado) {
+            $user = auth()->user();
+
+            if ($user) {
+                if (empty($usuarioEmpleado->idSede)) {
+                    $usuarioEmpleado->idSede = $user->idSede;
+                }
+            }
+        });
     }
 }
