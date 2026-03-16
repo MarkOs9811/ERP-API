@@ -22,12 +22,12 @@ class Sede extends Model
         // Primer parámetro: El modelo relacionado (Caja)
         // Segundo parámetro: La llave foránea en la tabla 'cajas' (idSede)
         // Tercer parámetro: La llave local en la tabla 'sedes' (id)
-        return $this->hasMany(Caja::class, 'idSede', 'id');
+        return $this->hasMany(Caja::class , 'idSede', 'id');
     }
 
     public function configuracionDelivery()
     {
-        return $this->hasOne(ConfiguracionDelivery::class, 'idSede', 'id');
+        return $this->hasOne(ConfiguracionDelivery::class , 'idSede', 'id');
     }
 
     protected static function booted()

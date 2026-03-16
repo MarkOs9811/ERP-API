@@ -17,7 +17,8 @@ class SedesController extends Controller
         try {
             $sedes = Sede::with('configuracionDelivery')->get();
             return response()->json(['success' => true, 'data' => $sedes], 200);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
@@ -33,7 +34,8 @@ class SedesController extends Controller
 
             $sedes = Sede::where('idEmpresa', $cliente->idEmpresa)->get();
             return response()->json(['success' => true, 'data' => $sedes], 200);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
@@ -74,7 +76,8 @@ class SedesController extends Controller
 
             $sede = Sede::create($validatedData);
             return response()->json(['success' => true, 'data' => $sede], 201);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
@@ -97,7 +100,8 @@ class SedesController extends Controller
 
             $sede->update($validatedData);
             return response()->json(['success' => true, 'data' => $sede], 200);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
@@ -119,7 +123,8 @@ class SedesController extends Controller
             $sede->estado = 0;
             $sede->save();
             return response()->json(['success' => true, 'data' => $sede], 200);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
@@ -130,7 +135,8 @@ class SedesController extends Controller
             $sede->estado = 1;
             $sede->save();
             return response()->json(['success' => true, 'data' => $sede], 200);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }

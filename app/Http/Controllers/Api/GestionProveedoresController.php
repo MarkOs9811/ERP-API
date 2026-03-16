@@ -16,7 +16,8 @@ class GestionProveedoresController extends Controller
         try {
             $proveedor = Proveedore::orderBy('id', 'Desc')->get();
             return response()->json(['success' => true, 'data' => $proveedor], 200);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
@@ -32,13 +33,13 @@ class GestionProveedoresController extends Controller
                 'required',
                 'string',
                 function ($attribute, $value, $fail) use ($request) {
-                    if ($request->tipo_documento === 'RUC' && !preg_match('/^\d{11}$/', $value)) {
-                        return $fail('El número de documento debe tener 11 dígitos para RUC.');
-                    }
-                    if ($request->tipo_documento === 'DNI' && !preg_match('/^\d{8}$/', $value)) {
-                        return $fail('El número de documento debe tener 8 dígitos para DNI.');
-                    }
-                },
+            if ($request->tipo_documento === 'RUC' && !preg_match('/^\d{11}$/', $value)) {
+                return $fail('El número de documento debe tener 11 dígitos para RUC.');
+            }
+            if ($request->tipo_documento === 'DNI' && !preg_match('/^\d{8}$/', $value)) {
+                return $fail('El número de documento debe tener 8 dígitos para DNI.');
+            }
+        },
                 'unique:proveedores,numero_documento',
             ],
             'telefono' => 'required|string|max:9|unique:proveedores,telefono',
@@ -46,8 +47,8 @@ class GestionProveedoresController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
             Log::info('Validación fallida al crear proveedor: ' . json_encode($validator->errors()));
+            return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
         }
 
         try {
@@ -70,7 +71,8 @@ class GestionProveedoresController extends Controller
             Log::info('Proveedor creado correctamente.');
 
             return response()->json(['success' => true, 'message' => 'Proveedor creado correctamente.'], 200);
-        } catch (\Illuminate\Database\QueryException $e) {
+        }
+        catch (\Illuminate\Database\QueryException $e) {
             DB::rollBack();
 
             if ($e->errorInfo[1] == 1062) {
@@ -81,7 +83,8 @@ class GestionProveedoresController extends Controller
             Log::error('Error al crear proveedor: ' . $e->getMessage());
 
             return response()->json(['success' => false, 'message' => 'Ha ocurrido un error al crear el proveedor.'], 500);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             DB::rollBack();
 
             Log::error('Error al crear proveedor: ' . $e->getMessage());
@@ -108,13 +111,13 @@ class GestionProveedoresController extends Controller
                     'required',
                     'string',
                     function ($attribute, $value, $fail) use ($request) {
-                        if ($request->tipo_documento === 'RUC' && !preg_match('/^\d{11}$/', $value)) {
-                            return $fail('El número de documento debe tener 11 dígitos para RUC.');
-                        }
-                        if ($request->tipo_documento === 'DNI' && !preg_match('/^\d{8}$/', $value)) {
-                            return $fail('El número de documento debe tener 8 dígitos para DNI.');
-                        }
-                    },
+                if ($request->tipo_documento === 'RUC' && !preg_match('/^\d{11}$/', $value)) {
+                    return $fail('El número de documento debe tener 11 dígitos para RUC.');
+                }
+                if ($request->tipo_documento === 'DNI' && !preg_match('/^\d{8}$/', $value)) {
+                    return $fail('El número de documento debe tener 8 dígitos para DNI.');
+                }
+            },
                     'unique:proveedores,numero_documento,' . $proveedor->id, // Ignora el proveedor actual en la validación
                 ],
                 'telefono' => 'required|string|max:9|unique:proveedores,telefono,' . $proveedor->id, // Ignora el proveedor actual en la validación
@@ -135,7 +138,8 @@ class GestionProveedoresController extends Controller
             $proveedor->save();
 
             return response()->json(['success' => true, 'message' => 'Registro Exitoso'], 200);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
@@ -157,7 +161,8 @@ class GestionProveedoresController extends Controller
             $proveedor->save(); // Guarda los cambios
 
             return response()->json(['success' => true, 'message' => 'Proveedor eliminado correctamente'], 200);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Ocurrio un error' . $e->getMessage()], 500);
         }
     }
@@ -172,7 +177,8 @@ class GestionProveedoresController extends Controller
             $proveedor->estado = 1;
             $proveedor->save();
             return response()->json(['success' => true, 'message' => 'Proveedor activado'], 200);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Ocurrio un error' . $e->getMessage()], 500);
         }
     }
