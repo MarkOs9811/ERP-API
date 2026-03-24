@@ -25,7 +25,11 @@ class Plato extends Model
      */
     public function categoria()
     {
-        return $this->belongsTo(CategoriaPlato::class, 'idCategoria');
+        return $this->belongsTo(CategoriaPlato::class , 'idCategoria');
+    }
+    public function sede()
+    {
+        return $this->belongsTo(Sede::class , 'idSede');
     }
 
 
