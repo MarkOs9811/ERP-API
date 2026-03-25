@@ -37,6 +37,7 @@ use App\Http\Controllers\Api\FinanzasController;
 use App\Http\Controllers\api\GoogleCalendarController;
 use App\Http\Controllers\Api\MesasController;
 use App\Http\Controllers\Api\MiPerfilController;
+use App\Http\Controllers\Api\MoodleController;
 use App\Http\Controllers\Api\NotificacionesController;
 use App\Http\Controllers\Api\PedidosAppController;
 use App\Http\Controllers\api\PedidosWebController;
@@ -379,6 +380,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     Route::put('/combos/desactivar/{id}', [CombosController::class, 'desactivarCombo']);
     Route::put('/combos/activar/{id}', [CombosController::class, 'activarCombo']);
+    Route::get('/combos/ia', [CombosController::class, 'generarComboIA']);
 
     // GSTIONDE POROVEDORES
     Route::get('/proveedores/getProveedores', [GestionProveedoresController::class, 'getProveedores']);
@@ -425,7 +427,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::get('/ventasIA', [VentasController::class, 'getVentasIA']);
     Route::post('/recomendaciones', [VentasController::class, 'generarRecomendaciones']);
 
-    Route::get('/combos/ia', [CombosController::class, 'generarComboIA']);
+
 
     // MODULOS PARA DELIVERY
     Route::get('/delivery/promociones', [DeliveryController::class, 'getPromociones']);
@@ -472,6 +474,10 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     // CRUD ACTUALIZACIONES PARA EL PROGRESO DE BINVENIDA
     Route::put('/empresasSteps/{estado}', [EmpresasAdminController::class, 'pasosCompletadosTours']);
+
+
+    // ENDPOINT PARA PRUEBA DE MOODLE
+    Route::get('/moodle/consultar-curso', [MoodleController::class, 'generarAcciónConsultarCurso']);
 });
 
 

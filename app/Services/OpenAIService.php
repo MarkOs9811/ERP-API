@@ -9,6 +9,7 @@ use OpenAI;
 use App\Models\Plato;
 use Carbon\Carbon;
 use DateTime;
+use Illuminate\Support\Facades\Http;
 
 class OpenAIService
 {
@@ -449,6 +450,178 @@ class OpenAIService
                 'precioCombo' => 0,
                 'items' => []
             ];
+        }
+    }
+
+    public function consultarAgenteMoodle($mensajeUsuario, $herramientasMCP, $moodleMcpUrl, $token)
+    {
+        try {
+            // Inicializamos la memoria de la conversación
+            $mensajes = [
+                ['role' => 'system', 'content' => 'Eres un asistente experto de Moodle. Tienes permiso de usar múltiples herramientas en secuencia. Por ejemplo: si te piden datos de un curso de un usuario, primero busca el ID del usuario, luego busca sus cursos. No te detengas a explicar lo que vas a hacer, simplemente haz los pasos hasta que tengas la información completa y ahí recién devuelve tu respuesta final en texto.'],
+                ['role' => 'user', 'content' => $mensajeUsuario]
+            ];
+
+            $maxPasos = 5; // Le damos hasta 5 turnos para que haga su trabajo
+
+            for ($i = 0; $i < $maxPasos; $i++) {
+                Log::info("--- [Agente] Turno " . ($i + 1) . " ---");
+
+                $response = $this->client->chat()->create([
+                    'model' => 'gpt-3.5-turbo',
+                    'messages' => $mensajes,
+                    'tools' => $herramientasMCP,
+                    'tool_choice' => 'auto'
+                ]);
+
+                $mensajeIA = $response->choices[0]->message->toArray();
+
+                // Limpiamos nulos para que el SDK de OpenAI no se queje y lo guardamos en memoria
+                $mensajes[] = array_filter($mensajeIA, fn($valor) => $valor !== null);
+
+                // CONDICIÓN DE PARADA: Si la IA responde con texto y ya no pide herramientas, terminamos.
+                if (!isset($mensajeIA['tool_calls']) || empty($mensajeIA['tool_calls'])) {
+                    Log::info("[Agente] ¡Respuesta final lista!");
+                    return $mensajeIA['content'];
+                }
+
+                // SI PIDIÓ HERRAMIENTAS: Las ejecutamos
+                foreach ($mensajeIA['tool_calls'] as $toolCall) {
+                    $nombreFuncion = $toolCall['function']['name'];
+                    $argumentos = json_decode($toolCall['function']['arguments'], true);
+
+                    Log::info("[Agente] Ejecutando herramienta en Moodle: {$nombreFuncion}", $argumentos);
+
+                    $responseMcp = Http::withToken($token)->post($moodleMcpUrl, [
+                        'jsonrpc' => '2.0',
+                        'id' => uniqid(),
+                        'method' => 'tools/call',
+                        'params' => [
+                            'name' => $nombreFuncion,
+                            'arguments' => $argumentos
+                        ]
+                    ]);
+
+                    $resultadoMcp = $responseMcp->json();
+
+                    // Extraemos el contenido bruto primero
+                    $contenidoBruto = $resultadoMcp['result']['content'] ?? null;
+
+                    // ==========================================================
+                    // 🛡️ EL ESCUDO ANTI-EXPLOSIÓN 3.0 (Inteligente)
+                    // ==========================================================
+                    if ($nombreFuncion === 'core_enrol_get_enrolled_users' && !empty($contenidoBruto)) {
+                        Log::info("[Filtro] Analizando estructura para reducir usuarios...");
+
+                        if (isset($contenidoBruto[0]['text'])) {
+                            $datosMoodle = json_decode($contenidoBruto[0]['text'], true);
+
+                            // 1. Verificamos si Moodle mandó una lista vacía
+                            if (empty($datosMoodle)) {
+                                $contenidoBruto[0]['text'] = json_encode(["mensaje" => "El curso no tiene alumnos matriculados."]);
+                            }
+                            // 2. Verificamos si Moodle nos tiró un error de permisos (Exception)
+                            elseif (isset($datosMoodle['exception'])) {
+                                Log::warning("[Filtro] Moodle bloqueó la petición: " . $datosMoodle['message']);
+                                // No lo tocamos. Dejamos que la IA lea el error original.
+                            }
+                            // 3. Es una lista real de alumnos. ¡A filtrar!
+                            elseif (is_array($datosMoodle)) {
+                                $usuariosReducidos = array_map(function ($user) {
+                                    return [
+                                        'id' => $user['id'] ?? null,
+                                        // Moodle a veces manda fullname, a veces firstname + lastname
+                                        'nombre' => $user['fullname'] ?? trim(($user['firstname'] ?? '') . ' ' . ($user['lastname'] ?? '')) ?: 'Sin Nombre',
+                                    ];
+                                }, array_slice($datosMoodle, 0, 3));
+
+                                $contenidoBruto[0]['text'] = json_encode($usuariosReducidos);
+                                Log::info("[Filtro] Exito: Alumnos reducidos a " . count($usuariosReducidos));
+                            }
+                        }
+                    }
+                    // ==========================================================
+                    // ==========================================================
+
+                    $contenidoHerramienta = $contenidoBruto
+                        ? json_encode($contenidoBruto)
+                        : json_encode(["error" => "No se encontraron datos"]);
+
+                    // Le devolvemos el resultado a la memoria de la IA
+                    $mensajes[] = [
+                        'role' => 'tool',
+                        'tool_call_id' => $toolCall['id'],
+                        'content' => $contenidoHerramienta
+                    ];
+                }
+
+                // El bucle 'for' se repite. La IA leerá los datos y decidirá el siguiente paso.
+            }
+
+            return "Hice mi mejor esfuerzo, pero la tarea requería demasiados pasos. Hasta ahora sé esto: " . $mensajeIA['content'];
+        } catch (\Exception $e) {
+            Log::error("[Agente CRÍTICO] Error: " . $e->getMessage());
+            throw $e;
+        }
+    }
+    public function ejecutarHerramientaMCP($toolCalls, $mensajeOriginalUsuario, $moodleMcpUrl, $token)
+    {
+        try {
+            $mensajes = [
+                ['role' => 'system', 'content' => 'Eres un administrador de Moodle inteligente.'],
+                ['role' => 'user', 'content' => $mensajeOriginalUsuario],
+                ['role' => 'assistant', 'tool_calls' => $toolCalls]
+            ];
+
+            // 2. LAS MANOS EJECUTAN
+            foreach ($toolCalls as $toolCall) {
+                // ¡CORRECCIÓN AQUÍ! Ahora se leen como arrays, no como objetos
+                $nombreFuncion = $toolCall['function']['name'];
+                $argumentos = json_decode($toolCall['function']['arguments'], true);
+                $toolCallId = $toolCall['id'];
+
+                Log::info("5. [Manos] Ejecutando en Moodle la herramienta: {$nombreFuncion}", ['args' => $argumentos]);
+
+                // Hablamos con el servidor MCP para que haga la tarea en Moodle
+                $responseMcp = Http::withToken($token)->post($moodleMcpUrl, [
+                    'jsonrpc' => '2.0',
+                    'id' => uniqid(),
+                    'method' => 'tools/call',
+                    'params' => [
+                        'name' => $nombreFuncion,
+                        'arguments' => $argumentos
+                    ]
+                ]);
+
+                $resultadoMcp = $responseMcp->json();
+                Log::info("6. [Manos] Respuesta cruda devuelta por Moodle MCP: ", $resultadoMcp ?? ['Fallo' => 'Respuesta no es JSON']);
+
+                // Atrapamos la respuesta que devolvió Moodle
+                $contenidoHerramienta = isset($resultadoMcp['result']['content'])
+                    ? json_encode($resultadoMcp['result']['content'])
+                    : json_encode(["error" => "La herramienta se ejecutó pero no devolvió datos útiles.", "raw" => $resultadoMcp]);
+
+                // Le entregamos los datos masticados de Moodle a OpenAI
+                $mensajes[] = [
+                    'role' => 'tool',
+                    'tool_call_id' => $toolCallId,
+                    'content' => $contenidoHerramienta
+                ];
+            }
+
+            Log::info("7. [Manos] Devolviendo datos de Moodle a OpenAI para que redacte el texto final...");
+
+            // 3. LA IA REDACTA EL RESULTADO FINAL
+            $respuestaFinal = $this->client->chat()->create([
+                'model' => 'gpt-3.5-turbo',
+                'messages' => $mensajes
+            ]);
+
+            Log::info("8. [Manos] Respuesta final generada correctamente.");
+            return $respuestaFinal->choices[0]->message->content;
+        } catch (\Exception $e) {
+            Log::error("[Manos CRÍTICO] Error en ejecutarHerramientaMCP: " . $e->getMessage());
+            throw $e;
         }
     }
 }
