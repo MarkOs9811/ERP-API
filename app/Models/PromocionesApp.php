@@ -10,9 +10,21 @@ use Illuminate\Database\Eloquent\Model;
 class PromocionesApp extends Model
 {
     use HasFactory;
+    protected $primaryKey = 'id';
+    protected $fillable = [
+        'idPlato',
+        'precio',
+        'titulo',
+        'porcentaje_descuento',
+        'precio_promocional',
+        'imagen_banner',
+        'fecha_inicio',
+        'fecha_fin',
+        'estado',
+    ];
     public function plato()
     {
-        return $this->belongsTo(Plato::class, 'idPlato', 'id');
+        return $this->belongsTo(Plato::class , 'idPlato', 'id');
     }
 
     protected static function booted()

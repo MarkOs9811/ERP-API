@@ -23,9 +23,10 @@ class UsuarioController extends Controller
     public function showUser()
     {
         try {
-            $usuarios = User::with('empleado.persona',  'empleado.cargo', 'empleado.area', 'empleado.horario', 'sede')->orderBy('id', 'desc')->get();
+            $usuarios = User::with('empleado.persona', 'empleado.cargo', 'empleado.area', 'empleado.horario', 'sede')->orderBy('id', 'desc')->get();
             return response()->json(['success' => true, 'data' => $usuarios], 200);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error al obtener los usuarios: ' . $e->getMessage()], 500);
         }
     }
@@ -46,13 +47,13 @@ class UsuarioController extends Controller
                 'max:20',
                 'unique:personas,documento_identidad',
                 function ($attribute, $value, $fail) use ($request) {
-                    if ($request->tipo_documento === 'DNI' && !preg_match('/^\d{8}$/', $value)) {
-                        return $fail('El número de documento debe tener 8 dígitos para DNI.');
-                    }
-                    if ($request->tipo_documento === 'Carnet De Extranjeria' && !preg_match('/^\d{10}$/', $value)) {
-                        return $fail('El número de documento debe tener 10 dígitos para Carnet de Extranjeria.');
-                    }
-                },
+            if ($request->tipo_documento === 'DNI' && !preg_match('/^\d{8}$/', $value)) {
+                return $fail('El número de documento debe tener 8 dígitos para DNI.');
+            }
+            if ($request->tipo_documento === 'Carnet De Extranjeria' && !preg_match('/^\d{10}$/', $value)) {
+                return $fail('El número de documento debe tener 10 dígitos para Carnet de Extranjeria.');
+            }
+        },
             ],
             'salario' => 'required|numeric',
             'horario' => 'required',
@@ -131,7 +132,8 @@ class UsuarioController extends Controller
 
             DB::commit();
             return response()->json(['success' => 'Usuario creado correctamente con permisos asignados.']);
-        } catch (\Illuminate\Database\QueryException $e) {
+        }
+        catch (\Illuminate\Database\QueryException $e) {
             DB::rollBack();
 
             if ($e->errorInfo[1] == 1062) {
@@ -145,7 +147,8 @@ class UsuarioController extends Controller
 
             Log::error('Error SQL al crear usuario: ' . $e->getMessage());
             return response()->json(['error' => 'Error de base de datos al crear el usuario.'], 500);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             DB::rollBack();
             Log::error('Error general al crear usuario: ' . $e->getMessage());
             return response()->json(['error' => 'Error inesperado al crear el usuario.'], 500);
@@ -158,7 +161,8 @@ class UsuarioController extends Controller
         try {
             $usuario = User::with('empleado.persona')->where('id', $id)->first();
             return response()->json($usuario, 200);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json(['error' => 'Error al obtener el usuario', 'message' => $e->getMessage()], 500);
         }
     }
@@ -227,7 +231,8 @@ class UsuarioController extends Controller
             ]);
 
             return response()->json(['success' => true, 'message' => 'Usuario actualizado correctamente.']);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Hubo un error al actualizar el usuario.'], 500);
         }
     }
@@ -260,7 +265,8 @@ class UsuarioController extends Controller
                 'message' => 'El cambio de sede se realizó correctamente.',
                 'nombreSede' => $sede->nombre,
             ], 200);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             Log::error('Error al cambiar de sede: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
@@ -309,8 +315,8 @@ class UsuarioController extends Controller
             'totalUsuarios' => User::count(),
             'usuariosActivos' => User::where('estado', 1)->count(),
             'usuariosAlmacen' => Empleado::whereHas('cargo', function ($query) {
-                $query->where('nombre', 'almacen');
-            })->count(),
+            $query->where('nombre', 'almacen');
+        })->count(),
         ]);
     }
 }

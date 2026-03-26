@@ -19,7 +19,8 @@ class AjusteVentasController extends Controller
             $metodosPagos = MetodoPago::all();
             Log::info('Métodos de pago obtenidos', ['count' => $metodosPagos->count()]);
             return response()->json(['success' => true, 'data' => $metodosPagos, 'message' => 'Métodos de pago obtenidos'], 200);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
@@ -30,7 +31,7 @@ class AjusteVentasController extends Controller
                 'required',
                 'string',
                 'max:255',
-                $this->uniqueEmpresa('metodo_pagos','nombre'),
+                $this->uniqueEmpresa('metodo_pagos', 'nombre'),
             ]
         ]);
 
@@ -42,7 +43,8 @@ class AjusteVentasController extends Controller
 
             Log::info('Nuevo método de pago creado', ['id' => $metodoPago->id]);
             return response()->json(['success' => true, 'data' => $metodoPago, 'message' => 'Método de pago creado'], 201);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             Log::error('Error al crear método de pago: ' . $e->getMessage());
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
@@ -63,7 +65,8 @@ class AjusteVentasController extends Controller
 
             Log::info('Método de pago actualizado', ['id' => $id, 'estado' => $metodoPago->estado]);
             return response()->json(['success' => true, 'data' => $metodoPago, 'message' => 'Método de pago actualizado'], 200);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }

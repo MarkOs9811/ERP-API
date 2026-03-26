@@ -23,15 +23,15 @@ class Compra extends Model
 
     public function usuario()
     {
-        return $this->belongsTo(User::class, 'idUsuario', 'id');
+        return $this->belongsTo(User::class , 'idUsuario', 'id');
     }
     public function proveedor()
     {
-        return $this->belongsTo(Proveedore::class, 'idProveedor', 'id');
+        return $this->belongsTo(Proveedore::class , 'idProveedor', 'id');
     }
     public function cuentaPorPagar()
     {
-        return $this->belongsTo(CuentasPorPagar::class, 'idCuentaPorPagar', 'id');
+        return $this->belongsTo(CuentasPorPagar::class , 'idCuentaPorPagar', 'id');
     }
     protected static function booted()
     {
