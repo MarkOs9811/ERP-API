@@ -44,7 +44,7 @@ class VenderAppCliente extends Controller
         $clienteData = Cliente::with('persona')->find($request->idCliente);
 
         if (!$clienteData || !$clienteData->persona || empty($clienteData->persona->telefono)) {
-            Log::warning("⛔ Venta rechazada: Cliente sin teléfono.");
+            Log::warning("Venta rechazada: Cliente sin teléfono.");
             return response()->json([
                 'success' => false,
                 'message' => 'El cliente no tiene un teléfono registrado. Por favor actualice su perfil antes de pedir.'
@@ -359,7 +359,7 @@ class VenderAppCliente extends Controller
 
         try {
             $datosSerie = DB::transaction(function () use ($idEmpresa, $idSede, $tipoSunat) {
-                $serie = \App\Models\SerieCorrelativo::where('idEmpresa', $idEmpresa)
+                $serie = SerieCorrelativo::where('idEmpresa', $idEmpresa)
                     ->where('idSede', $idSede)
                     ->where('tipo_documento_sunat', $tipoSunat)
                     ->where('is_default', 1)
@@ -383,7 +383,7 @@ class VenderAppCliente extends Controller
             $numeroComprobante = str_pad($datosSerie['correlativo'], 8, '0', STR_PAD_LEFT);
             $serieComprobante = $datosSerie['serie'];
 
-            $boleta = \App\Models\Boleta::where('idVenta', $venta->id)->first() ?? new \App\Models\Boleta();
+            $boleta = Boleta::where('idVenta', $venta->id)->first() ?? new Boleta();
             $boleta->idEmpresa = $idEmpresa;
             $boleta->idVenta = $venta->id;
             $boleta->numSerie = $serieComprobante;
