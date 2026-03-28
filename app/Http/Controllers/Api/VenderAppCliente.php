@@ -13,17 +13,20 @@ use App\Models\Factura;
 use App\Models\MetodoPago;
 use App\Models\PedidosWebRegistro;
 use App\Models\Plato;
+
 use App\Models\SerieCorrelativo;
 use App\Models\Venta;
-use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use MercadoPago\Client\Payment\PaymentClient;
+use MercadoPago\MercadoPagoConfig;
 
 class VenderAppCliente extends Controller
 {
+
 
     public function Pagar(Request $request)
     {
@@ -51,6 +54,7 @@ class VenderAppCliente extends Controller
         $telefonoCliente = $clienteData->persona->telefono;
         $nombreCliente   = trim(($clienteData->persona->nombre ?? 'Cliente') . ' ' . ($clienteData->persona->apellidos ?? ''));
         $dniCliente      = $clienteData->persona->numero_documento ?? '00000000';
+        $correoCliente   = $clienteData->persona->correo ?? $clienteData->persona->email ?? "cliente@sin-correo.com";
 
         // ---------------------------------------------------------
         // 2. BUSCAR MÉTODO DE PAGO PARA LA VENTA ("tarjeta debito")
@@ -69,11 +73,60 @@ class VenderAppCliente extends Controller
         $tasaIgv = (float)($impuestoConfig ?? 0.18);
         $factorDivisor = 1 + $tasaIgv;
 
+        // =========================================================
+        // 4. MERCADO PAGO: PROCESAMIENTO DEL TOKEN ANTES DE LA BD
+        // =========================================================
+        $estadoPagoFinal = 'pendiente';
+        $referenciaPagoMp = null;
+
+        if ($request->filled('token_mercadopago')) {
+            try {
+                // Configuramos el Access Token desde el archivo .env
+                MercadoPagoConfig::setAccessToken(env('MERCADOPAGO_ACCESS_TOKEN'));
+
+                $client = new PaymentClient();
+
+                // Armamos la petición de cobro
+                $payment = $client->create([
+                    "transaction_amount" => (float) $request->total,
+                    "token"              => $request->token_mercadopago,
+                    "description"        => "Pedido Delivery - " . $nombreCliente,
+                    "installments"       => $request->installments ?? 1,
+                    "payment_method_id"  => $request->payment_method_id,
+                    "issuer_id"          => $request->issuer_id,
+                    "payer"              => [
+                        "email" => $correoCliente,
+                    ]
+                ]);
+
+                // Verificamos si el banco aprobó la tarjeta
+                if ($payment->status !== 'approved') {
+                    Log::warning("Pago Rechazado por Mercado Pago: " . $payment->status);
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'La tarjeta fue rechazada o el pago no pudo procesarse. Verifica tus fondos o intenta con otra tarjeta.'
+                    ], 400);
+                }
+
+                // Si todo sale bien, marcamos como pagado y guardamos el ID de MP
+                $estadoPagoFinal = 'pagado';
+                $referenciaPagoMp = $payment->id;
+                Log::info("✅ Cobro Mercado Pago Exitoso. ID: " . $referenciaPagoMp);
+            } catch (\Exception $e) {
+                Log::error("Error API Mercado Pago: " . $e->getMessage());
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Hubo un error de conexión al procesar la tarjeta. Por favor intente nuevamente.'
+                ], 500);
+            }
+        }
+
         // ---------------------------------------------------------
-        // INICIO DE TRANSACCIÓN ESTRÍCTA
+        // 5. INICIO DE TRANSACCIÓN ESTRÍCTA (Solo si el cobro fue exitoso)
         // ---------------------------------------------------------
         try {
-            return DB::transaction(function () use ($request, $telefonoCliente, $nombreCliente, $dniCliente, $idMetodoPagoVenta, $nombreMetodoVenta, $factorDivisor) {
+            // MERCADO PAGO: Añadimos $estadoPagoFinal y $referenciaPagoMp al "use"
+            return DB::transaction(function () use ($request, $telefonoCliente, $nombreCliente, $dniCliente, $idMetodoPagoVenta, $nombreMetodoVenta, $factorDivisor, $estadoPagoFinal, $referenciaPagoMp) {
 
                 // ==========================================
                 // A. REGISTRAR EL PEDIDO WEB
@@ -95,8 +148,8 @@ class VenderAppCliente extends Controller
                     'latitud'        => $lat,
                     'longitud'       => $lng,
                     'tipo_entrega'   => $request->tipo_entrega ?? 'delivery',
-                    // SE ELIMINÓ 'idMetodoPago' SEGÚN INSTRUCCIONES
-                    'estado_pago'    => 'pendiente',
+                    // MERCADO PAGO: Pasamos el estado dinámico (pagado o pendiente)
+                    'estado_pago'    => $estadoPagoFinal,
                     'estado_pedido'  => 3,
                     'propina'        => $request->propina ?? 0,
                     'costo_envio'    => $request->costo_envio ?? 0,
@@ -162,7 +215,7 @@ class VenderAppCliente extends Controller
                 $venta = $this->registrarVentaWeb(
                     $pedidoWeb->id,
                     null,
-                    $idMetodoPagoVenta, // ID general de la tarjeta
+                    $idMetodoPagoVenta,
                     'B',
                     $igv,
                     $subtotal,
@@ -171,7 +224,7 @@ class VenderAppCliente extends Controller
                 );
 
                 // ==========================================
-                // D. FACTURACIÓN SUNAT Y COMPROBANTE (ESTRICTO)
+                // D. FACTURACIÓN SUNAT Y COMPROBANTE 
                 // ==========================================
                 $datosCliente = [
                     'tipo_documento'   => '1',
@@ -182,8 +235,6 @@ class VenderAppCliente extends Controller
 
                 $serieTicket = 'B001';
                 $correlativoTicket = '00000000';
-
-                // Usamos la instancia correcta del controlador para llamar al método externo
 
                 try {
                     $sunatConfig = ConfiguracionHelper::get('sunat');
@@ -209,24 +260,22 @@ class VenderAppCliente extends Controller
                             $respuesta['estado'],
                             !empty($respuesta['observaciones']) ? implode(', ', $respuesta['observaciones']) : null,
                             $respuesta['rutaXml'] ?? null,
-                            $respuesta['rutaCdr'] ?? null
+                            $respuesta['rutaCdr'] ?? null,
+                            $referenciaPagoMp // Pasamos la referencia a la boleta si la necesitas
                         );
                     } else {
                         // SUNAT APAGADO: REGISTRO LOCAL
-                        $this->registrarComprobante($venta, 'B');
+                        $this->registrarComprobante($venta, 'B', 1, null, null, null, $referenciaPagoMp);
                     }
 
-                    // Recuperar el correlativo oficial generado
                     $boletaGenerada = Boleta::where('idVenta', $venta->id)->first();
                     if ($boletaGenerada) {
                         $serieTicket = $boletaGenerada->numSerie;
                         $correlativoTicket = $boletaGenerada->numero;
                     } else {
-                        // Si por alguna razón extraña no falló el método pero no guardó la boleta
                         throw new \Exception("La boleta no se guardó en la base de datos.");
                     }
                 } catch (\Exception $eComprobante) {
-                    // ⚠️ ESTO ES CRUCIAL: Lanzamos el error hacia afuera para abortar la transacción DB.
                     Log::error("❌ FALLO CRÍTICO AL GUARDAR BOLETA: " . $eComprobante->getMessage());
                     throw new \Exception("Error al generar el comprobante. Por favor, inténtelo nuevamente.");
                 }
@@ -249,14 +298,14 @@ class VenderAppCliente extends Controller
                     'subtotal'          => round($subtotal, 2),
                     'igv'               => round($igv, 2),
                     'total'             => round($total, 2),
-                    'estado_pago'       => 'pendiente'
+                    'estado_pago'       => $estadoPagoFinal // MERCADO PAGO: 'pagado' o 'pendiente'
                 ];
 
                 Log::info("🏁 Venta Web Registrada con Éxito. Ticket: $serieTicket-$correlativoTicket");
 
                 return response()->json([
                     'success' => true,
-                    'message' => 'Pedido registrado y venta generada exitosamente. Pendiente de pago.',
+                    'message' => $estadoPagoFinal === 'pagado' ? '¡Pago exitoso y pedido a cocina!' : 'Pedido registrado y venta generada exitosamente. Pendiente de pago.',
                     'data'    => $pedidoWeb,
                     'ticket'  => $ticketData
                 ], 201);
@@ -268,16 +317,11 @@ class VenderAppCliente extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage() // Enviamos el mensaje de error para que el cliente lo vea
+                'message' => $e->getMessage()
             ], 500);
         }
     }
-    /**
-     * Registra la Venta generada desde un Pedido Web (Delivery App)
-     */
-    /**
-     * Registra solo la cabecera en la tabla Ventas
-     */
+
     protected function registrarVentaWeb($idPedidoWeb, $idUsuario, $idMetodoPago, $tipoComprobante, $igv, $subtotal, $total, $idCliente)
     {
         $pedidoWeb = PedidosWebRegistro::find($idPedidoWeb);
@@ -285,24 +329,24 @@ class VenderAppCliente extends Controller
         return Venta::create([
             'idEmpresa'   => $pedidoWeb->idEmpresa ?? 2,
             'idSede'      => $pedidoWeb->idSede ?? 1,
-            'idUsuario'   => $idUsuario, // Null en delivery
+            'idUsuario'   => $idUsuario,
             'idCliente'   => $idCliente,
             'idMetodo'    => $idMetodoPago,
             'idPedido'    => null,
             'idPedidoWeb' => $idPedidoWeb,
             'igv'         => $igv,
-            'subTotal'    => $subtotal, // Respeta tu BD (subTotal)
+            'subTotal'    => $subtotal,
             'descuento'   => 0.00,
             'total'       => $total,
             'fechaVenta'  => now(),
-            'documento'   => $tipoComprobante, // 'B'
+            'documento'   => $tipoComprobante,
             'estado'      => 1,
         ]);
     }
 
-    private function registrarComprobante($venta, $tipoComprobante = 'B', $estado = 1, $observaciones = null, $rutaXml = null, $rutaCdr = null)
+    // MERCADO PAGO: Añadí $referenciaPago al final por si a futuro decides agregar una columna en Boleta para guardar el ID de Mercado Pago
+    private function registrarComprobante($venta, $tipoComprobante = 'B', $estado = 1, $observaciones = null, $rutaXml = null, $rutaCdr = null, $referenciaPago = null)
     {
-        // 1. OBTENCIÓN SEGURA DE EMPRESA Y SEDE (Clave para Delivery Web sin sesión)
         $usuario = Auth::user();
         $idEmpresa = ($usuario && isset($usuario->idEmpresa)) ? $usuario->idEmpresa : $venta->idEmpresa;
         $idSede = ($usuario && isset($usuario->idSede)) ? $usuario->idSede : $venta->idSede;
@@ -311,13 +355,10 @@ class VenderAppCliente extends Controller
             throw new \Exception("No se pudo determinar la Empresa o Sede para la Boleta.");
         }
 
-        // Fijamos el tipo SUNAT a '03' (Boleta) porque es exclusivo para Web
         $tipoSunat = '03';
 
         try {
-            // 2. OBTENER Y ACTUALIZAR CORRELATIVO DE FORMA SEGURA (Evita duplicados)
             $datosSerie = DB::transaction(function () use ($idEmpresa, $idSede, $tipoSunat) {
-
                 $serie = \App\Models\SerieCorrelativo::where('idEmpresa', $idEmpresa)
                     ->where('idSede', $idSede)
                     ->where('tipo_documento_sunat', $tipoSunat)
@@ -329,7 +370,6 @@ class VenderAppCliente extends Controller
                     throw new \Exception("No se encontró la serie de Boleta por defecto (03) para la Sede $idSede.");
                 }
 
-                // Incrementamos y marcamos como usado
                 $serie->correlativo_actual += 1;
                 $serie->usado = 1;
                 $serie->save();
@@ -340,17 +380,19 @@ class VenderAppCliente extends Controller
                 ];
             });
 
-            // 3. FORMATEAR NÚMEROS
             $numeroComprobante = str_pad($datosSerie['correlativo'], 8, '0', STR_PAD_LEFT);
             $serieComprobante = $datosSerie['serie'];
 
-            // 4. GUARDAR EN LA TABLA BOLETAS (Añadiendo el idEmpresa que faltaba)
             $boleta = \App\Models\Boleta::where('idVenta', $venta->id)->first() ?? new \App\Models\Boleta();
-            $boleta->idEmpresa = $idEmpresa; // <- Vital para tu tabla
+            $boleta->idEmpresa = $idEmpresa;
             $boleta->idVenta = $venta->id;
             $boleta->numSerie = $serieComprobante;
             $boleta->numero = $numeroComprobante;
             $boleta->estado = $estado;
+
+            // Si quieres guardar el ID de Mercado Pago en las observaciones de la boleta, puedes descomentar esto:
+            // if ($referenciaPago) { $observaciones = trim($observaciones . " - Pago MP: " . $referenciaPago); }
+
             $boleta->observaciones = $observaciones;
             $boleta->rutaXml = $rutaXml;
             $boleta->rutaCdr = $rutaCdr;

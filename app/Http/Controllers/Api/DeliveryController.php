@@ -233,7 +233,7 @@ class DeliveryController extends Controller
                 'costo_prioridad' => $request->costo_prioridad,
                 'tiempo_min' => $request->tiempo_min,
                 'tiempo_max' => $request->tiempo_max,
-                'propinas_sugeridas' => $request->propinas_sugeridas,
+                'propinas_sugeridas' => $request->propinas_sugeridas ? json_decode($request->propinas_sugeridas, true) : null,
                 'estado' => '1',
             ]
             );

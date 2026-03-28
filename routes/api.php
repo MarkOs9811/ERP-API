@@ -49,6 +49,7 @@ use App\Http\Controllers\Api\VenderAppCliente;
 use App\Http\Controllers\api\WhatsAppController;
 use App\Http\Controllers\Auth\GoogleController;
 use Google\Service\AdSenseHost\Report;
+use App\Http\Controllers\Api\PromocionesClienteController;
 
 Route::options('/{any}', function () {
     return response()->json([], 200, [
@@ -529,6 +530,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/cliente/logout', [ClienteController::class , 'logout']);
     Route::get('/cliente/metodosPagos', [ClienteController::class , 'getMetodosPagos']);
     Route::get('/cliente/direcciones', [ClienteController::class , 'getDirecciones']);
+
+    // RUTAS PARA REALZIAR PAGO Y PEDIDOS
     Route::post('/cliente/pedidos/crear', [VenderAppCliente::class , 'Pagar']);
     Route::get('/cliente/misPedidos', [VenderAppCliente::class , 'getMisPedidos']);
 
@@ -544,6 +547,11 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // SELECCIONAR SEDE POR DEFECTO DEL CLIENTE
     Route::put('/cliente/seleccionar-sede/{id}', [ClienteController::class , 'updateSedePredeterminada']);
+
+
+    // RUTAS PARA PROMOCIONES
+    Route::get('/cliente/promociones/{idSede}', [PromocionesClienteController::class , 'getPromociones']);
+
 });
 Route::get('/cliente/configDeliveryEmpresa', [ConfiguracionController::class , 'getConfigDeliveryEmpresa']);
 Route::get('/cliente/categoriasPlatos', [PedidosAppController::class , 'getCategorias']);

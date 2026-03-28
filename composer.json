@@ -20,6 +20,7 @@
         "laravel/sanctum": "^3.3",
         "laravel/socialite": "^5.20",
         "laravel/tinker": "^2.8",
+        "mercadopago/dx-php": "^3.8",
         "openai-php/client": "^0.10.3",
         "pusher/pusher-php-server": "^7.2",
         "rap2hpoutre/fast-excel": "*",
@@ -83,18 +84,5 @@
         }
     },
     "minimum-stability": "dev",
-    "prefer-stable": true,
-    "repositories": {
-        "greenter": {
-            "type": "vcs",
-            "url": "https://github.com/thegreenter/greenter"
-        },
-        "0": {
-            "type": "path",
-            "url": "./greenter",
-            "options": {
-                "symlink": true
-            }
-        }
-    }
+    "prefer-stable": true
 }
