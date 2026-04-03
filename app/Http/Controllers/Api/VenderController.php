@@ -611,7 +611,7 @@ class VenderController extends Controller
             // Facturación SUNAT
             try {
                 $sunatConfig = ConfiguracionHelper::get('sunat');
-                $sunatActivo = $sunatConfig && isset($sunatConfig->estado) && $sunatConfig->estado == 1;
+                $sunatActivo = $sunatConfig && isset($sunatConfig->estado) && $sunatConfig->estado === 1;
 
                 if ($sunatActivo && $tipoComprobante !== 'S') {
                     $datosFactura = [

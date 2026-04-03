@@ -28,15 +28,18 @@ class VenderAppCliente extends Controller
 {
 
 
-    public function Pagar(Request $request)
+   public function Pagar(Request $request)
     {
         Log::info('➡️ INICIO: Proceso de Pago Delivery App Cliente', ['payload' => $request->all()]);
 
         $request->validate([
             'idCliente' => 'required',
             'items'     => 'required|array|min:1',
-            'total'     => 'required'
-        ]);
+            'total'     => 'required',
+            'token_mercadopago' => 'required_if:idMetodoPago,999' 
+            ], [
+                'token_mercadopago.required_if' => 'Error de conexión: No se recibió el token de la tarjeta.'
+            ]);
 
         // ---------------------------------------------------------
         // 1. VALIDACIÓN PREVIA: DATOS DEL CLIENTE
@@ -112,8 +115,22 @@ class VenderAppCliente extends Controller
                 $estadoPagoFinal = 'pagado';
                 $referenciaPagoMp = $payment->id;
                 Log::info("✅ Cobro Mercado Pago Exitoso. ID: " . $referenciaPagoMp);
+                
+            } catch (\MercadoPago\Exceptions\MPApiException $e) {
+                // AQUÍ ATRAPAMOS EL ERROR EXACTO DE VALIDACIÓN DE MERCADO PAGO
+                $apiResponse = $e->getApiResponse();
+                $detalleError = $apiResponse ? $apiResponse->getContent() : ['error' => 'Sin detalles adicionales'];
+                
+                Log::error("❌ RECHAZO DE MERCADO PAGO (PRODUCCIÓN): ", (array) $detalleError);
+                
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Error de validación con el banco o pasarela. Intenta con otra tarjeta válida.'
+                ], 400);
+
             } catch (\Exception $e) {
-                Log::error("Error API Mercado Pago: " . $e->getMessage());
+                // Este atrapa errores generales (ej. caída de red)
+                Log::error("Error general API Mercado Pago: " . $e->getMessage());
                 return response()->json([
                     'success' => false,
                     'message' => 'Hubo un error de conexión al procesar la tarjeta. Por favor intente nuevamente.'
