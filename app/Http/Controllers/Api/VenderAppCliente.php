@@ -28,7 +28,7 @@ class VenderAppCliente extends Controller
 {
 
 
-   public function Pagar(Request $request)
+    public function Pagar(Request $request)
     {
         Log::info('➡️ INICIO: Proceso de Pago Delivery App Cliente', ['payload' => $request->all()]);
 
@@ -36,10 +36,10 @@ class VenderAppCliente extends Controller
             'idCliente' => 'required',
             'items'     => 'required|array|min:1',
             'total'     => 'required',
-            'token_mercadopago' => 'required_if:idMetodoPago,999' 
-            ], [
-                'token_mercadopago.required_if' => 'Error de conexión: No se recibió el token de la tarjeta.'
-            ]);
+            'token_mercadopago' => 'required_if:idMetodoPago,999'
+        ], [
+            'token_mercadopago.required_if' => 'Error de conexión: No se recibió el token de la tarjeta.'
+        ]);
 
         // ---------------------------------------------------------
         // 1. VALIDACIÓN PREVIA: DATOS DEL CLIENTE
@@ -104,7 +104,7 @@ class VenderAppCliente extends Controller
 
                 // Verificamos si el banco aprobó la tarjeta
                 if ($payment->status !== 'approved') {
-                    Log::warning("Pago Rechazado por Mercado Pago: " . $payment->status);
+                    Log::warning("Pago Rechazado. Estado: {$payment->status} | Motivo exacto: {$payment->status_detail}");
                     return response()->json([
                         'success' => false,
                         'message' => 'La tarjeta fue rechazada o el pago no pudo procesarse. Verifica tus fondos o intenta con otra tarjeta.'
@@ -115,19 +115,17 @@ class VenderAppCliente extends Controller
                 $estadoPagoFinal = 'pagado';
                 $referenciaPagoMp = $payment->id;
                 Log::info("✅ Cobro Mercado Pago Exitoso. ID: " . $referenciaPagoMp);
-                
             } catch (\MercadoPago\Exceptions\MPApiException $e) {
                 // AQUÍ ATRAPAMOS EL ERROR EXACTO DE VALIDACIÓN DE MERCADO PAGO
                 $apiResponse = $e->getApiResponse();
                 $detalleError = $apiResponse ? $apiResponse->getContent() : ['error' => 'Sin detalles adicionales'];
-                
+
                 Log::error("❌ RECHAZO DE MERCADO PAGO (PRODUCCIÓN): ", (array) $detalleError);
-                
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Error de validación con el banco o pasarela. Intenta con otra tarjeta válida.'
                 ], 400);
-
             } catch (\Exception $e) {
                 // Este atrapa errores generales (ej. caída de red)
                 Log::error("Error general API Mercado Pago: " . $e->getMessage());

@@ -10,19 +10,15 @@ return [
     'allowed_origins' => [
         'http://localhost:3000',
         'http://localhost:4000',
-       'https://ephemeral-maamoul-2a699a.netlify.app',
-        'http://192.168.18.23:4000',
-        'http://192.168.1.12:3000',
-        'https://vv1g8thv-3000.brs.devtunnels.ms',
-        'https://playful-genie-d92cb7.netlify.app', // Tu dominio de frontend
-        'http://192.168.18.102:3000',
+        'https://lustrous-cupcake-b9cf4a.netlify.app',
+
     ],
 
     // Patrones de orígenes permitidos (opcional)
     'allowed_origins_patterns' => [],
 
     // Encabezados permitidos
-    'allowed_headers' => ['Content-Type', 'X-Requested-With', 'Authorization', 'X-CSRF-Token'],
+    'allowed_headers' => ['*', 'Content-Type', 'X-Requested-With', 'Authorization', 'X-CSRF-Token'],
 
     // Encabezados expuestos (opcional)
     'exposed_headers' => [],

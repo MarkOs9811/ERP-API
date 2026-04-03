@@ -165,8 +165,10 @@ class GoogleController extends Controller
                 $persona->save();
 
                 $cliente = Cliente::where('idPersona', $persona->id)->first();
+
                 if (!$cliente) {
-                    Cliente::create([
+                    // AQUÍ ESTÁ LA CORRECCIÓN: Asignamos la creación a la variable $cliente
+                    $cliente = Cliente::create([
                         'idPersona' => $persona->id,
                         'idEmpresa' => 2,
                         'estado' => '1',
@@ -182,13 +184,14 @@ class GoogleController extends Controller
                         'apellidos' => $persona->apellidos,
                         'correo' => $persona->correo,
                         'foto' => $persona->foto,
-                        'sede' => $cliente->idSede ? $cliente->idSede : null, // Asumiendo que tienes una relación 'sede' en Cliente
+                        // Ahora $cliente ya es un objeto, sea antiguo o nuevo
+                        'sede' => $cliente->idSede ?? null,
                     ]
                 ];
             });
 
             $host = request()->getHost();
-            $frontendUrl = "https://ephemeral-maamoul-2a699a.netlify.app";
+            $frontendUrl = "https://lustrous-cupcake-b9cf4a.netlify.app";
 
             // Codificamos los datos en JSON y luego en Base64 para que viajen seguros en la URL
             $userJsonBase64 = base64_encode(json_encode($authData['userData']));
