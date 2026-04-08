@@ -20,8 +20,7 @@ class DeliveryController extends Controller
             $promociones = PromocionesApp::with('plato')->get();
 
             return response()->json(['success' => true, 'data' => $promociones], 200);
-        }
-        catch (\Exception $e) {
+        } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
@@ -67,16 +66,13 @@ class DeliveryController extends Controller
                 'success' => true,
                 'data' => $promociones
             ], 200);
-
-        }
-        catch (ValidationException $e) {
+        } catch (ValidationException $e) {
 
             return response()->json([
                 'success' => false,
                 'message' => 'Error de validación: ' . json_encode($e->errors())
             ], 422);
-        }
-        catch (\Exception $e) {
+        } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error al guardar: ' . $e->getMessage()
@@ -132,15 +128,12 @@ class DeliveryController extends Controller
                 'data' => $promociones,
                 'message' => 'Promoción actualizada correctamente'
             ], 200);
-
-        }
-        catch (\Illuminate\Validation\ValidationException $e) {
+        } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error de validación: ' . json_encode($e->errors())
             ], 422);
-        }
-        catch (\Exception $e) {
+        } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error al actualizar: ' . $e->getMessage()
@@ -160,15 +153,12 @@ class DeliveryController extends Controller
                 'data' => $promociones,
                 'message' => 'Promoción actualizada correctamente'
             ], 200);
-
-        }
-        catch (ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error de validación: ' . json_encode($e->errors())
             ], 422);
-        }
-        catch (\Exception $e) {
+        } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error al actualizar: ' . $e->getMessage()
@@ -191,15 +181,12 @@ class DeliveryController extends Controller
                 'success' => true,
                 'message' => 'Promoción eliminada correctamente'
             ], 200);
-
-        }
-        catch (ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error de validación: ' . json_encode($e->errors())
             ], 422);
-        }
-        catch (\Exception $e) {
+        } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error al eliminar: ' . $e->getMessage()
@@ -225,17 +212,17 @@ class DeliveryController extends Controller
 
 
             $configuracion = ConfiguracionDelivery::updateOrCreate(
-            [
-                'idSede' => $request->sede_id,
-            ],
-            [
-                'costo_base_delivery' => $request->costo_base_delivery,
-                'costo_prioridad' => $request->costo_prioridad,
-                'tiempo_min' => $request->tiempo_min,
-                'tiempo_max' => $request->tiempo_max,
-                'propinas_sugeridas' => $request->propinas_sugeridas ? json_decode($request->propinas_sugeridas, true) : null,
-                'estado' => '1',
-            ]
+                [
+                    'idSede' => $request->sede_id,
+                ],
+                [
+                    'costo_base_delivery' => $request->costo_base_delivery,
+                    'costo_prioridad' => $request->costo_prioridad,
+                    'tiempo_min' => $request->tiempo_min,
+                    'tiempo_max' => $request->tiempo_max,
+                    'propinas_sugeridas' => $request->propinas_sugeridas ? json_decode($request->propinas_sugeridas, true) : null,
+                    'estado' => '1',
+                ]
             );
 
             return response()->json([
@@ -243,15 +230,12 @@ class DeliveryController extends Controller
                 'message' => 'Configuración de zona guardada correctamente',
                 'data' => $configuracion
             ], 200);
-
-        }
-        catch (ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error de validación: ' . json_encode($e->errors())
             ], 422);
-        }
-        catch (\Exception $e) {
+        } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error al guardar configuración: ' . $e->getMessage()
@@ -271,15 +255,12 @@ class DeliveryController extends Controller
                 'message' => 'Estado de zona actualizado correctamente',
                 'data' => $configuracion
             ], 200);
-
-        }
-        catch (ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error de validación: ' . json_encode($e->errors())
             ], 422);
-        }
-        catch (\Exception $e) {
+        } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error al actualizar estado: ' . $e->getMessage()
@@ -297,15 +278,12 @@ class DeliveryController extends Controller
                 'success' => true,
                 'message' => 'Configuración de zona eliminada correctamente'
             ], 200);
-
-        }
-        catch (ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error de validación: ' . json_encode($e->errors())
             ], 422);
-        }
-        catch (\Exception $e) {
+        } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error al eliminar configuración: ' . $e->getMessage()
@@ -319,15 +297,14 @@ class DeliveryController extends Controller
             // 1. Buscamos al usuario (repartidor) usando el ID que viene en la URL
             $user = User::findOrFail($id);
 
-            // Navegamos por tus relaciones para llegar a la tabla Persona
-            // (Asumo que tienes definidas las relaciones empleado y persona en tus modelos)
+
             $persona = $user->empleado->persona;
 
             // 2. Validamos los datos de entrada
             $request->validate([
                 'nombres' => 'required|string|max:255',
                 'apellidos' => 'required|string|max:255',
-                'dni' => 'required|string|min:8|max:12',
+                'dni' => 'required|digits_between:8,12|unique:personas,documento_identidad,' . $persona->id,
                 'telefono' => 'required|string|max:20',
                 'email' => 'nullable|email|max:255|unique:users,email,' . $user->id,
             ]);
@@ -366,20 +343,42 @@ class DeliveryController extends Controller
                 // Retornamos el usuario con sus relaciones frescas para que tu frontend se actualice
                 'data' => $user->load('empleado.persona')
             ], 200);
-
-        }
-        catch (\Illuminate\Validation\ValidationException $e) {
+        } catch (\Illuminate\Validation\ValidationException $e) {
             DB::rollBack(); // Revertimos cambios si falla la validación
             return response()->json([
                 'success' => false,
                 'message' => 'Error de validación: ' . json_encode($e->errors())
             ], 422);
-        }
-        catch (\Exception $e) {
+        } catch (\Exception $e) {
             DB::rollBack(); // Revertimos cambios si hay error de servidor
             return response()->json([
                 'success' => false,
                 'message' => 'Error al actualizar repartidor: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function updateEstadoRepartidores(Request $request, $id)
+    {
+        try {
+            $user = User::findOrFail($id);
+            $user->estado = $request->estado;
+            $user->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Estado de repartidor actualizado correctamente',
+                'data' => $user
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error de validación: ' . json_encode($e->errors())
+            ], 422);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al actualizar estado: ' . $e->getMessage()
             ], 500);
         }
     }

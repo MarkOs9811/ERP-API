@@ -423,6 +423,8 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     // ENDPOINT PARA TODOS LOS REPORTES DE MODULOS
     Route::post('/reportes/google-sheet', [ReportesController::class, 'generarReporteGoogleSheets']);
+    Route::post('/reportes/clasico', [ReportesController::class, 'generarReporteClasico']);
+
 
     // ENDPOINT PARA OBTENER CALCULOS DE IA o LOGICA
     Route::get('/ventasIA', [VentasController::class, 'getVentasIA']);

@@ -15,6 +15,7 @@ use App\Models\HoraExtras;
 use App\Models\Inventario;
 use App\Models\Kardex;
 use App\Models\Movimiento;
+use App\Models\PedidosWebRegistro;
 use App\Models\Plato;
 use App\Models\registrosCajas;
 use App\Models\RegistrosCajas as ModelsRegistrosCajas;
@@ -426,7 +427,64 @@ class ReportesController extends Controller
             ], 500);
         }
     }
+    public function generarReporteClasico(Request $request)
+    {
+        try {
+            // 1. Corregimos la validación (fechaFin debe ser mayor o igual a fechaInicio)
+            $request->validate([
+                'fechaInicio' => 'required|date',
+                'fechaFin' => 'required|date|after_or_equal:fechaInicio',
+                'tipo' => 'required|string'
+            ]);
+            $modelosPermitidos = [
+                'pedidosWebRegistros' => PedidosWebRegistro::class,
+                'almacen'             => Almacen::class,
+                'kardex'              => Kardex::class,
+                'inventario'          => Inventario::class,
+                'ventas'              => Venta::class,
+                'cajas'               => registrosCajas::class,
+                'compras'             => Compra::class,
+                'vacaciones'          => Vacacione::class,
+                'adelantoSueldo'      => AdelantoSueldo::class,
+                'asistencias'         => Asistencia::class,
+                'planilla'            => Empleado::class,
+            ];
 
+
+            if (!array_key_exists($request->tipo, $modelosPermitidos)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tipo de reporte no válido o no autorizado.'
+                ], 400);
+            }
+
+            $modeloClase = $modelosPermitidos[$request->tipo];
+
+
+            $inicio = Carbon::parse($request->fechaInicio)->startOfDay();
+            $fin = Carbon::parse($request->fechaFin)->endOfDay();
+
+
+            $resultado = $modeloClase::whereBetween('created_at', [$inicio, $fin])->get();
+
+            // Verificamos si hay datos
+            if ($resultado->isEmpty()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No hay registros en el rango de fechas seleccionado.'
+                ], 404);
+            }
+            $filename = 'reporte_' . $request->tipo . '_' . now()->format('Ymd_His') . '.xlsx';
+
+            return (new FastExcel($resultado))->download($filename);
+        } catch (\Exception $e) {
+            Log::error('Error al generar reporte: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al generar el reporte: ' . $e->getMessage()
+            ], 500);
+        }
+    }
     public function reporteVentasExcel()
     {
         try {
