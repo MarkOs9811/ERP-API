@@ -18,6 +18,10 @@ class Proveedore extends Model
         'telefono',
         'email',
     ];
+    public function almacenes()
+    {
+        return $this->hasMany(Almacen::class, 'idProveedor', 'id');
+    }
 
     protected static function booted()
     {

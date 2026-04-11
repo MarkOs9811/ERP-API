@@ -17,6 +17,7 @@ use App\Models\Kardex;
 use App\Models\Movimiento;
 use App\Models\PedidosWebRegistro;
 use App\Models\Plato;
+use App\Models\Proveedore;
 use App\Models\registrosCajas;
 use App\Models\RegistrosCajas as ModelsRegistrosCajas;
 use App\Models\Solicitud;
@@ -680,6 +681,7 @@ class ReportesController extends Controller
                 return [
                     'ID' => $item->id,
                     'Nombre' => $item->nombre,
+                    'Sede' => optional($item->sede)->nombre,
                     'Categoría' => optional($item->categoria)->nombre,
                     'Descripción' => $item->descripcion ?? '',
                     'Precio' => $item->precio ?? '',
@@ -737,7 +739,7 @@ class ReportesController extends Controller
     public function reporteProveedores()
     {
         try {
-            $proveedores = Almacen::with('proveedor')->whereHas('proveedor')->get()->pluck('proveedor')->unique('id');
+            $proveedores = Proveedore::get();
 
             $data = $proveedores->map(function ($item) {
                 return [
