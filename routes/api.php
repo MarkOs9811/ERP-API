@@ -50,6 +50,7 @@ use App\Http\Controllers\api\WhatsAppController;
 use App\Http\Controllers\Auth\GoogleController;
 use Google\Service\AdSenseHost\Report;
 use App\Http\Controllers\Api\PromocionesClienteController;
+use App\Http\Controllers\Auth\PasswordResetController;
 
 Route::options('/{any}', function () {
     return response()->json([], 200, [
@@ -62,6 +63,11 @@ Route::options('/{any}', function () {
 // RUTAS PARA LOGEARSE
 Route::post('/login', [AuthController::class, 'login'])->name('login');
 Route::post('/logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
+
+// RECUPERAR CONTRASEÑA
+Route::post('/forgot-password', [PasswordResetController::class, 'sendResetLinkEmail']);
+Route::post('/reset-password', [PasswordResetController::class, 'reset']);
+
 
 // RUTAS PARA LOGEARSE CON GOOGLE
 Route::get('/auth/google/redirect', [GoogleController::class, 'redirectToGoogle']);

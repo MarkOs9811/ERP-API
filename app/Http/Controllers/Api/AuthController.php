@@ -9,46 +9,69 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
+
 
 class AuthController extends Controller
 {
     public function login(Request $request)
     {
         try {
-            Log::info('--- INICIO PROCESO DE LOGIN ---', ['email' => $request->email]);
-
             $credentials = $request->validate([
                 'email' => 'required',
                 'password' => 'required',
             ]);
-            Log::debug('Paso 1: Validación de request superada.');
+            // NUEVO: 1. Crear una llave única basada en el email y la IP del usuario
+            $throttleKey = Str::lower($request->email) . '|' . $request->ip();
+
+            // NUEVO: 2. Verificar si ya excedió los 3 intentos permitidos
+            if (RateLimiter::tooManyAttempts($throttleKey, 3)) {
+                $seconds = RateLimiter::availableIn($throttleKey);
+                Log::warning('Bloqueo temporal por múltiples intentos fallidos.', ['email' => $request->email]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => "Demasiados intentos fallidos. Tu cuenta ha sido bloqueada temporalmente. Intenta de nuevo en {$seconds} segundos."
+                ], 429); // Código HTTP 429: Too Many Requests
+            }
 
             // 1. Buscar usuario
             $user = User::where('email', $credentials['email'])->first();
 
             if (!$user) {
-                Log::warning('Fallo en Paso 2: Usuario no encontrado.', ['email' => $credentials['email']]);
+                // NUEVO: Sumar un intento fallido si el correo no existe
+                RateLimiter::hit($throttleKey, 60); // 60 segundos de bloqueo cuando llegue a 3
+
+
                 return response()->json(['success' => false, 'message' => 'Usuario no encontrado'], 404);
             }
-            Log::debug('Paso 2: Usuario encontrado en BD.', ['user_id' => $user->id, 'auth_type' => $user->auth_type]);
+
 
             // 2. Validar tipo de autenticación
             if ($user->auth_type !== 'manual') {
-                Log::warning('Fallo en Paso 3: Tipo de autenticación incorrecto.', ['esperado' => 'manual', 'actual' => $user->auth_type]);
+                RateLimiter::hit($throttleKey, 60); // Sumar intento
                 return response()->json(['success' => false, 'message' => 'Este usuario debe iniciar sesión con Google'], 403);
             }
 
             // 3. Validar contraseña
             if (!Auth::attempt($credentials)) {
-                Log::warning('Fallo en Paso 4: Contraseña incorrecta para el usuario.', ['email' => $credentials['email']]);
-                return response()->json(['success' => false, 'message' => 'Credenciales inválidas'], 401);
+                // NUEVO: Sumar un intento fallido si la contraseña es incorrecta
+                RateLimiter::hit($throttleKey, 60);
+                $intentosRestantes = RateLimiter::retriesLeft($throttleKey, 3);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => "Credenciales inválidas. Te quedan {$intentosRestantes} intento(s)."
+                ], 401);
             }
-            Log::debug('Paso 4: Auth::attempt exitoso. Credenciales correctas.');
+            // NUEVO: 3. Limpiar el contador si el inicio de sesión es exitoso
+            RateLimiter::clear($throttleKey);
+
 
             // 4. Cargar usuario con relaciones
             $user = User::with('empleado.persona', 'empleado.cargo', 'roles', 'sede')->find(Auth::id());
-            Log::debug('Paso 5: Relaciones cargadas correctamente.', ['roles_count' => $user->roles->count()]);
 
             // 5. Lógica de Empresa y Roles Efectivos
             $empresa = null;
@@ -56,24 +79,19 @@ class AuthController extends Controller
             $confiEmpresa = null; // Inicializamos aquí para evitar errores si cae en el 'else'
 
             if ($user->idEmpresa) {
-                Log::debug('Paso 6: El usuario pertenece a una empresa.', ['idEmpresa' => $user->idEmpresa]);
 
                 $empresa = MiEmpresa::find($user->idEmpresa);
                 if (!$empresa) {
-                    Log::warning('Fallo en Paso 6: idEmpresa no coincide con ninguna empresa válida.', ['idEmpresa' => $user->idEmpresa]);
                     return response()->json(['success' => false, 'message' => 'Empresa no válida o desactivada'], 403);
                 }
 
                 if ($empresa->estado == 0) {
-                    Log::warning('Fallo en Paso 6: Empresa inactiva.', ['idEmpresa' => $empresa->id]);
                     return response()->json(['success' => false, 'message' => 'Su empresa se encuentra inactiva. Contacte soporte.'], 403);
                 }
-                Log::debug('Paso 7: Empresa validada correctamente.', ['empresa_nombre' => $empresa->nombre]);
 
                 $confiEmpresa = Configuraciones::where('idEmpresa', $user->idEmpresa)
                     ->where('tipo', 'estilos')
                     ->get();
-                Log::debug('Paso 8: Configuraciones de estilos cargadas.', ['estilos_count' => $confiEmpresa->count()]);
 
                 // A. Obtener IDs de roles que la empresa REALMENTE tiene activos
                 $rolesEmpresaIds = DB::table('empresa_roles')
@@ -81,30 +99,23 @@ class AuthController extends Controller
                     ->where('estado', 1)
                     ->pluck('idRole')
                     ->toArray();
-                Log::debug('Paso 9: Roles activos de la empresa obtenidos.', ['rolesEmpresaIds' => $rolesEmpresaIds]);
 
                 // B. FILTRADO MÁGICO: Cruzar roles del usuario con los de la empresa
                 $rolesEfectivos = $user->roles->filter(function ($role) use ($rolesEmpresaIds) {
                     return in_array($role->id, $rolesEmpresaIds);
                 })->values(); // values() reordena los índices del array
-                Log::debug('Paso 10: Filtrado mágico de roles completado.', ['rolesEfectivos_count' => $rolesEfectivos->count()]);
             } else {
-                Log::debug('Paso 6 (Alternativo): El usuario NO tiene idEmpresa.', ['isAdmin' => $user->isAdmin]);
                 if ($user->isAdmin == 1) {
                     $rolesEfectivos = $user->roles;
-                    Log::debug('Paso 7 (Alternativo): Roles asignados directamente por ser Admin.', ['rolesEfectivos_count' => $rolesEfectivos->count()]);
                 }
             }
 
             // 6. SOBRESCRIBIR LA RELACIÓN EN EL OBJETO USER
             $user->setRelation('roles', $rolesEfectivos);
-            Log::debug('Paso 11: Relación de roles sobrescrita en el objeto User.');
 
             $token = $user->createToken('accessToken')->plainTextToken;
             $caja = $user->cajaAbierta();
-            Log::debug('Paso 12: Token generado y caja consultada.', ['tiene_caja' => $caja ? true : false]);
 
-            Log::info('--- LOGIN EXITOSO FIN DEL PROCESO ---', ['id' => $user->id, 'empresa' => $empresa?->id]);
 
             return response()->json([
                 'success' => true,
