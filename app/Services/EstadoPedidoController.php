@@ -29,7 +29,7 @@ class EstadoPedidoController
         $pedido->tipo_pedido = $this->tipoPedido;
         $pedido->idCaja = $this->idCaja;
         $pedido->detalle_platos = $this->detallePlatos;
-        $pedido->detalle_cliente = $this->detalleCliente;
+        $pedido->detalles_extras = $this->detalleCliente;
         $pedido->numeroMesa = $this->numMesa;
         // Asignación según tipo
         switch ($this->tipoPedido) {

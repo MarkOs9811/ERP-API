@@ -191,7 +191,8 @@ class GoogleController extends Controller
             });
 
             $host = request()->getHost();
-            $frontendUrl = "https://lustrous-cupcake-b9cf4a.netlify.app";
+            // $frontendUrl = "https://lustrous-cupcake-b9cf4a.netlify.app";
+            $frontendUrl = "http://localhost:4000";
 
             // Codificamos los datos en JSON y luego en Base64 para que viajen seguros en la URL
             $userJsonBase64 = base64_encode(json_encode($authData['userData']));

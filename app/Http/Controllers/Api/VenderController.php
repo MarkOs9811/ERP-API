@@ -80,6 +80,7 @@ class VenderController extends Controller
             'pedidos.*.idMesa' => 'required|integer|exists:mesas,id',
             'pedidos.*.cantidad' => 'required|integer|min:1',
             'pedidos.*.precio' => 'required|numeric|min:0',
+            'pedidos.*.nota' => 'nullable|string|max:100',
         ]);
 
         try {
@@ -229,7 +230,7 @@ class VenderController extends Controller
                     $idCaja,            // ID Caja
                     $detallePlatos,     // JSON de platos
                     $idPedido,          // ID Pedido Mesa
-                    null,                // detalle_cliente (null para mesas)
+                    $request->nota,                // detalle_cliente (null para mesas)
                     $mesa->numero,      // Referencia (Número de mesa)
                 );
 
