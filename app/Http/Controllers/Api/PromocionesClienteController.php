@@ -16,8 +16,7 @@ class PromocionesClienteController extends Controller
                 'success' => true,
                 'data' => $promociones
             ], 200);
-        }
-        catch (\Exception $e) {
+        } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage()

@@ -559,6 +559,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // RUTAS PARA PROMOCIONES
     Route::get('/cliente/promociones/{idSede}', [PromocionesClienteController::class, 'getPromociones']);
+
+    // RUTAS PARA NOTIFICACIONES
+    Route::get('/cliente/notificaciones', [NotificacionesController::class, 'getNotificacionesCliente']);
 });
 Route::get('/cliente/configDeliveryEmpresa', [ConfiguracionController::class, 'getConfigDeliveryEmpresa']);
 Route::get('/cliente/categoriasPlatos', [PedidosAppController::class, 'getCategorias']);

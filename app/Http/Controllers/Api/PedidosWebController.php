@@ -6,6 +6,7 @@ use App\Helpers\ConfiguracionHelper;
 use App\Http\Controllers\Controller;
 use App\Models\detallePedidosWeb;
 use App\Models\MiEmpresa;
+use App\Models\Notificaciones;
 use App\Models\PedidosWebRegistro;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -88,30 +89,42 @@ class PedidosWebController extends Controller
             // Validar la solicitud
             $request->validate([
                 'idPedido' => 'required|exists:pedidos_web_registros,id',
-                'nuevoEstado' => 'required|integer|in:3,4,5,55,6', // Acepta los estados válidos
+                'nuevoEstado' => 'required|integer|in:3,4,5,55,6',
             ]);
 
-
-            // Buscar el pedido
             $pedido = PedidosWebRegistro::with('detallesPedido.plato')->findOrFail($request->idPedido);
 
             // Solo permitir cambios entre estados válidos
             if (in_array($pedido->estado_pedido, [3, 4, 5, 55, 6]) && in_array($request->nuevoEstado, [3, 4, 5, 55, 6])) {
                 $mensaje = '';
 
+                $guardarNotificacion = new Notificaciones();
                 if ($pedido->estado_pedido == 3 && $request->nuevoEstado == 4) {
-                    $mensaje = "🍽️ Su pedido ahora está en proceso. Estamos preparando su comida con mucho cariño.";
+                    $mensaje = "Su pedido ahora está en proceso. Estamos preparando su comida con mucho cariño.";
+                    $titulo = "Pedido en Proceso";
                 } elseif ($pedido->estado_pedido == 4 && $request->nuevoEstado == 5) {
-                    $mensaje = "✅ Su pedido está listo para recoger. Puede pasar por su pedido en los próximos 10-20 minutos.";
+                    $mensaje = "Su pedido está listo para recoger. Puede pasar por su pedido en los próximos 10-20 minutos.";
+                    $titulo = "Pedido Listo";
                 } elseif ($pedido->estado_pedido == 5 && $request->nuevoEstado == 55) {
-                    $mensaje = "🚗 Su pedido está en camino. ¡Prepárese para disfrutar de su comida pronto!";
+                    $mensaje = "Su pedido está en camino. ¡Prepárese para disfrutar de su comida pronto!";
+                    $titulo = "Pedido En Camino";
                 } elseif ($pedido->estado_pedido == 55 && $request->nuevoEstado == 6) {
-                    $mensaje = "🎉 ¡Gracias por tu preferencia! 🎉\n\nEn *FIRE WOK* 🍣🍜 estamos encantados de haber podido atenderte. 🙏 \n\n¡Vuelva pronto!🔥😊";
+                    $mensaje = "¡Gracias por tu preferencia! 🎉\n\nEn *FIRE WOK* 🍣🍜 estamos encantados de haber podido atenderte. 🙏 \n\n¡Vuelva pronto!🔥😊";
+                    $titulo = "Pedido Entregado";
+                } else {
+                    $mensaje = "El estado de su pedido ha sido actualizado.";
+                    $titulo = "Estado Actualizado";
                 }
                 // Actualizar el estado
                 $pedido->estado_pedido = $request->nuevoEstado;
                 $pedido->save();
-
+                $guardarNotificacion = new Notificaciones();
+                $guardarNotificacion->idCliente = $pedido->idCliente;
+                $guardarNotificacion->tipo = 'delivery';
+                $guardarNotificacion->prioridad = 'alta';
+                $guardarNotificacion->titulo = $titulo;
+                $guardarNotificacion->mensaje = $mensaje;
+                $guardarNotificacion->save();
                 // Enviar mensaje solo si hay un cambio válido de estado
                 if (!empty($mensaje)) {
                     $this->enviarMensajeWhatsApp($pedido->numero_cliente, $mensaje);

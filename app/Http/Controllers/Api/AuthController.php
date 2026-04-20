@@ -23,7 +23,7 @@ class AuthController extends Controller
                 'email' => 'required',
                 'password' => 'required',
             ]);
-            // NUEVO: 1. Crear una llave única basada en el email y la IP del usuario
+
             $throttleKey = Str::lower($request->email) . '|' . $request->ip();
 
             // NUEVO: 2. Verificar si ya excedió los 3 intentos permitidos
