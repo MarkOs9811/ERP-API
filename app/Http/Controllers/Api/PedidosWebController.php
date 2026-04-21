@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\api;
 
+use App\Events\NuevaNotificacionCliente;
 use App\Helpers\ConfiguracionHelper;
 use App\Http\Controllers\Controller;
 use App\Models\detallePedidosWeb;
@@ -85,8 +86,8 @@ class PedidosWebController extends Controller
 
     public function cambiarEstado(Request $request)
     {
+
         try {
-            // Validar la solicitud
             $request->validate([
                 'idPedido' => 'required|exists:pedidos_web_registros,id',
                 'nuevoEstado' => 'required|integer|in:3,4,5,55,6',
@@ -94,16 +95,14 @@ class PedidosWebController extends Controller
 
             $pedido = PedidosWebRegistro::with('detallesPedido.plato')->findOrFail($request->idPedido);
 
-            // Solo permitir cambios entre estados válidos
             if (in_array($pedido->estado_pedido, [3, 4, 5, 55, 6]) && in_array($request->nuevoEstado, [3, 4, 5, 55, 6])) {
                 $mensaje = '';
 
-                $guardarNotificacion = new Notificaciones();
                 if ($pedido->estado_pedido == 3 && $request->nuevoEstado == 4) {
                     $mensaje = "Su pedido ahora está en proceso. Estamos preparando su comida con mucho cariño.";
                     $titulo = "Pedido en Proceso";
                 } elseif ($pedido->estado_pedido == 4 && $request->nuevoEstado == 5) {
-                    $mensaje = "Su pedido está listo para recoger. Puede pasar por su pedido en los próximos 10-20 minutos.";
+                    $mensaje = "Su pedido está listo para recoger. En unos momentos el Rider lo llevará a su destino. ¡Gracias por su paciencia!";
                     $titulo = "Pedido Listo";
                 } elseif ($pedido->estado_pedido == 5 && $request->nuevoEstado == 55) {
                     $mensaje = "Su pedido está en camino. ¡Prepárese para disfrutar de su comida pronto!";
@@ -115,9 +114,12 @@ class PedidosWebController extends Controller
                     $mensaje = "El estado de su pedido ha sido actualizado.";
                     $titulo = "Estado Actualizado";
                 }
+
                 // Actualizar el estado
                 $pedido->estado_pedido = $request->nuevoEstado;
                 $pedido->save();
+
+                // Guardar notificación
                 $guardarNotificacion = new Notificaciones();
                 $guardarNotificacion->idCliente = $pedido->idCliente;
                 $guardarNotificacion->tipo = 'delivery';
@@ -125,7 +127,16 @@ class PedidosWebController extends Controller
                 $guardarNotificacion->titulo = $titulo;
                 $guardarNotificacion->mensaje = $mensaje;
                 $guardarNotificacion->save();
-                // Enviar mensaje solo si hay un cambio válido de estado
+
+
+
+                // LOG 3: Intentar disparar Pusher
+
+
+                // Quitamos el ->toOthers() para asegurarnos de que el evento salga para TODOS durante las pruebas
+                broadcast(new NuevaNotificacionCliente($pedido->idCliente));
+
+
                 if (!empty($mensaje)) {
                     $this->enviarMensajeWhatsApp($pedido->numero_cliente, $mensaje);
                 }
@@ -135,6 +146,8 @@ class PedidosWebController extends Controller
                     'pedido' => $pedido
                 ], 200);
             }
+
+
 
             return response()->json([
                 'message' => 'No se puede cambiar el estado del pedido.',

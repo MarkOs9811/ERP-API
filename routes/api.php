@@ -562,6 +562,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // RUTAS PARA NOTIFICACIONES
     Route::get('/cliente/notificaciones', [NotificacionesController::class, 'getNotificacionesCliente']);
+    Route::put('/cliente/notificaciones/cambiarEstado', [NotificacionesController::class, 'cambiarEstadoNotificacion']);
 });
 Route::get('/cliente/configDeliveryEmpresa', [ConfiguracionController::class, 'getConfigDeliveryEmpresa']);
 Route::get('/cliente/categoriasPlatos', [PedidosAppController::class, 'getCategorias']);

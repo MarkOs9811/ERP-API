@@ -32,11 +32,31 @@ class NotificacionesController extends Controller
             $notificaciones = Notificaciones::withoutGlobalScope(UsuarioScope::class)
                 ->where('idCliente', $idCliente)
                 ->get();
-            Log::info("Notificaciones para cliente ID: $idCliente", ['notificaciones' => $notificaciones]);
+
 
             return response()->json(['success' => true, 'data' => $notificaciones], 200);
         } catch (\Exception $e) {
             return response()->json(['success' => true, 'message' => 'Error', $e->getMessage()], 500);
+        }
+    }
+
+    public function cambiarEstadoNotificacion(Request $request)
+    {
+        try {
+
+            $persona = $request->user();
+            $cliente = Cliente::where('idPersona', $persona->id)->first();
+            Notificaciones::withoutGlobalScope(UsuarioScope::class)
+                ->where('idCliente', $cliente->id)
+                ->where('estado', 0)
+                ->update(['estado' => 1]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Estado de notificaciones actualizado',
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error', 'error' => $e->getMessage()], 500);
         }
     }
 }

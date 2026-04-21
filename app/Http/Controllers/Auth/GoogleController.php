@@ -179,7 +179,7 @@ class GoogleController extends Controller
                 return [
                     'token' => $persona->createToken('auth_token_cliente')->plainTextToken,
                     'userData' => [
-                        'id' => $persona->id,
+                        'id' => $cliente->id,
                         'nombre' => $persona->nombre,
                         'apellidos' => $persona->apellidos,
                         'correo' => $persona->correo,
