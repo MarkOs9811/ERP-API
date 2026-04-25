@@ -185,6 +185,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::get('/pedidosAsignados', [PedidosWebController::class, 'getPedidosAsignados']);
     Route::get('/pedidosEnCamino', [PedidosWebController::class, 'getPedidosEnCamino']);
     Route::put('/pedidosPendientes/cambiarEstado', [PedidosWebController::class, 'cambiarEstado']);
+    Route::post('/pedidosWeb/asignarRepartidor', [PedidosWebController::class, 'asignarRepartidor']);
     // RUTAS ACCIOENS PEDIDOS
     Route::get('/pedidosWeb/{id}', [PedidosWebController::class, 'getPedidosWeb']);
     Route::post('/pedidosWeb/notificarCliente', [PedidosWebController::class, 'notificarEstadoCliente']);

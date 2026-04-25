@@ -108,7 +108,6 @@ class PedidosWebController extends Controller
         try {
             $request->validate([
                 'idPedido' => 'required|exists:pedidos_web_registros,id',
-                // 1. Agregamos el 54 aquí
                 'nuevoEstado' => 'required|integer|in:3,4,5,54,55,6',
             ]);
 

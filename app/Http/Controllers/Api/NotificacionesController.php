@@ -20,23 +20,45 @@ class NotificacionesController extends Controller
             return response()->json(['success' => true, 'message' => 'Error', $e->getMessage()], 500);
         }
     }
-    public function  getNotificacionesCliente(Request $request)
+    public function getNotificacionesCliente(Request $request)
     {
         try {
+            // 1. Validamos que el usuario realmente venga en la petición (que esté autenticado)
             $persona = $request->user();
+            if (!$persona) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Usuario no autenticado (Falta Token)'
+                ], 401);
+            }
+
+            // 2. Buscamos al cliente
             $cliente = Cliente::where('idPersona', $persona->id)->first();
             if (!$cliente) {
-                return response()->json(['success' => false, 'message' => 'Cliente no encontrado'], 404);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Cliente no encontrado'
+                ], 404);
             }
-            $idCliente = $cliente->id;
+
+            // 3. Obtenemos las notificaciones
+            // OJO: Verifica si tu modelo se llama 'Notificaciones' o 'Notificacion' (singular)
             $notificaciones = Notificaciones::withoutGlobalScope(UsuarioScope::class)
-                ->where('idCliente', $idCliente)
+                ->where('idCliente', $cliente->id)
                 ->get();
 
-
-            return response()->json(['success' => true, 'data' => $notificaciones], 200);
+            return response()->json([
+                'success' => true,
+                'data' => $notificaciones
+            ], 200);
         } catch (\Exception $e) {
-            return response()->json(['success' => true, 'message' => 'Error', $e->getMessage()], 500);
+            // 4. Corregimos el catch para que sea FALSE y devuelva el texto exacto del error a React
+            return response()->json([
+                'success' => false,
+                'message' => 'Error interno del servidor',
+                'error_log' => $e->getMessage(),
+                'linea' => $e->getLine() // Esto te dirá exactamente en qué línea falló
+            ], 500);
         }
     }
 
