@@ -65,9 +65,26 @@ class PedidosWebController extends Controller
     function getPedidosListos()
     {
         try {
-            $pedidosListos = PedidosWebRegistro::with('detallesPedido.plato')->where('estado_pedido', 5)->orderBy("created_at", "desc")->get();
+            $pedidosListos = PedidosWebRegistro::with('detallesPedido.plato')
+                ->where('estado_pedido', 5)
+                ->orderBy("created_at", "desc")->get();
             Log::info("✅ Pedidos listos obtenidos correctamente.", $pedidosListos->toArray());
             return response()->json(['success' => true, 'data' => $pedidosListos], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error' . $e->getMessage()], 500);
+        }
+    }
+
+    function getPedidosAsignados()
+    {
+        try {
+            $user = auth()->user();
+            $pedidosAsignados = PedidosWebRegistro::with('detallesPedido.plato')
+                ->where('idDeliveryRider', $user->id)
+                ->where('estado_pedido', 54)
+                ->orderBy("created_at", "desc")->get();
+
+            return response()->json(['success' => true, 'data' => $pedidosAsignados], 200);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error' . $e->getMessage()], 500);
         }
@@ -76,7 +93,9 @@ class PedidosWebController extends Controller
     function getPedidosEnCamino()
     {
         try {
-            $pedidosEnCamino = PedidosWebRegistro::with('detallesPedido.plato')->where('estado_pedido', 55)->orderBy("created_at", "desc")->get();
+            $pedidosEnCamino = PedidosWebRegistro::with('detallesPedido.plato')
+                ->where('estado_pedido', 55)
+                ->orderBy("created_at", "desc")->get();
 
             return response()->json(['success' => true, 'data' => $pedidosEnCamino], 200);
         } catch (\Exception $e) {
@@ -86,25 +105,32 @@ class PedidosWebController extends Controller
 
     public function cambiarEstado(Request $request)
     {
-
         try {
             $request->validate([
                 'idPedido' => 'required|exists:pedidos_web_registros,id',
-                'nuevoEstado' => 'required|integer|in:3,4,5,55,6',
+                // 1. Agregamos el 54 aquí
+                'nuevoEstado' => 'required|integer|in:3,4,5,54,55,6',
             ]);
 
             $pedido = PedidosWebRegistro::with('detallesPedido.plato')->findOrFail($request->idPedido);
 
-            if (in_array($pedido->estado_pedido, [3, 4, 5, 55, 6]) && in_array($request->nuevoEstado, [3, 4, 5, 55, 6])) {
+            // 2. Agregamos el 54 a los arrays de validación
+            if (in_array($pedido->estado_pedido, [3, 4, 5, 54, 55, 6]) && in_array($request->nuevoEstado, [3, 4, 5, 54, 55, 6])) {
                 $mensaje = '';
 
                 if ($pedido->estado_pedido == 3 && $request->nuevoEstado == 4) {
                     $mensaje = "Su pedido ahora está en proceso. Estamos preparando su comida con mucho cariño.";
                     $titulo = "Pedido en Proceso";
                 } elseif ($pedido->estado_pedido == 4 && $request->nuevoEstado == 5) {
-                    $mensaje = "Su pedido está listo para recoger. En unos momentos el Rider lo llevará a su destino. ¡Gracias por su paciencia!";
+                    // Modifiqué ligeramente este mensaje para que tenga más sentido con el nuevo flujo
+                    $mensaje = "Su pedido está empacado y listo en el local. En breve le asignaremos un repartidor.";
                     $titulo = "Pedido Listo";
-                } elseif ($pedido->estado_pedido == 5 && $request->nuevoEstado == 55) {
+                } elseif ($pedido->estado_pedido == 5 && $request->nuevoEstado == 54) {
+                    // 3. NUEVO PASO: De Listo (5) a Asignado (54)
+                    $mensaje = "Su pedido ya fue asignado a nuestro motorizado y será recogido en breve.";
+                    $titulo = "Repartidor Asignado";
+                } elseif ($pedido->estado_pedido == 54 && $request->nuevoEstado == 55) {
+                    // 4. ACTUALIZADO: Ahora salta de Asignado (54) a En Camino (55)
                     $mensaje = "Su pedido está en camino. ¡Prepárese para disfrutar de su comida pronto!";
                     $titulo = "Pedido En Camino";
                 } elseif ($pedido->estado_pedido == 55 && $request->nuevoEstado == 6) {
@@ -128,14 +154,9 @@ class PedidosWebController extends Controller
                 $guardarNotificacion->mensaje = $mensaje;
                 $guardarNotificacion->save();
 
-
-
                 // LOG 3: Intentar disparar Pusher
-
-
                 // Quitamos el ->toOthers() para asegurarnos de que el evento salga para TODOS durante las pruebas
                 broadcast(new NuevaNotificacionCliente($pedido->idCliente));
-
 
                 if (!empty($mensaje)) {
                     $this->enviarMensajeWhatsApp($pedido->numero_cliente, $mensaje);
@@ -146,8 +167,6 @@ class PedidosWebController extends Controller
                     'pedido' => $pedido
                 ], 200);
             }
-
-
 
             return response()->json([
                 'message' => 'No se puede cambiar el estado del pedido.',
