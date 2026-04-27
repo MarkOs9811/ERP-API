@@ -20,6 +20,36 @@ class NotificacionesController extends Controller
             return response()->json(['success' => true, 'message' => 'Error', $e->getMessage()], 500);
         }
     }
+
+    public function getNotificacionesPrivadas(Request $request)
+    {
+        try {
+            $usuario = $request->user();
+            $notificaciones = Notificaciones::withoutGlobalScope(UsuarioScope::class)
+                ->where('idUsuario', $usuario->id)
+                ->get();
+
+            return response()->json(['success' => true, 'data' => $notificaciones], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error', 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function cambiarEstadoMisNotificaciones(Request $request)
+    {
+        try {
+            $usuario = $request->user();
+            Notificaciones::withoutGlobalScope(UsuarioScope::class)
+                ->where('idUsuario', $usuario->id)
+                ->where('estado', 0)
+                ->update(['estado' => 1]);
+
+            return response()->json(['success' => true, 'message' => 'Estado de notificaciones actualizado'], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error', 'error' => $e->getMessage()], 500);
+        }
+    }
+
     public function getNotificacionesCliente(Request $request)
     {
         try {

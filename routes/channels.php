@@ -23,3 +23,8 @@ Broadcast::channel('cliente.{idCliente}', function ($user, $idCliente) {
     $cliente = Cliente::where('idPersona', $user->id)->first();
     return $cliente && $cliente->id === (int) $idCliente;
 });
+// Crea un canal específico para notificaciones de cualquier usuario
+Broadcast::channel('user.notifications.{id}', function ($user, $id) {
+    // Solo permitimos que el usuario escuche su propio canal
+    return (int) $user->id === (int) $id;
+});

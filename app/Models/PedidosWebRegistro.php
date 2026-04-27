@@ -51,6 +51,10 @@ class PedidosWebRegistro extends Model
     {
         return self::ESTADOS_PEDIDO[$this->estado_pedido] ?? 'Desconocido';
     }
+    public function conductor()
+    {
+        return $this->belongsTo(User::class, 'idDeliveryRider', 'id');
+    }
 
     public function detallesPedido()
     {

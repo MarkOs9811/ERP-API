@@ -111,6 +111,8 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     // RUTAS PARA MIS NOTIFICACIONES
     Route::get('/notificaciones', [NotificacionesController::class, 'getNotificaciones']);
+    Route::get('/notificacionesPrivadas', [NotificacionesController::class, 'getNotificacionesPrivadas']);
+    Route::put('/notificaciones/cambiarEstado', [NotificacionesController::class, 'cambiarEstadoMisNotificaciones']);
 
     // MODULO CONFIGURACION
     Route::get('/configuraciones', [ConfiguracionController::class, 'getConfiguracion']);
@@ -186,6 +188,8 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::get('/pedidosEnCamino', [PedidosWebController::class, 'getPedidosEnCamino']);
     Route::put('/pedidosPendientes/cambiarEstado', [PedidosWebController::class, 'cambiarEstado']);
     Route::post('/pedidosWeb/asignarRepartidor', [PedidosWebController::class, 'asignarRepartidor']);
+    Route::get('/delivery/pedidos-asignados', [PedidosWebController::class, 'pedidosAsignadosRepartidor']);
+
     // RUTAS ACCIOENS PEDIDOS
     Route::get('/pedidosWeb/{id}', [PedidosWebController::class, 'getPedidosWeb']);
     Route::post('/pedidosWeb/notificarCliente', [PedidosWebController::class, 'notificarEstadoCliente']);

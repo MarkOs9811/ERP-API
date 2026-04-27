@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\api;
 
 use App\Events\NuevaNotificacionCliente;
+use App\Events\NuevaNotificacionUsuario;
 use App\Helpers\ConfiguracionHelper;
 use App\Http\Controllers\Controller;
 use App\Models\detallePedidosWeb;
@@ -246,6 +247,56 @@ class PedidosWebController extends Controller
             }
         } catch (\Exception $e) {
             return response()->json(['success' => false, "message" => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    // ASIGNAR DELIVERY RIDER A PEDIDO
+    public function asignarRepartidor(Request $request)
+    {
+        try {
+            $request->validate([
+                'idPedido' => 'required|exists:pedidos_web_registros,id',
+                'idDeliveryRider' => 'required|exists:users,id',
+            ]);
+            $mensaje = "Se le ha asignado un pedido por entregar. Por favor, revise su lista de pedidos asignados para más detalles.";
+            $titulo = "Pedido por entregar";
+
+            // Guardar notificación para el delivery rider
+            $guardarNotificacion = new Notificaciones();
+            $guardarNotificacion->idUsuario = $request->idDeliveryRider; // Aquí se guarda el ID del delivery rider
+            $guardarNotificacion->tipo = 'delivery';
+            $guardarNotificacion->prioridad = 'alta';
+            $guardarNotificacion->titulo = $titulo;
+            $guardarNotificacion->mensaje = $mensaje;
+            $guardarNotificacion->save();
+
+            // Disparar evento para notificar al delivery rider
+            broadcast(new NuevaNotificacionUsuario($request->idDeliveryRider));
+            Log::info("✅ Notificación enviada al delivery rider con ID: " . $request->idDeliveryRider);
+
+            $pedido = PedidosWebRegistro::findOrFail($request->idPedido);
+            $pedido->idDeliveryRider = $request->idDeliveryRider;
+            $pedido->estado_pedido = 54; // Cambiamos el estado a "Asignado"
+            $pedido->save();
+
+            return response()->json(['success' => true, 'message' => 'Delivery rider asignado correctamente.'], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    public function pedidosAsignadosRepartidor()
+    {
+        try {
+            Log::info("📦 Obteniendo pedidos asignados para el delivery rider...");
+            $pedidosAsignados = PedidosWebRegistro::with('detallesPedido.plato', 'conductor.empleado.persona')
+                ->where('estado_pedido', 54)
+                ->orderBy("created_at", "desc")->get();
+            Log::info("✅ Pedidos asignados obtenidos correctamente.", $pedidosAsignados->toArray());
+
+            return response()->json(['success' => true, 'data' => $pedidosAsignados], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
     }
 }
