@@ -288,15 +288,34 @@ class PedidosWebController extends Controller
     public function pedidosAsignadosRepartidor()
     {
         try {
-            Log::info("📦 Obteniendo pedidos asignados para el delivery rider...");
-            $pedidosAsignados = PedidosWebRegistro::with('detallesPedido.plato', 'conductor.empleado.persona')
-                ->where('estado_pedido', 54)
+
+            $pedidosAsignados = PedidosWebRegistro::with('detallesPedido.plato', 'conductor.empleado.persona', 'direccion')
+                ->whereIn('estado_pedido', [54, 55])
                 ->orderBy("created_at", "desc")->get();
-            Log::info("✅ Pedidos asignados obtenidos correctamente.", $pedidosAsignados->toArray());
 
             return response()->json(['success' => true, 'data' => $pedidosAsignados], 200);
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    public function pedidosQuitarRepartidor($idEliminar)
+    {
+        try {
+
+            $pedido = PedidosWebRegistro::where('id', $idEliminar)
+                ->where('estado_pedido', 54)
+                ->first();
+            if (!$pedido) {
+                return response()->json(['success' => false, "message" => "No se ecnontró el pedido o ya está en ruta"], 404);
+            }
+
+            $pedido->estado_pedido = 5;
+            $pedido->save();
+
+            return response()->json(['success' => true, "message" => "Se Quitó al rider correctamente"], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, "message" => 'Error: ' . $e->getMessage()], 500);
         }
     }
 }

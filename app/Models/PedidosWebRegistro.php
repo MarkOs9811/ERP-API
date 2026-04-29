@@ -55,7 +55,10 @@ class PedidosWebRegistro extends Model
     {
         return $this->belongsTo(User::class, 'idDeliveryRider', 'id');
     }
-
+    public function direccion()
+    {
+        return $this->belongsTo(Direccione::class, 'idDireccion', 'id');
+    }
     public function detallesPedido()
     {
         return $this->hasMany(DetallePedidosWeb::class, 'idPedido');
