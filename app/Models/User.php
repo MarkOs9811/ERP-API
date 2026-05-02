@@ -26,6 +26,8 @@ class User extends Authenticatable
         'password',
         'estadoIncidencia',
         'fotoPerfil',
+        'latitud',
+        'longitud',
         'auth_type',
         'google_spreadsheet_id',
     ];

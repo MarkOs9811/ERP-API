@@ -190,6 +190,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::post('/pedidosWeb/asignarRepartidor', [PedidosWebController::class, 'asignarRepartidor']);
     Route::get('/delivery/pedidos-asignados', [PedidosWebController::class, 'pedidosAsignadosRepartidor']);
     Route::put('/delivery/quitarRider/{id}', [PedidosWebController::class, 'pedidosQuitarRepartidor']);
+    Route::put('/delivery/updateUbicacionRider', [PedidosWebController::class, 'pedidoUbicacionRider']);
 
     // RUTAS ACCIOENS PEDIDOS
     Route::get('/pedidosWeb/{id}', [PedidosWebController::class, 'getPedidosWeb']);

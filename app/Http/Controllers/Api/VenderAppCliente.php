@@ -429,9 +429,8 @@ class VenderAppCliente extends Controller
             // 2. Ejecutamos la consulta
             $pedidos = PedidosWebRegistro::where('idCliente', $idCliente)
                 ->with(['detallesPedido.plato'])
+                ->with('conductor.empleado.persona')
                 ->get();
-
-
 
             return response()->json([
                 'status' => 'success',

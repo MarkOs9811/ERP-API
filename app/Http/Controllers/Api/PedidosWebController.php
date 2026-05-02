@@ -4,12 +4,14 @@ namespace App\Http\Controllers\api;
 
 use App\Events\NuevaNotificacionCliente;
 use App\Events\NuevaNotificacionUsuario;
+use App\Events\UbicacionRiderActualizada;
 use App\Helpers\ConfiguracionHelper;
 use App\Http\Controllers\Controller;
 use App\Models\detallePedidosWeb;
 use App\Models\MiEmpresa;
 use App\Models\Notificaciones;
 use App\Models\PedidosWebRegistro;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Twilio\Rest\Client;
@@ -107,14 +109,16 @@ class PedidosWebController extends Controller
     public function cambiarEstado(Request $request)
     {
         try {
+            // 1. Añadimos latitud y longitud como opcionales en la validación
             $request->validate([
                 'idPedido' => 'required|exists:pedidos_web_registros,id',
                 'nuevoEstado' => 'required|integer|in:3,4,5,54,55,6',
+                'latitud' => 'numeric',
+                'longitud' => 'numeric',
             ]);
 
             $pedido = PedidosWebRegistro::with('detallesPedido.plato')->findOrFail($request->idPedido);
 
-            // 2. Agregamos el 54 a los arrays de validación
             if (in_array($pedido->estado_pedido, [3, 4, 5, 54, 55, 6]) && in_array($request->nuevoEstado, [3, 4, 5, 54, 55, 6])) {
                 $mensaje = '';
 
@@ -122,19 +126,35 @@ class PedidosWebController extends Controller
                     $mensaje = "Su pedido ahora está en proceso. Estamos preparando su comida con mucho cariño.";
                     $titulo = "Pedido en Proceso";
                 } elseif ($pedido->estado_pedido == 4 && $request->nuevoEstado == 5) {
-                    // Modifiqué ligeramente este mensaje para que tenga más sentido con el nuevo flujo
                     $mensaje = "Su pedido está empacado y listo en el local. En breve le asignaremos un repartidor.";
                     $titulo = "Pedido Listo";
                 } elseif ($pedido->estado_pedido == 5 && $request->nuevoEstado == 54) {
-                    // 3. NUEVO PASO: De Listo (5) a Asignado (54)
                     $mensaje = "Su pedido ya fue asignado a nuestro motorizado y será recogido en breve.";
                     $titulo = "Repartidor Asignado";
                 } elseif ($pedido->estado_pedido == 54 && $request->nuevoEstado == 55) {
-                    // 4. ACTUALIZADO: Ahora salta de Asignado (54) a En Camino (55)
+
+                    // --- NUEVA VALIDACIÓN ESTRICTA OBLIGATORIA ---
+                    if (!$request->filled('latitud') || !$request->filled('longitud')) {
+                        return response()->json([
+                            'message' => 'Es obligatorio encender el GPS y enviar tu ubicación para poner el pedido en camino.',
+                        ], 400); // Retorna error 400 para que el frontend lo atrape en el 'catch'
+                    }
+                    // ---------------------------------------------
+
                     $mensaje = "Su pedido está en camino. ¡Prepárese para disfrutar de su comida pronto!";
                     $titulo = "Pedido En Camino";
+
+                    // Guardar ubicación del rider (como ya pasó la validación de arriba, estamos 100% seguros de que hay coordenadas)
+                    $userId = auth()->id();
+
+                    if ($userId) {
+                        User::where('id', $userId)->update([
+                            'latitud' => $request->latitud,
+                            'longitud' => $request->longitud
+                        ]);
+                    }
                 } elseif ($pedido->estado_pedido == 55 && $request->nuevoEstado == 6) {
-                    $mensaje = "¡Gracias por tu preferencia! 🎉\n\nEn *FIRE WOK* 🍣🍜 estamos encantados de haber podido atenderte. 🙏 \n\n¡Vuelva pronto!🔥😊";
+                    $mensaje = "¡Gracias por tu preferencia! En *FIRE WOK* 🍣🍜 estamos encantados de haber podido atenderte. 🙏 \n\n¡Hast pronto!🔥😊";
                     $titulo = "Pedido Entregado";
                 } else {
                     $mensaje = "El estado de su pedido ha sido actualizado.";
@@ -155,7 +175,6 @@ class PedidosWebController extends Controller
                 $guardarNotificacion->save();
 
                 // LOG 3: Intentar disparar Pusher
-                // Quitamos el ->toOthers() para asegurarnos de que el evento salga para TODOS durante las pruebas
                 broadcast(new NuevaNotificacionCliente($pedido->idCliente));
 
                 if (!empty($mensaje)) {
@@ -290,7 +309,7 @@ class PedidosWebController extends Controller
         try {
 
             $pedidosAsignados = PedidosWebRegistro::with('detallesPedido.plato', 'conductor.empleado.persona', 'direccion')
-                ->whereIn('estado_pedido', [54, 55])
+                ->whereIn('estado_pedido', [54, 55, 6])
                 ->orderBy("created_at", "desc")->get();
 
             return response()->json(['success' => true, 'data' => $pedidosAsignados], 200);
@@ -316,6 +335,45 @@ class PedidosWebController extends Controller
             return response()->json(['success' => true, "message" => "Se Quitó al rider correctamente"], 200);
         } catch (\Exception $e) {
             return response()->json(['success' => false, "message" => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    public function pedidoUbicacionRider(Request $request)
+    {
+        try {
+            $request->validate([
+                'latitud' => 'required|numeric',
+                'longitud' => 'required|numeric',
+            ]);
+
+            $userId = auth()->id();
+
+            if (!$userId) {
+                return response()->json(['message' => 'Usuario no autenticado.'], 401);
+            }
+
+            // 1. Actualizamos al rider
+            User::where('id', $userId)->update([
+                'latitud' => $request->latitud,
+                'longitud' => $request->longitud
+            ]);
+
+            // 2. NUEVO: Buscamos los pedidos "En Camino" (55) asignados a este rider
+            $pedidosActivos = PedidosWebRegistro::where('idDeliveryRider', $userId)
+                ->where('estado_pedido', 55)
+                ->get();
+
+            // 3. NUEVO: Emitimos el evento a cada cliente que está esperando su pedido
+            foreach ($pedidosActivos as $pedido) {
+                broadcast(new UbicacionRiderActualizada($pedido->idCliente));
+            }
+
+            return response()->json([
+                'message' => 'Ubicación de rider actualizada silenciosamente.'
+            ], 200);
+        } catch (\Exception $e) {
+            Log::error("❌ Error en pedidoUbicacionRider: " . $e->getMessage());
+            return response()->json(['error' => $e->getMessage()], 500);
         }
     }
 }
