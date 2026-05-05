@@ -376,4 +376,29 @@ class PedidosWebController extends Controller
             return response()->json(['error' => $e->getMessage()], 500);
         }
     }
+
+    public function getMisEntregas()
+    {
+        try {
+            $idConductorDelivery = auth()->id();
+
+            $misPedidos = PedidosWebRegistro::where('idDeliveryRider', $idConductorDelivery)
+                ->where('estado_pedido', 6)
+                ->with(['cliente.persona', 'conductor.empleado.persona', 'detallesPedido.plato'])
+                ->get();
+
+            Log::info('Lista de pedidos obtenidos:', ['pedidos' => $misPedidos->toArray()]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $misPedidos,
+                'message' => 'Entregas obtenidas correctamente.' // <-- Mensaje corregido
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener las entregas: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

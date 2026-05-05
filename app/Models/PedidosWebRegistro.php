@@ -59,6 +59,10 @@ class PedidosWebRegistro extends Model
     {
         return $this->belongsTo(Direccione::class, 'idDireccion', 'id');
     }
+    public function cliente()
+    {
+        return $this->belongsTo(Cliente::class, 'idCliente', 'id');
+    }
     public function detallesPedido()
     {
         return $this->hasMany(DetallePedidosWeb::class, 'idPedido');
