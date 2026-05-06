@@ -10,7 +10,6 @@ use Illuminate\Database\Eloquent\Model;
 class Empleado extends Model
 {
     use HasFactory;
-    use HasFactory;
     protected $fillable = [
         'idPersona',
         'idArea',
@@ -20,6 +19,7 @@ class Empleado extends Model
         'fecha_contrato',
         'fecha_fin_contrato',
         'salario',
+        'docContrato',
         'estado',
     ];
     public function cargo()

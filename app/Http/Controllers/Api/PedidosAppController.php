@@ -39,6 +39,7 @@ class PedidosAppController extends Controller
         $menu = Plato::where('idEmpresa', $this->idEmpresa)
             ->where('idSede', $this->idSede)
             ->where('estado', '1')
+            ->where('enWeb', '1')
             ->with('categoria')
             ->get();
 

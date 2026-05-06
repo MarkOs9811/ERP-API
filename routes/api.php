@@ -1,11 +1,11 @@
 <?php
 
+use Illuminate\Http\Request;
 use App\Http\Controllers\Api\AjustesAlmacenController;
 use App\Http\Controllers\Api\AjustesPlanillasController;
 use App\Http\Controllers\Api\AjustesUniMedidaController;
 use App\Http\Controllers\api\AjusteVentasController;
 use App\Http\Controllers\Api\AreaController;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\UsuarioController;
 use App\Http\Controllers\Api\AuthController;
@@ -21,14 +21,14 @@ use App\Http\Controllers\Api\CombosController;
 use App\Http\Controllers\Api\ConfiguracionController;
 use App\Http\Controllers\Api\GestionMenusController;
 use App\Http\Controllers\Api\GestionProveedoresController;
-use App\Http\Controllers\api\InventarioController;
-use App\Http\Controllers\api\KardexController;
-use App\Http\Controllers\api\RegistroCajasController;
-use App\Http\Controllers\api\SolicitudesController;
-use App\Http\Controllers\api\UnidadController;
+use App\Http\Controllers\Api\InventarioController;
+use App\Http\Controllers\Api\KardexController;
+use App\Http\Controllers\Api\RegistroCajasController;
+use App\Http\Controllers\Api\SolicitudesController;
+use App\Http\Controllers\Api\UnidadController;
 use App\Http\Controllers\Api\VenderController;
-use App\Http\Controllers\api\VentasController;
-use App\Http\Controllers\api\ComprasController;
+use App\Http\Controllers\Api\VentasController;
+use App\Http\Controllers\Api\ComprasController;
 use App\Http\Controllers\Api\DeliveryController;
 use App\Http\Controllers\Api\EmpresasAdminController;
 use App\Http\Controllers\Api\EventosController;
@@ -42,7 +42,7 @@ use App\Http\Controllers\Api\NotificacionesController;
 use App\Http\Controllers\Api\PedidosAppController;
 use App\Http\Controllers\api\PedidosWebController;
 use App\Http\Controllers\Api\PeriodoNominaController;
-use App\Http\Controllers\api\PlanillaController;
+use App\Http\Controllers\Api\PlanillaController;
 use App\Http\Controllers\Api\ReportesController;
 use App\Http\Controllers\Api\SedesController;
 use App\Http\Controllers\Api\VenderAppCliente;
@@ -384,6 +384,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::get('/gestionPlatos/getPlatos', [GestionMenusController::class, 'getPlatos']);
     Route::post('/gestionPlatos/addPlatos', [GestionMenusController::class, 'addPlatos']);
     Route::put('/gestionPlatos/updatePlato/{id}', [GestionMenusController::class, 'updatePlato']);
+    Route::put('/gestionPlatos/updateEstadoWebPlato/{id}/{estado}', [GestionMenusController::class, 'updateEnWebPlato']);
 
     Route::get('/gestionPlatos/getCategoria', [GestionMenusController::class, 'getCategoria']);
     Route::get('/gestionPlatos/getCategoriaTrue', [GestionMenusController::class, 'getCategoriaTrue']);

@@ -295,4 +295,35 @@ class GestionMenusController extends Controller
             ], 500);
         }
     }
+    public function updateEnWebPlato($id, $estado)
+    {
+        try {
+            // 1. Buscamos el plato por su ID
+            $plato = Plato::find($id);
+
+            // 2. Validamos si el plato realmente existe
+            if (!$plato) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El plato no fue encontrado en la base de datos.'
+                ], 404);
+            }
+            $plato->enWeb = $estado;
+            $plato->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Estado actualizado correctamente'
+            ], 200);
+        } catch (\Exception $e) {
+            // Registramos el error real en los logs de Laravel para que el backend dev lo vea
+            Log::error('Error actualizando enWeb del plato: ' . $e->getMessage());
+
+            // Devolvemos un mensaje limpio al Frontend
+            return response()->json([
+                'success' => false,
+                'message' => 'Ocurrió un error al intentar actualizar el plato.'
+            ], 500);
+        }
+    }
 }

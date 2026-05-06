@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Controllers\api;
+namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\AdelantoSueldo;
@@ -34,6 +34,8 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
+use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Support\Facades\Storage;
 
 class PlanillaController extends Controller
 {
@@ -95,10 +97,8 @@ class PlanillaController extends Controller
 
         try {
 
-
             // Guardar imagen
             $path = $request->file('fotoPerfil')->store('fotos', 'public');
-
 
             // Crear persona
             $persona = Persona::create([
@@ -114,6 +114,9 @@ class PlanillaController extends Controller
                 'estado' => 1,
             ]);
 
+            // Definir nombre y ruta del archivo PDF
+            $pdfFileName = 'contrato_' . $request->input('num_documento') . '_' . time() . '.pdf';
+            $pdfPathDB = 'contratos/' . $pdfFileName;
 
             // Crear empleado
             $empleado = Empleado::create([
@@ -125,8 +128,23 @@ class PlanillaController extends Controller
                 'fecha_contrato' => $request->input('fecha_contrato'),
                 'fecha_fin_contrato' => $request->input('fecha_fin_contrato'),
                 'salario' => $request->input('salario'),
+                'docContranto' => $pdfPathDB, // Guardamos la ruta en la DB
                 'estado' => 1,
             ]);
+
+            // Generar y guardar el PDF físicamente
+            $dataPdf = [
+                'nombre_completo' => $request->input('nombre') . ' ' . $request->input('apellidos'),
+                'tipo_documento' => $request->input('tipo_documento'),
+                'num_documento' => $request->input('num_documento'),
+                'direccion' => $request->input('direccion'),
+                'salario' => $request->input('salario'),
+                'fecha_inicio' => $request->input('fecha_contrato'),
+                'fecha_fin' => $request->input('fecha_fin_contrato'),
+            ];
+
+            $pdf = Pdf::loadView('contrato', $dataPdf);
+            Storage::disk('public')->put($pdfPathDB, $pdf->output());
 
             // Registrar deducciones y bonificaciones
             if ($request->has('deducciones')) {
@@ -167,7 +185,6 @@ class PlanillaController extends Controller
                 'fotoPerfil' => $path,
             ]);
 
-
             // Obtener roles asociados al cargo
             $roles = DB::table('cargo_roles')->where('idCargo', $request->input('cargo'))->pluck('idRole');
 
@@ -193,7 +210,8 @@ class PlanillaController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Empleado registrado exitosamente'
+                'message' => 'Empleado registrado exitosamente',
+                'pdf_url' => asset('storage/' . $pdfPathDB) // Retornamos la URL pública para el frontend
             ], 200);
         } catch (\Exception $e) {
             DB::rollBack();
