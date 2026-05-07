@@ -308,7 +308,7 @@ class PedidosWebController extends Controller
     {
         try {
 
-            $pedidosAsignados = PedidosWebRegistro::with('detallesPedido.plato', 'conductor.empleado.persona', 'direccion')
+            $pedidosAsignados = PedidosWebRegistro::with('detallesPedido.plato', 'conductor.empleado.persona', 'direccion', 'cliente.persona',)
                 ->whereIn('estado_pedido', [54, 55, 6])
                 ->orderBy("created_at", "desc")->get();
 

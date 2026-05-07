@@ -128,7 +128,7 @@ class PlanillaController extends Controller
                 'fecha_contrato' => $request->input('fecha_contrato'),
                 'fecha_fin_contrato' => $request->input('fecha_fin_contrato'),
                 'salario' => $request->input('salario'),
-                'docContranto' => $pdfPathDB, // Guardamos la ruta en la DB
+                'docContrato' => $pdfPathDB, // Guardamos la ruta en la DB
                 'estado' => 1,
             ]);
 
