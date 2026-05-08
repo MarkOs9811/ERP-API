@@ -166,19 +166,19 @@ class PlanillaController extends Controller
             }
 
             // Crear usuario
-            $nombre = explode(' ', $request->input('nombre'))[0];
-            $email_base = strtolower($nombre) . '.123';
-            $email = $email_base;
-            $counter = 123;
+            // $nombre = explode(' ', $request->input('nombre'))[0];
+            // $email_base = strtolower($nombre) . '.123';
+            // $email = $email_base;
+            // $counter = 123;
 
-            while (User::where('email', $email)->exists()) {
-                $counter++;
-                $email = strtolower($nombre) . '.' . $counter;
-            }
+            // while (User::where('email', $email)->exists()) {
+            //     $counter++;
+            //     $email = strtolower($nombre) . '.' . $counter;
+            // }
 
             $user = User::create([
                 'idEmpleado' => $empleado->id,
-                'email' => $email,
+                'email' => $request->input('correo'),
                 'password' => Hash::make('123'),
                 'estadoIncidencia' => 'libre',
                 'estado' => 1,
