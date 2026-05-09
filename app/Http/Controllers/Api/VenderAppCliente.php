@@ -13,7 +13,7 @@ use App\Models\Factura;
 use App\Models\MetodoPago;
 use App\Models\PedidosWebRegistro;
 use App\Models\Plato;
-
+use App\Models\PromocionesApp;
 use App\Models\SerieCorrelativo;
 use App\Models\Venta;
 use Illuminate\Http\Request;
@@ -180,23 +180,41 @@ class VenderAppCliente extends Controller
                 $pedidosToVender = [];
 
                 foreach ($request->items as $item) {
+                    // 1. Identificamos si viene el tipo "promocion" desde React
+                    $esPromocion = isset($item['tipo']) && $item['tipo'] === 'promocion';
+
+                    $idPlatoReal     = $esPromocion ? null : $item['idPlato'];
+                    $idPromocionReal = $esPromocion ? $item['idPlato'] : null;
+
+                    // 3. Guardamos en la base de datos
                     DetallePedidosWeb::create([
-                        'idPedido' => $pedidoWeb->id,
-                        'idPlato'  => $item['idPlato'],
-                        'producto' => "Plato ID " . $item['idPlato'],
-                        'cantidad' => $item['cantidad'],
-                        'precio'   => $item['precio'],
-                        'estado'   => '1'
+                        'idPedido'    => $pedidoWeb->id,
+                        'idPlato'     => $idPlatoReal,
+                        'idPromocion' => $idPromocionReal, // ¡Asegúrate de que esta columna exista en tu BD!
+                        'producto'    => $esPromocion ? "Promo ID " . $idPromocionReal : "Plato ID " . $idPlatoReal,
+                        'cantidad'    => $item['cantidad'],
+                        'precio'      => $item['precio'],
+                        'estado'      => '1'
                     ]);
 
-                    $plato = Plato::find($item['idPlato']);
-                    $platoNombre = $plato->nombre ?? 'Plato Desconocido';
+                    // 4. Buscamos el nombre correcto para la Facturación / Ticket
+                    if ($esPromocion) {
+                        // Asumo que tu modelo se llama Promocion. Ajusta la ruta si es necesario.
+                        $promocion = PromocionesApp::find($idPromocionReal);
+                        $productoNombre = $promocion->titulo ?? 'Promoción Desconocida';
+                    } else {
+                        $plato = Plato::find($idPlatoReal);
+                        $productoNombre = $plato->nombre ?? 'Plato Desconocido';
+                    }
+
                     $precioTotalItem = (float)$item['precio'] * $item['cantidad'];
 
+                    // 5. Preparamos el array para la SUNAT y el Ticket final
                     $pedidosToVender[] = (object)[
-                        "idPlato"         => $item['idPlato'],
+                        "idPlato"         => $idPlatoReal,
+                        "idPromocion"     => $idPromocionReal,
                         "cantidad"        => $item['cantidad'],
-                        "descripcion"     => $platoNombre,
+                        "descripcion"     => $productoNombre,
                         "valor_unitario"  => (float)$item['precio'] / $factorDivisor,
                         "valor_total"     => $precioTotalItem / $factorDivisor,
                         "precio_unitario" => (float)$item['precio'],
@@ -210,6 +228,7 @@ class VenderAppCliente extends Controller
                 if ($costoEnvio > 0) {
                     $pedidosToVender[] = (object)[
                         "idPlato"         => null,
+                        "idPromocion"         => null,
                         "cantidad"        => 1,
                         "descripcion"     => "Servicio de Delivery",
                         "valor_unitario"  => $costoEnvio / $factorDivisor,
@@ -429,7 +448,7 @@ class VenderAppCliente extends Controller
             // 2. Ejecutamos la consulta
             $pedidos = PedidosWebRegistro::where('idCliente', $idCliente)
                 ->with(['detallesPedido.plato'])
-                ->with('conductor.empleado.persona')
+                ->with('conductor.empleado.persona', 'detallesPedido.promociones.plato')
                 ->get();
 
             return response()->json([

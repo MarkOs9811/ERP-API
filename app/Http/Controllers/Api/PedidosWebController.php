@@ -46,7 +46,7 @@ class PedidosWebController extends Controller
     function getPedidosPendientes()
     {
         try {
-            $pedidosPendientes = PedidosWebRegistro::with('detallesPedido.plato')->where('estado_pedido', 3)->orderBy("created_at", "desc")->get();
+            $pedidosPendientes = PedidosWebRegistro::with('detallesPedido.plato', 'detallesPedido.promociones.plato')->where('estado_pedido', 3)->orderBy("created_at", "desc")->get();
             Log::info("✅ Pedidos pendientes obtenidos correctamente.", $pedidosPendientes->toArray());
             return response()->json(['success' => true, 'data' => $pedidosPendientes], 200);
         } catch (\Exception $e) {
@@ -57,7 +57,7 @@ class PedidosWebController extends Controller
     function getPedidosEnProceso()
     {
         try {
-            $pedidosEnProceso = PedidosWebRegistro::with('detallesPedido.plato')->where('estado_pedido', 4)->orderBy("created_at", "desc")->get();
+            $pedidosEnProceso = PedidosWebRegistro::with('detallesPedido.plato', 'detallesPedido.promociones.plato')->where('estado_pedido', 4)->orderBy("created_at", "desc")->get();
             Log::info("✅ Pedidos en proceso obtenidos correctamente.", $pedidosEnProceso->toArray());
             return response()->json(['success' => true, 'data' => $pedidosEnProceso], 200);
         } catch (\Exception $e) {
@@ -68,7 +68,7 @@ class PedidosWebController extends Controller
     function getPedidosListos()
     {
         try {
-            $pedidosListos = PedidosWebRegistro::with('detallesPedido.plato')
+            $pedidosListos = PedidosWebRegistro::with('detallesPedido.plato', 'detallesPedido.promociones.plato')
                 ->where('estado_pedido', 5)
                 ->orderBy("created_at", "desc")->get();
             Log::info("✅ Pedidos listos obtenidos correctamente.", $pedidosListos->toArray());
@@ -82,7 +82,7 @@ class PedidosWebController extends Controller
     {
         try {
             $user = auth()->user();
-            $pedidosAsignados = PedidosWebRegistro::with('detallesPedido.plato')
+            $pedidosAsignados = PedidosWebRegistro::with('detallesPedido.plato', 'detallesPedido.promociones.plato')
                 ->where('idDeliveryRider', $user->id)
                 ->where('estado_pedido', 54)
                 ->orderBy("created_at", "desc")->get();
@@ -96,7 +96,7 @@ class PedidosWebController extends Controller
     function getPedidosEnCamino()
     {
         try {
-            $pedidosEnCamino = PedidosWebRegistro::with('detallesPedido.plato')
+            $pedidosEnCamino = PedidosWebRegistro::with('detallesPedido.plato', 'detallesPedido.promociones.plato')
                 ->where('estado_pedido', 55)
                 ->orderBy("created_at", "desc")->get();
 
@@ -117,7 +117,7 @@ class PedidosWebController extends Controller
                 'longitud' => 'numeric',
             ]);
 
-            $pedido = PedidosWebRegistro::with('detallesPedido.plato')->findOrFail($request->idPedido);
+            $pedido = PedidosWebRegistro::with('detallesPedido.plato', 'detallesPedido.promociones.plato')->findOrFail($request->idPedido);
 
             if (in_array($pedido->estado_pedido, [3, 4, 5, 54, 55, 6]) && in_array($request->nuevoEstado, [3, 4, 5, 54, 55, 6])) {
                 $mensaje = '';
@@ -308,7 +308,7 @@ class PedidosWebController extends Controller
     {
         try {
 
-            $pedidosAsignados = PedidosWebRegistro::with('detallesPedido.plato', 'conductor.empleado.persona', 'direccion', 'cliente.persona',)
+            $pedidosAsignados = PedidosWebRegistro::with('detallesPedido.plato', 'detallesPedido.promociones.plato', 'conductor.empleado.persona', 'direccion', 'cliente.persona',)
                 ->whereIn('estado_pedido', [54, 55, 6])
                 ->orderBy("created_at", "desc")->get();
 
@@ -384,7 +384,7 @@ class PedidosWebController extends Controller
 
             $misPedidos = PedidosWebRegistro::where('idDeliveryRider', $idConductorDelivery)
                 ->where('estado_pedido', 6)
-                ->with(['cliente.persona', 'conductor.empleado.persona', 'detallesPedido.plato'])
+                ->with(['cliente.persona', 'conductor.empleado.persona', 'detallesPedido.plato', 'detallesPedido.promociones.plato'])
                 ->get();
 
             Log::info('Lista de pedidos obtenidos:', ['pedidos' => $misPedidos->toArray()]);

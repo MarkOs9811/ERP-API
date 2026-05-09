@@ -12,6 +12,7 @@ class DetallePedidosWeb extends Model
     protected $fillable = [
         'idPedido',
         'idPlato',
+        'idPromocion',
         'producto',
         'cantidad',
         'precio',
@@ -23,6 +24,11 @@ class DetallePedidosWeb extends Model
     public function plato()
     {
         return $this->belongsTo(Plato::class, 'idPlato', 'id');
+    }
+
+    public function promociones()
+    {
+        return $this->belongsTo(PromocionesApp::class, 'idPromocion', 'id');
     }
 
 
