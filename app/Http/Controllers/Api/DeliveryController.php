@@ -9,7 +9,10 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Dotenv\Exception\ValidationException;
 use App\Models\ConfiguracionDelivery;
+use App\Models\PromotionalBanner;
 use App\Models\User;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 
 class DeliveryController extends Controller
@@ -426,6 +429,140 @@ class DeliveryController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error al actualizar estado: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    // CRUD PARA LA GESTION DE BANNERS
+    public function getBanners()
+    {
+        try {
+            $banner = PromotionalBanner::get();
+            return response()->json(['success' => true, 'data' => $banner], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        }
+    }
+
+    public function storeBanner(Request $request)
+    {
+        try {
+
+            $banner = PromotionalBanner::create($request->all());
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Banner creado exitosamente',
+                'data' => $banner
+            ], 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al crear el banner: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+    public function updateBanner(Request $request, $id)
+    {
+        try {
+            // Buscamos el banner por su ID. Si no existe, fallará automáticamente.
+            $banner = PromotionalBanner::findOrFail($id);
+
+            // Actualizamos la información
+            $banner->update($request->all());
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Banner actualizado exitosamente',
+                'data' => $banner
+            ], 200); // 200 significa "OK"
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al actualizar el banner: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+    public function updateStatus(Request $request, $id)
+    {
+        try {
+            // 1. Validación
+            $request->validate([
+                'is_active' => 'required|boolean'
+            ]);
+
+            // 2. Búsqueda (los Global Scopes de Empresa y Sede se aplican automáticamente)
+            $banner = PromotionalBanner::findOrFail($id);
+
+            // 3. Actualización
+            $banner->is_active = $request->is_active;
+            $banner->save();
+
+            // 4. Respuesta de éxito estandarizada
+            return response()->json([
+                'success' => true,
+                'message' => 'Estado actualizado con éxito',
+                'data' => [
+                    'id' => $banner->id,
+                    'is_active' => $banner->is_active
+                ]
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+
+            return response()->json([
+                'success' => false,
+                'message' => 'El banner no existe o no tienes permisos para modificarlo.'
+            ], 404);
+        } catch (\Exception $e) {
+
+            Log::error('Error crítico actualizando estado del banner', [
+                'banner_id' => $id,
+                'user_id' => auth()->id(),
+                'error' => $e->getMessage()
+            ]);
+
+            // Devolver un error amigable al frontend
+            return response()->json([
+                'success' => false,
+                'message' => 'Ocurrió un error interno al intentar actualizar el estado. Contacte a soporte.'
+            ], 500);
+        }
+    }
+
+    public function deleteBanner($id)
+    {
+        try {
+            $banner = PromotionalBanner::findOrFail($id);
+            $banner->delete();
+            return response()->json([
+                'success' => true,
+                'message' => 'Banner eliminado correctamente.'
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'El banner no existe o no tienes permisos para eliminarlo.'
+            ], 404);
+        } catch (QueryException $e) {
+            Log::error('Error de integridad referencial al eliminar banner', [
+                'banner_id' => $id,
+                'error' => $e->getMessage()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'No se puede eliminar el banner porque está siendo utilizado en otros registros (ej. historial de pedidos).'
+            ], 409); // 409 Conflict
+
+        } catch (\Exception $e) {
+            Log::error('Error crítico eliminando banner', [
+                'banner_id' => $id,
+                'user_id' => auth()->id(),
+                'error' => $e->getMessage()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Ocurrió un error interno al intentar eliminar el banner. Contacte a soporte.'
             ], 500);
         }
     }

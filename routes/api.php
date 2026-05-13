@@ -471,6 +471,13 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::put('delivery/repartidores/{id}', [DeliveryController::class, 'updateRepartidores']);
     Route::delete('delivery/repartidores/{id}', [DeliveryController::class, 'deleteRepartidores']);
 
+    // CRUD PARA BANNER
+    Route::get('delivery/banners', [DeliveryController::class, 'getBanners']);
+    Route::post('delivery/bannerPromo', [DeliveryController::class, 'storeBanner']);
+    Route::put('delivery/bannerPromo/{id}', [DeliveryController::class, 'updateBanner']);
+    Route::patch('delivery/bannerPromo/{id}/status', [DeliveryController::class, 'updateBanner']);
+    Route::delete('/delivery/bannerPromo/{id}', [DeliveryController::class, 'deleteBanner']);
+
     // ========================================================
 
     // RUTAS PARA EL MODULO DE CONFIGURACION
@@ -571,7 +578,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // RUTAS PARA PROMOCIONES
     Route::get('/cliente/promociones/{idSede}', [PromocionesClienteController::class, 'getPromociones']);
-
+    // RUTA PARA LOS BANNER
+    Route::get('/cliente/bannerPromo/{idSede}', [PromocionesClienteController::class, 'getBannerPromo']);
     // RUTAS PARA NOTIFICACIONES
     Route::get('/cliente/notificaciones', [NotificacionesController::class, 'getNotificacionesCliente']);
     Route::put('/cliente/notificaciones/cambiarEstado', [NotificacionesController::class, 'cambiarEstadoNotificacion']);

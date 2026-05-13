@@ -22,6 +22,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use MercadoPago\Client\Payment\PaymentClient;
+use MercadoPago\Exceptions\MPApiException;
 use MercadoPago\MercadoPagoConfig;
 
 class VenderAppCliente extends Controller
@@ -75,6 +76,34 @@ class VenderAppCliente extends Controller
         $impuestoConfig = ConfiguracionHelper::clave('impuestos');
         $tasaIgv = (float)($impuestoConfig ?? 0.18);
         $factorDivisor = 1 + $tasaIgv;
+        ///////////////////////////////////////////
+        // VALIDACION SI EL PALTO ESTA ACTIVO AUN
+        ///////////////////////////////////////////
+        foreach ($request->items as $item) {
+            $esPromocion = isset($item['tipo']) && $item['tipo'] === 'promocion';
+
+            if ($esPromocion) {
+                $prodValidador = PromocionesApp::where('id', $item['idPlato'])
+                    ->where('estado', 1)
+                    ->where('enWeb', 1)
+                    ->first();
+                $nombreError = $prodValidador->titulo ?? "Promoción ID: " . $item['idPlato'];
+            } else {
+                $prodValidador = Plato::where('id', $item['idPlato'])
+                    ->where('estado', 1)
+                    ->where('enWeb', 1)
+                    ->first();
+                $nombreError = $prodValidador->nombre;
+            }
+
+            if (!$prodValidador) {
+                Log::warning("Intento de compra de producto no disponible", ['item' => $item]);
+                return response()->json([
+                    'success' => false,
+                    'message' => "El producto '{$nombreError}' ya no se encuentra disponible. Por favor, retírelo de su carrito."
+                ], 422); // 422 Unprocessable Entity es lo ideal aquí
+            }
+        }
 
         // =========================================================
         // 4. MERCADO PAGO: PROCESAMIENTO DEL TOKEN ANTES DE LA BD
@@ -115,7 +144,7 @@ class VenderAppCliente extends Controller
                 $estadoPagoFinal = 'pagado';
                 $referenciaPagoMp = $payment->id;
                 Log::info("✅ Cobro Mercado Pago Exitoso. ID: " . $referenciaPagoMp);
-            } catch (\MercadoPago\Exceptions\MPApiException $e) {
+            } catch (MPApiException $e) {
                 // AQUÍ ATRAPAMOS EL ERROR EXACTO DE VALIDACIÓN DE MERCADO PAGO
                 $apiResponse = $e->getApiResponse();
                 $detalleError = $apiResponse ? $apiResponse->getContent() : ['error' => 'Sin detalles adicionales'];
