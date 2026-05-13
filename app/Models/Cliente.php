@@ -50,6 +50,11 @@ class Cliente extends Model
         return $this->hasMany(MetodosPagoCliente::class, 'idCliente');
     }
 
+    public function ventas()
+    {
+        return $this->hasMany(Venta::class, 'idCliente');
+    }
+
     protected static function booted()
     {
         static::addGlobalScope(new EmpresaScope);

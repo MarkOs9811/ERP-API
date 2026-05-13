@@ -34,6 +34,7 @@ use App\Http\Controllers\Api\EmpresasAdminController;
 use App\Http\Controllers\Api\EventosController;
 use App\Http\Controllers\Api\FacturacionSunatController;
 use App\Http\Controllers\Api\FinanzasController;
+use App\Http\Controllers\Api\GestionClienteController;
 use App\Http\Controllers\api\GoogleCalendarController;
 use App\Http\Controllers\Api\MesasController;
 use App\Http\Controllers\Api\MiPerfilController;
@@ -477,6 +478,12 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::put('delivery/bannerPromo/{id}', [DeliveryController::class, 'updateBanner']);
     Route::patch('delivery/bannerPromo/{id}/status', [DeliveryController::class, 'updateBanner']);
     Route::delete('/delivery/bannerPromo/{id}', [DeliveryController::class, 'deleteBanner']);
+
+    // CRUD PARA CLIENTES - MODULE
+    Route::prefix('clientes')->controller(GestionClienteController::class)->group(function () {
+        Route::get('/metricas-dashboard', 'getMetricasDashboard');
+        Route::get('/', 'getClientes');
+    });
 
     // ========================================================
 
