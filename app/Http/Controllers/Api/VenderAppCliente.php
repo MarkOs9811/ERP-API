@@ -32,7 +32,6 @@ class VenderAppCliente extends Controller
     public function Pagar(Request $request)
     {
         Log::info('➡️ INICIO: Proceso de Pago Delivery App Cliente', ['payload' => $request->all()]);
-
         $request->validate([
             'idCliente' => 'required',
             'items'     => 'required|array|min:1',

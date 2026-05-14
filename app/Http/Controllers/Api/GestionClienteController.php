@@ -14,7 +14,7 @@ class GestionClienteController extends Controller
     {
         try {
 
-            $clientes = Cliente::with(['persona', 'empresa'])
+            $clientes = Cliente::with(['persona', 'ultimaVenta',  'empresa'])
                 ->latest()
                 ->paginate($request->integer('per_page', 15));
 
@@ -45,6 +45,10 @@ class GestionClienteController extends Controller
                 ->whereNotNull('idCliente')
                 ->avg('total') ?? 0;
 
+            $ingresos_totales = DB::table('ventas')
+                ->whereNotNull('idCliente')
+                ->sum('total') ?? 0;
+
             $topClientes = DB::table('ventas')
                 ->join('clientes', 'ventas.idCliente', '=', 'clientes.id')
                 ->join('personas', 'clientes.idPersona', '=', 'personas.id')
@@ -69,6 +73,7 @@ class GestionClienteController extends Controller
                     'kpis' => [
                         'total_clientes'  => $totalClientes,
                         'ticket_promedio' => round($ticketPromedio, 2),
+                        'ingresos_totales' => round($ingresos_totales, 2),
                     ],
                     'top_clientes' => $topClientes
                 ]
@@ -78,4 +83,6 @@ class GestionClienteController extends Controller
             return response()->json(['success' => false, 'message' => 'Error al procesar analíticas.'], 500);
         }
     }
+
+   
 }

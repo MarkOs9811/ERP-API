@@ -54,6 +54,10 @@ class Cliente extends Model
     {
         return $this->hasMany(Venta::class, 'idCliente');
     }
+    public function ultimaVenta()
+    {
+        return $this->hasOne(Venta::class, 'idCliente')->latestOfMany();
+    }
 
     protected static function booted()
     {

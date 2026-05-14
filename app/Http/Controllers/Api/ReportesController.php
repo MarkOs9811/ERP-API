@@ -9,6 +9,7 @@ use App\Models\AdelantoSueldo;
 use App\Models\Almacen;
 use App\Models\Asistencia;
 use App\Models\Caja;
+use App\Models\Cliente;
 use App\Models\Compra;
 use App\Models\Empleado;
 use App\Models\HoraExtras;
@@ -800,7 +801,54 @@ class ReportesController extends Controller
             ], 500);
         }
     }
+    public function reporteClientes()
+    {
+        try {
 
+            $clientes = Cliente::with(['persona', 'empresa'])
+                ->withCount('ventas')
+                ->withSum('ventas', 'total')
+                ->withMax('ventas', 'created_at')
+                ->get();
+
+            $filename = 'reporte_clientes_' . now()->format('Ymd_His') . '.xlsx';
+
+            // 2. Usamos un Generador (yield) para procesar fila por fila ahorrando RAM
+            $generadorDatos = function () use ($clientes) {
+                foreach ($clientes as $item) {
+                    // Formateamos la fecha si existe
+                    $fechaUltimaCompra = $item->ventas_max_created_at
+                        ? Carbon::parse($item->ventas_max_created_at)->format('d/m/Y H:i A')
+                        : 'Sin compras';
+
+                    yield [
+                        'ID'            => $item->id,
+                        'Nombre'        => optional($item->persona)->nombre ?? '',
+                        'Apellidos'     => optional($item->persona)->apellidos ?? '',
+                        'Documento'     => optional($item->persona)->documento_identidad ?? '',
+                        'Empresa'       => optional($item->empresa)->nombre ?? '',
+                        'RUC'           => optional($item->empresa)->ruc ?? '',
+                        'Email'         => $item->email ?? '',
+                        'Teléfono'      => $item->telefono ?? '',
+                        'Dirección'     => $item->direccion ?? '',
+                        'Estado'        => $item->estado === 1 ? 'Activo' : 'Inactivo',
+                        'Cant. Compras' => $item->ventas_count ?? 0,
+                        'Total Ventas'  => (float) ($item->ventas_sum_total ?? 0),
+                        'Última Compra' => $fechaUltimaCompra,
+                    ];
+                }
+            };
+
+
+            return (new FastExcel($generadorDatos()))->download($filename);
+        } catch (\Exception $e) {
+            Log::error('Error al generar reporte de clientes: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al generar el reporte, contacte a soporte.'
+            ], 500);
+        }
+    }
     public function reporteUsuarios()
     {
         try {

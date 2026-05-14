@@ -33,6 +33,7 @@ use App\Http\Controllers\Api\DeliveryController;
 use App\Http\Controllers\Api\EmpresasAdminController;
 use App\Http\Controllers\Api\EventosController;
 use App\Http\Controllers\Api\FacturacionSunatController;
+use App\Http\Controllers\Api\FeedBacksController;
 use App\Http\Controllers\Api\FinanzasController;
 use App\Http\Controllers\Api\GestionClienteController;
 use App\Http\Controllers\api\GoogleCalendarController;
@@ -484,6 +485,10 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
         Route::get('/metricas-dashboard', 'getMetricasDashboard');
         Route::get('/', 'getClientes');
     });
+    Route::prefix('feedbacks')->controller(FeedBacksController::class)->group(function () {
+        Route::get('/', 'getFeedbacks');
+        Route::get('/indicadores', 'getAllFeedBack');
+    });
 
     // ========================================================
 
@@ -515,6 +520,11 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::get('/reporteCompras', [ReportesController::class, 'reporteCompras']);
     Route::get('/reporteHorasExtras', [ReportesController::class, 'reporteHorasExtras']);
     Route::get('/reporteVacaciones', [ReportesController::class, 'reporteVacaciones']);
+
+
+    // REPORTE DE CLIENTES
+    Route::get('/reporteClientes', [ReportesController::class, 'reporteClientes']);
+    ///////////////////////////////////////
 
     Route::get('/reporteUsuarios', [ReportesController::class, 'reporteUsuarios']);
     Route::get('/reporteAsistenciaHoy', [ReportesController::class, 'reporteAsistenciaHoy']);
