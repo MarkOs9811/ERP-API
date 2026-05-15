@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\HorarioController;
 use App\Http\Controllers\Api\AlmacenController;
 use App\Http\Controllers\api\AsistenciasController;
 use App\Http\Controllers\Api\CajaController;
+use App\Http\Controllers\Api\CampañasController;
 use App\Http\Controllers\Api\CategoriasController;
 use App\Http\Controllers\Api\ClienteController;
 use App\Http\Controllers\Api\CocinaController;
@@ -488,6 +489,11 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::prefix('feedbacks')->controller(FeedBacksController::class)->group(function () {
         Route::get('/', 'getFeedbacks');
         Route::get('/indicadores', 'getAllFeedBack');
+    });
+
+    Route::prefix('campanasPromos')->controller(CampañasController::class)->group(function () {
+        Route::get('/', 'getCampanasPromo');
+        Route::post('/', 'saveCampanasPromo');
     });
 
     // ========================================================
