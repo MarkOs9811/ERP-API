@@ -6,6 +6,7 @@ use App\Helpers\ConfiguracionHelper;
 use App\Http\Controllers\api\VenderController;
 use App\Http\Controllers\Controller;
 use App\Models\Boleta;
+use App\Models\campanaPromo;
 use App\Models\Cliente;
 use App\Models\DetallePedidosWeb;
 use App\Models\Direccione;
@@ -75,8 +76,9 @@ class VenderAppCliente extends Controller
         $impuestoConfig = ConfiguracionHelper::clave('impuestos');
         $tasaIgv = (float)($impuestoConfig ?? 0.18);
         $factorDivisor = 1 + $tasaIgv;
+
         ///////////////////////////////////////////
-        // VALIDACION SI EL PALTO ESTA ACTIVO AUN
+        // VALIDACION SI EL PLATO ESTA ACTIVO AUN
         ///////////////////////////////////////////
         foreach ($request->items as $item) {
             $esPromocion = isset($item['tipo']) && $item['tipo'] === 'promocion';
@@ -100,7 +102,7 @@ class VenderAppCliente extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => "El producto '{$nombreError}' ya no se encuentra disponible. Por favor, retírelo de su carrito."
-                ], 422); // 422 Unprocessable Entity es lo ideal aquí
+                ], 422);
             }
         }
 
@@ -112,12 +114,10 @@ class VenderAppCliente extends Controller
 
         if ($request->filled('token_mercadopago')) {
             try {
-                // Configuramos el Access Token desde el archivo .env
                 MercadoPagoConfig::setAccessToken(env('MERCADOPAGO_ACCESS_TOKEN'));
-
                 $client = new PaymentClient();
 
-                // Armamos la petición de cobro
+                // El $request->total aquí es el NETO exacto que paga el cliente (comida - cupón + envio + propina)
                 $payment = $client->create([
                     "transaction_amount" => (float) $request->total,
                     "token"              => $request->token_mercadopago,
@@ -130,7 +130,6 @@ class VenderAppCliente extends Controller
                     ]
                 ]);
 
-                // Verificamos si el banco aprobó la tarjeta
                 if ($payment->status !== 'approved') {
                     Log::warning("Pago Rechazado. Estado: {$payment->status} | Motivo exacto: {$payment->status_detail}");
                     return response()->json([
@@ -139,15 +138,12 @@ class VenderAppCliente extends Controller
                     ], 400);
                 }
 
-                // Si todo sale bien, marcamos como pagado y guardamos el ID de MP
                 $estadoPagoFinal = 'pagado';
                 $referenciaPagoMp = $payment->id;
                 Log::info("✅ Cobro Mercado Pago Exitoso. ID: " . $referenciaPagoMp);
             } catch (MPApiException $e) {
-                // AQUÍ ATRAPAMOS EL ERROR EXACTO DE VALIDACIÓN DE MERCADO PAGO
                 $apiResponse = $e->getApiResponse();
                 $detalleError = $apiResponse ? $apiResponse->getContent() : ['error' => 'Sin detalles adicionales'];
-
                 Log::error("❌ RECHAZO DE MERCADO PAGO (PRODUCCIÓN): ", (array) $detalleError);
 
                 return response()->json([
@@ -155,7 +151,6 @@ class VenderAppCliente extends Controller
                     'message' => 'Error de validación con el banco o pasarela. Intenta con otra tarjeta válida.'
                 ], 400);
             } catch (\Exception $e) {
-                // Este atrapa errores generales (ej. caída de red)
                 Log::error("Error general API Mercado Pago: " . $e->getMessage());
                 return response()->json([
                     'success' => false,
@@ -164,11 +159,10 @@ class VenderAppCliente extends Controller
             }
         }
 
-        // ---------------------------------------------------------
-        // 5. INICIO DE TRANSACCIÓN ESTRÍCTA (Solo si el cobro fue exitoso)
-        // ---------------------------------------------------------
+        // =========================================================
+        // 5. INICIO DE TRANSACCIÓN ESTRÍCTA
+        // =========================================================
         try {
-            // MERCADO PAGO: Añadimos $estadoPagoFinal y $referenciaPagoMp al "use"
             return DB::transaction(function () use ($request, $telefonoCliente, $nombreCliente, $dniCliente, $idMetodoPagoVenta, $nombreMetodoVenta, $factorDivisor, $estadoPagoFinal, $referenciaPagoMp) {
 
                 // ==========================================
@@ -177,7 +171,6 @@ class VenderAppCliente extends Controller
                 $direccion = Direccione::find($request->idDireccion);
                 $lat = $direccion ? $direccion->latitud : null;
                 $lng = $direccion ? $direccion->longitud : null;
-
                 $codigo = 'PED-' . strtoupper(Str::random(6));
 
                 $pedidoWeb = PedidosWebRegistro::create([
@@ -191,7 +184,6 @@ class VenderAppCliente extends Controller
                     'latitud'        => $lat,
                     'longitud'       => $lng,
                     'tipo_entrega'   => $request->tipo_entrega ?? 'delivery',
-                    // MERCADO PAGO: Pasamos el estado dinámico (pagado o pendiente)
                     'estado_pago'    => $estadoPagoFinal,
                     'estado_pedido'  => 3,
                     'propina'        => $request->propina ?? 0,
@@ -204,30 +196,25 @@ class VenderAppCliente extends Controller
                 // ==========================================
                 // B. REGISTRAR DETALLES 
                 // ==========================================
-                $totalPrecio = 0;
+                $totalPrecioBruto = 0; // Suma de items + delivery sin aplicar descuento
                 $pedidosToVender = [];
 
                 foreach ($request->items as $item) {
-                    // 1. Identificamos si viene el tipo "promocion" desde React
                     $esPromocion = isset($item['tipo']) && $item['tipo'] === 'promocion';
-
                     $idPlatoReal     = $esPromocion ? null : $item['idPlato'];
                     $idPromocionReal = $esPromocion ? $item['idPlato'] : null;
 
-                    // 3. Guardamos en la base de datos
                     DetallePedidosWeb::create([
                         'idPedido'    => $pedidoWeb->id,
                         'idPlato'     => $idPlatoReal,
-                        'idPromocion' => $idPromocionReal, // ¡Asegúrate de que esta columna exista en tu BD!
+                        'idPromocion' => $idPromocionReal,
                         'producto'    => $esPromocion ? "Promo ID " . $idPromocionReal : "Plato ID " . $idPlatoReal,
                         'cantidad'    => $item['cantidad'],
                         'precio'      => $item['precio'],
                         'estado'      => '1'
                     ]);
 
-                    // 4. Buscamos el nombre correcto para la Facturación / Ticket
                     if ($esPromocion) {
-                        // Asumo que tu modelo se llama Promocion. Ajusta la ruta si es necesario.
                         $promocion = PromocionesApp::find($idPromocionReal);
                         $productoNombre = $promocion->titulo ?? 'Promoción Desconocida';
                     } else {
@@ -237,7 +224,6 @@ class VenderAppCliente extends Controller
 
                     $precioTotalItem = (float)$item['precio'] * $item['cantidad'];
 
-                    // 5. Preparamos el array para la SUNAT y el Ticket final
                     $pedidosToVender[] = (object)[
                         "idPlato"         => $idPlatoReal,
                         "idPromocion"     => $idPromocionReal,
@@ -249,14 +235,14 @@ class VenderAppCliente extends Controller
                         "igv"             => $precioTotalItem - ($precioTotalItem / $factorDivisor),
                     ];
 
-                    $totalPrecio += $precioTotalItem;
+                    $totalPrecioBruto += $precioTotalItem;
                 }
 
                 $costoEnvio = (float)($request->costo_envio ?? 0);
                 if ($costoEnvio > 0) {
                     $pedidosToVender[] = (object)[
                         "idPlato"         => null,
-                        "idPromocion"         => null,
+                        "idPromocion"     => null,
                         "cantidad"        => 1,
                         "descripcion"     => "Servicio de Delivery",
                         "valor_unitario"  => $costoEnvio / $factorDivisor,
@@ -264,25 +250,52 @@ class VenderAppCliente extends Controller
                         "precio_unitario" => $costoEnvio,
                         "igv"             => $costoEnvio - ($costoEnvio / $factorDivisor),
                     ];
-                    $totalPrecio += $costoEnvio;
+                    $totalPrecioBruto += $costoEnvio;
                 }
 
                 // ==========================================
-                // C. REGISTRAR LA VENTA (CABECERA)
+                // C. REGISTRAR LA VENTA (CÁLCULOS NETOS SUNAT)
                 // ==========================================
-                $subtotal = $totalPrecio / $factorDivisor;
-                $igv = $totalPrecio - $subtotal;
-                $total = $totalPrecio;
+                $montoDescuento = (float)($request->monto_descuento ?? 0);
 
+                // 1. Limpiamos el código recibido (quitamos espacios basura accidentales)
+                $codigoRecibido = trim($request->codigo_cupon);
+
+                Log::info("🔍 REVISIÓN CUPÓN -> Recibido desde React: '{$codigoRecibido}'");
+
+                if (!empty($codigoRecibido)) {
+                    $cuponAplicado = CampanaPromo::where('codigo_cupon', $codigoRecibido)
+                        ->orWhere('codigo_cupon', strtoupper($codigoRecibido))
+                        ->orWhere('codigo_cupon', strtolower($codigoRecibido))
+                        ->first();
+
+                    if ($cuponAplicado) {
+                        // 🔥 LA MAGIA CONTRA EL NULL ESTÁ AQUÍ 🔥
+                        $cuponAplicado->usados = ($cuponAplicado->usados ?? 0) + 1;
+                        $cuponAplicado->save();
+
+                        Log::info("✅ CUPÓN ACTUALIZADO -> ID: {$cuponAplicado->id} | Código: {$cuponAplicado->codigo_cupon} | Nuevos Usos: {$cuponAplicado->usados}");
+                    } else {
+                        Log::warning("⚠️ ALERTA CUPÓN -> Se recibió el código '{$codigoRecibido}' pero NO se encontró ninguna coincidencia en la columna 'codigo_cupon' de la tabla 'campanaPromo'.");
+                    }
+                }
+                $totalNeto = $totalPrecioBruto - $montoDescuento; // Esto es lo que cobraste REALMENTE por comida+delivery
+
+                // Base imponible e IGV calculados sobre el Total Neto
+                $subtotalNeto = $totalNeto / $factorDivisor;
+                $igvNeto = $totalNeto - $subtotalNeto;
+
+                // Grabamos en tabla Venta pasándole el descuento
                 $venta = $this->registrarVentaWeb(
                     $pedidoWeb->id,
                     null,
                     $idMetodoPagoVenta,
                     'B',
-                    $igv,
-                    $subtotal,
-                    $total,
-                    $request->idCliente
+                    $igvNeto,
+                    $subtotalNeto,
+                    $totalNeto,
+                    $request->idCliente,
+                    $montoDescuento // <-- SE ENVÍA A LA FUNCIÓN
                 );
 
                 // ==========================================
@@ -308,9 +321,10 @@ class VenderAppCliente extends Controller
                             'tipo_comprobante' => 'B',
                             'cliente'          => $datosCliente,
                             'detalle'          => collect($pedidosToVender),
-                            'subtotal'         => $subtotal,
-                            'igv'              => $igv,
-                            'total'            => $total,
+                            'subtotal'         => $subtotalNeto,
+                            'igv'              => $igvNeto,
+                            'descuento'        => $montoDescuento, // La SUNAT necesita saber cuánto descontaste
+                            'total'            => $totalNeto,
                         ];
 
                         $facturacionSunatController = new FacturacionSunatController();
@@ -323,10 +337,9 @@ class VenderAppCliente extends Controller
                             !empty($respuesta['observaciones']) ? implode(', ', $respuesta['observaciones']) : null,
                             $respuesta['rutaXml'] ?? null,
                             $respuesta['rutaCdr'] ?? null,
-                            $referenciaPagoMp // Pasamos la referencia a la boleta si la necesitas
+                            $referenciaPagoMp
                         );
                     } else {
-                        // SUNAT APAGADO: REGISTRO LOCAL
                         $this->registrarComprobante($venta, 'B', 1, null, null, null, $referenciaPagoMp);
                     }
 
@@ -357,10 +370,11 @@ class VenderAppCliente extends Controller
                         'direccion' => $datosCliente['direccion'],
                     ],
                     'productos'         => $pedidosToVender,
-                    'subtotal'          => round($subtotal, 2),
-                    'igv'               => round($igv, 2),
-                    'total'             => round($total, 2),
-                    'estado_pago'       => $estadoPagoFinal // MERCADO PAGO: 'pagado' o 'pendiente'
+                    'subtotal'          => round($subtotalNeto, 2),
+                    'descuento'         => round($montoDescuento, 2),
+                    'igv'               => round($igvNeto, 2),
+                    'total'             => round($totalNeto, 2),
+                    'estado_pago'       => $estadoPagoFinal
                 ];
 
                 Log::info("🏁 Venta Web Registrada con Éxito. Ticket: $serieTicket-$correlativoTicket");
@@ -384,7 +398,8 @@ class VenderAppCliente extends Controller
         }
     }
 
-    protected function registrarVentaWeb($idPedidoWeb, $idUsuario, $idMetodoPago, $tipoComprobante, $igv, $subtotal, $total, $idCliente)
+    // Actualizamos la firma para recibir el descuento
+    protected function registrarVentaWeb($idPedidoWeb, $idUsuario, $idMetodoPago, $tipoComprobante, $igv, $subtotal, $total, $idCliente, $descuento = 0.00)
     {
         $pedidoWeb = PedidosWebRegistro::find($idPedidoWeb);
 
@@ -398,14 +413,13 @@ class VenderAppCliente extends Controller
             'idPedidoWeb' => $idPedidoWeb,
             'igv'         => $igv,
             'subTotal'    => $subtotal,
-            'descuento'   => 0.00,
-            'total'       => $total,
+            'descuento'   => $descuento, // 🎯 AQUÍ SE GUARDA TU DESCUENTO
+            'total'       => $total,     // Este total ya es el NETO
             'fechaVenta'  => now(),
             'documento'   => $tipoComprobante,
             'estado'      => 1,
         ]);
     }
-
     // MERCADO PAGO: Añadí $referenciaPago al final por si a futuro decides agregar una columna en Boleta para guardar el ID de Mercado Pago
     private function registrarComprobante($venta, $tipoComprobante = 'B', $estado = 1, $observaciones = null, $rutaXml = null, $rutaCdr = null, $referenciaPago = null)
     {
@@ -463,6 +477,53 @@ class VenderAppCliente extends Controller
             throw new \Exception("Error al generar la boleta local: " . $e->getMessage());
         }
     }
+    // COMROBAR EL CUPON
+    public function aplicarCupon(Request $request, $codigo_cupon)
+    {
+        try {
+
+            $totalCarrito = $request->query('total', 0);
+
+            // Buscamos el cupón exacto
+            $cupon = campanaPromo::where('codigo_cupon', strtoupper($codigo_cupon))
+                ->where('estado', 1)
+                ->where('tipo', 'cupon')
+                ->where('fecha_inicio', '<=', now())
+                ->where('fecha_fin', '>=', now())
+                ->first();
+
+            // 1. Validar que exista y esté en fecha
+            if (!$cupon) {
+                return response()->json(['success' => false, 'message' => 'Cupón inválido o expirado.'], 404);
+            }
+
+            // 2. Validar Monto Mínimo de Compra
+            if ($cupon->monto_minimo_compra > 0 && $totalCarrito < $cupon->monto_minimo_compra) {
+                return response()->json(['success' => false, 'message' => "Este cupón requiere una compra mínima de S/ {$cupon->monto_minimo_compra}."], 400);
+            }
+
+            // 3. Validar Límite de Uso (Stock)
+            if (!is_null($cupon->limite_uso) && $cupon->usados >= $cupon->limite_uso) {
+                return response()->json(['success' => false, 'message' => 'Este cupón se ha agotado.'], 400);
+            }
+
+            // Si pasa todas las validaciones, lo devolvemos al Front!
+            return response()->json([
+                'success' => true,
+                'message' => '¡Cupón aplicado con éxito!',
+                'data'    => [
+                    'id'             => $cupon->id,
+                    'codigo'         => $cupon->codigo_cupon,
+                    'descuento'      => $cupon->valor_descuento,
+                    'tipo_descuento' => $cupon->tipo_descuento,
+                ]
+            ], 200);
+        } catch (\Exception $e) {
+            Log::error("Error en aplicarCupon: {$e->getMessage()}");
+            return response()->json(['success' => false, 'message' => 'Error interno al validar el cupón.'], 500);
+        }
+    }
+
     public function getMisPedidos(Request $request)
     {
         try {

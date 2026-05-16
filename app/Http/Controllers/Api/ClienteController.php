@@ -156,7 +156,7 @@ class ClienteController extends Controller
         }
     }
 
-    public function updateTelefono(Request $request, $id)
+    public function updateTelefono(Request $request)
     {
         try {
             $persona = $request->user();

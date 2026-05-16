@@ -16,6 +16,7 @@ use Greenter\Model\Sale\Legend;
 use Greenter\See;
 use Greenter\Ws\Services\SunatEndpoints;
 use DateTime;
+use Greenter\Model\Sale\Charge;
 use Illuminate\Support\Facades\Log;
 
 class FacturacionSunatController extends Controller
@@ -25,64 +26,45 @@ class FacturacionSunatController extends Controller
         try {
             Log::info('Inicio de generación de factura.');
 
-            // Validar y completar los datos del cliente
-            $cliente = $datosFactura['cliente'];
+            $cliente = $datosFactura['cliente'] ?? [];
 
-            // Asegurarse de que el campo 'nombre' esté presente
             if (!isset($cliente['nombre']) || empty($cliente['nombre'])) {
                 $cliente['nombre'] = $cliente['razonSocial'] ?? 'CLIENTE GENERICO';
             }
-
-            // Asegurarse de que el campo 'numero_documento' esté presente
             if (!isset($cliente['numero_documento']) || empty($cliente['numero_documento'])) {
                 $cliente['numero_documento'] = $cliente['ruc'] ?? '00000000';
             }
-
-            // Asegurarse de que el campo 'tipo_documento' esté presente
             if (!isset($cliente['tipo_documento']) || empty($cliente['tipo_documento'])) {
-                $cliente['tipo_documento'] = isset($cliente['ruc']) ? '6' : '1'; // 6: RUC, 1: DNI
+                $cliente['tipo_documento'] = isset($cliente['ruc']) ? '6' : '1';
             }
-
-            // Actualizar los datos del cliente en $datosFactura
             $datosFactura['cliente'] = $cliente;
 
-
-            // Obteniendo datos de la empresa
             $empresa = MiEmpresa::first();
-
-            // 2. Obtener configuración SUNAT desde la base de datos
-            $ruc = $empresa->ruc; // O $empresa->clave si así lo tienes
+            $ruc = $empresa->ruc;
             $razonSocial = $empresa->nombre;
-            $nombreComercial = $empresa->nombre; //cambiar si tiene un nombre comercial
+            $nombreComercial = $empresa->nombre;
 
-            // Continuar con la generación de la factura
-            $certificateFile = ConfiguracionHelper::valor1('sunat'); // Ej: certificado.pem
+            $certificateFile = ConfiguracionHelper::valor1('sunat');
             $endpoint = ConfiguracionHelper::valor2('sunat');
             $solUser = ConfiguracionHelper::valor3('sunat');
-            $solPassword = ConfiguracionHelper::valor4('sunat'); // Si tienes más valores, puedes agregar métodos en tu helper
+            $solPassword = ConfiguracionHelper::valor4('sunat');
 
-
-
-            // 3. Construir la ruta del certificado
             $certificatePath = storage_path('app/sunat_certificados/' . $certificateFile);
-
 
             $see = new See();
             $see->setCertificate(file_get_contents($certificatePath));
             $see->setClaveSOL($ruc, $solUser, $solPassword);
             $see->setService($endpoint);
 
-            // DATOS DEL CLIENTE
             $cliente = $datosFactura['cliente'];
 
-            // Configurar cliente genérico si no hay datos del cliente
             $client = (new Client())
-                ->setTipoDoc($cliente['tipo_documento']) // 0 para sin documento
-                ->setNumDoc($cliente['numero_documento']) // '00000000' para genérico
-                ->setRznSocial($cliente['nombre']); // 'CLIENTE GENERICO' para boletas sin cliente
+                ->setTipoDoc($cliente['tipo_documento'])
+                ->setNumDoc($cliente['numero_documento'])
+                ->setRznSocial($cliente['nombre']);
 
             Log::info('Cliente' . json_encode($client));
-            // DIRECCIÓN DEL EMISOR (configurada fija o desde tu sistema)
+
             $address = (new Address())
                 ->setUbigueo('150101')
                 ->setDepartamento('LIMA')
@@ -93,20 +75,30 @@ class FacturacionSunatController extends Controller
                 ->setCodLocal('0000');
 
             Log::info('Direccion Empresa' . json_encode($address));
-            // EMPRESA EMISORA
+
             $company = (new Company())
                 ->setRuc($ruc)
                 ->setRazonSocial($razonSocial)
                 ->setNombreComercial($nombreComercial)
                 ->setAddress($address);
 
-            // CONFIGURAR FACTURA O BOLETA
             $serie = $datosFactura['tipo_comprobante'] === 'F' ? 'F001' : 'B001';
-            $correlativo = $datosFactura['venta_id']; // puedes formatearlo si quieres (ej: '00001')
+            $correlativo = $datosFactura['venta_id'];
 
+            // ==================================================================
+            // 🔥 ESCUDO ANTI-BUGS DE SUNAT BETA (FIRE WOK)
+            // ==================================================================
+            // ⚠️ IMPORTANTE PARA PRODUCCIÓN S.O.S:
+            // Actualmente está fijo en UBL 2.0 y Operación 01 para evitar el bug 
+            // "0306" de la SUNAT en su entorno de Pruebas (Beta).
+            // 
+            // CUANDO PASES A PRODUCCIÓN REAL, HAZ ESTOS DOS CAMBIOS AQUÍ ABAJO:
+            // 1. Cambia ->setUblVersion('2.0')  por  ->setUblVersion('2.1')
+            // 2. Cambia ->setTipoOperacion('01') por ->setTipoOperacion('0101')
+            // ==================================================================
             $invoice = (new Invoice())
-                ->setUblVersion('2.1')
-                ->setTipoOperacion('0101') // venta interna
+                ->setUblVersion('2.0')   // <--- CAMBIAR A '2.1' EN PRODUCCIÓN
+                ->setTipoOperacion('01') // <--- CAMBIAR A '0101' EN PRODUCCIÓN
                 ->setTipoDoc($datosFactura['tipo_comprobante'] === 'F' ? '01' : '03')
                 ->setSerie($serie)
                 ->setCorrelativo($correlativo)
@@ -116,47 +108,87 @@ class FacturacionSunatController extends Controller
                 ->setCompany($company)
                 ->setClient($client);
 
-            // AGREGAR DETALLES
+            // ===================================================
+            // 1. AGREGAR DETALLES (Soporta POS y Delivery App)
+            // ===================================================
             $detalles = [];
-            $subtotal = 0;
-            $igv_total = 0;
+            $sumValorVentaBruto = 0;
+            $sumIgvBruto = 0;
 
             foreach ($datosFactura['detalle'] as $detalle) {
-                $valor_unitario = $detalle->precio_unitario / 1.18;
-                $valor_total = $valor_unitario * $detalle->cantidad;
-                $igv = $detalle->precio_unitario * $detalle->cantidad - $valor_total;
+                $detalleObj = (object)$detalle;
 
-                $subtotal += $valor_total;
-                $igv_total += $igv;
+                // Soporte multi-formato: Busca 'precio_unitario' (App) o 'precio' (POS)
+                $precio_unitario = (float)($detalleObj->precio_unitario ?? $detalleObj->precio ?? 0);
+                $cantidad = (int)($detalleObj->cantidad ?? 1);
+                $descripcion = $detalleObj->descripcion ?? $detalleObj->nombre ?? 'Producto Genérico';
+                $idProducto = $detalleObj->idPlato ?? $detalleObj->idPromocion ?? $detalleObj->id ?? 'SRV01';
+
+                $valor_unitario = $precio_unitario / 1.18;
+                $valor_total = $valor_unitario * $cantidad;
+                $igv = ($precio_unitario * $cantidad) - $valor_total;
+
+                $sumValorVentaBruto += $valor_total;
+                $sumIgvBruto += $igv;
 
                 $item = (new SaleDetail())
-                    ->setCodProducto($detalle->idPlato)
+                    ->setCodProducto($idProducto)
                     ->setUnidad('NIU')
-                    ->setCantidad($detalle->cantidad)
-                    ->setDescripcion($detalle->descripcion)
-                    ->setMtoValorUnitario($valor_unitario)
-                    ->setMtoBaseIgv($valor_total)
+                    ->setCantidad($cantidad)
+                    ->setDescripcion($descripcion)
+                    ->setMtoValorUnitario(round($valor_unitario, 5))
+                    ->setMtoBaseIgv(round($valor_total, 2))
                     ->setPorcentajeIgv(18.00)
-                    ->setIgv($igv)
+                    ->setIgv(round($igv, 2))
                     ->setTipAfeIgv('10')
-                    ->setTotalImpuestos($igv)
-                    ->setMtoValorVenta($valor_total)
-                    ->setMtoPrecioUnitario($detalle->precio_unitario);
+                    ->setTotalImpuestos(round($igv, 2))
+                    ->setMtoValorVenta(round($valor_total, 2))
+                    ->setMtoPrecioUnitario(round($precio_unitario, 5));
                 $detalles[] = $item;
             }
 
-            $total = $subtotal + $igv_total;
+            // ===================================================
+            // 2. LÓGICA DE DESCUENTO GLOBAL (AllowanceCharge SUNAT)
+            // ===================================================
+            $descuentoGlobalBruto = isset($datosFactura['descuento']) ? (float)$datosFactura['descuento'] : 0.00;
 
-            $invoice->setMtoOperGravadas($subtotal)
-                ->setMtoIGV($igv_total)
-                ->setTotalImpuestos($igv_total)
-                ->setValorVenta($subtotal)
-                ->setSubTotal($total)
-                ->setMtoImpVenta($total)
+            if ($descuentoGlobalBruto > 0) {
+                $descuentoBase = $descuentoGlobalBruto / 1.18;
+                $factor = $descuentoBase / $sumValorVentaBruto;
+
+                $charge = (new Charge())
+                    ->setCodTipo('02')
+                    ->setMontoBase(round($sumValorVentaBruto, 2))
+                    ->setFactor(round($factor, 5))
+                    ->setMonto(round($descuentoBase, 2));
+
+                $invoice->setDescuentos([$charge]);
+                $invoice->setMtoDescuentos(round($descuentoBase, 2));
+
+                $mtoOperGravadas = $sumValorVentaBruto - $descuentoBase;
+                $mtoIGV = $sumIgvBruto - ($descuentoGlobalBruto - $descuentoBase);
+                $totalFinal = $mtoOperGravadas + $mtoIGV;
+            } else {
+                $mtoOperGravadas = $sumValorVentaBruto;
+                $mtoIGV = $sumIgvBruto;
+                $totalFinal = $mtoOperGravadas + $mtoIGV;
+            }
+
+            // ===================================================
+            // 3. SETEAR TOTALES EN LA CABECERA DEL INVOICE
+            // ===================================================
+            $invoice->setMtoOperGravadas(round($mtoOperGravadas, 2))
+                ->setMtoIGV(round($mtoIGV, 2))
+                ->setTotalImpuestos(round($mtoIGV, 2))
+                ->setValorVenta(round($mtoOperGravadas, 2))
+                ->setSubTotal(round($totalFinal, 2))
+                ->setMtoImpVenta(round($totalFinal, 2))
                 ->setDetails($detalles);
 
-            // AGREGAR LEYENDA (monto en letras)
-            $montoEnLetras = $this->numToLetters($total) . ' SOLES'; // método que convierte números a letras
+            // ===================================================
+            // 4. LEYENDA (Monto en Letras protegido contra decimales)
+            // ===================================================
+            $montoEnLetras = $this->numToLetters(round($totalFinal, 2)) . ' SOLES';
             $legend = (new Legend())
                 ->setCode('1000')
                 ->setValue($montoEnLetras);
@@ -170,29 +202,27 @@ class FacturacionSunatController extends Controller
             if ($result->isSuccess()) {
                 Log::info('Documento aceptado por SUNAT.');
 
-                // Obtener el XML generado
-                $xml = $see->getFactory()->getLastXml(); // Asegúrate de que esta línea esté presente y funcione correctamente
+                $xml = $see->getFactory()->getLastXml();
 
                 // GUARDAR XML
                 $rutaXmlRelativa = "xml/{$serie}-{$correlativo}.xml";
                 file_put_contents(storage_path("app/public/{$rutaXmlRelativa}"), $xml);
 
                 // GUARDAR CDR
-                $cdrZip = $result->getCdrZip(); // Asegúrate de que esta línea esté presente y funcione correctamente
+                $cdrZip = $result->getCdrZip();
                 $rutaCdrRelativa = "cdr/{$serie}-{$correlativo}_CDR.zip";
                 file_put_contents(storage_path("app/public/{$rutaCdrRelativa}"), $cdrZip);
 
                 $observaciones = $result->getCdrResponse()->getNotes();
                 $estado = empty($observaciones) ? 1 : 3; // 1: Aceptado, 3: Aceptado con observaciones
 
-                // Retornar las rutas relativas
                 return [
                     'success' => true,
                     'message' => 'Documento aceptado por SUNAT',
                     'estado' => $estado,
                     'observaciones' => $observaciones,
-                    'rutaXml' => $rutaXmlRelativa, // Ruta relativa del XML
-                    'rutaCdr' => $rutaCdrRelativa, // Ruta relativa del CDR
+                    'rutaXml' => $rutaXmlRelativa,
+                    'rutaCdr' => $rutaCdrRelativa,
                     'cdr' => [
                         'code' => $result->getCdrResponse()->getCode(),
                         'description' => $result->getCdrResponse()->getDescription(),
@@ -219,12 +249,6 @@ class FacturacionSunatController extends Controller
         }
     }
 
-    /**
-     * Convierte un número a su representación en letras.
-     *
-     * @param float $number
-     * @return string
-     */
     public function numToLetters($number)
     {
         $formatter = new \NumberFormatter("es", \NumberFormatter::SPELLOUT);
@@ -236,140 +260,4 @@ class FacturacionSunatController extends Controller
 
         return "{$integerPartInWords} con {$decimalPartInWords}/100";
     }
-
-    // el siguiente meteodo es el ejemplo base para factura
-
-    // public function generarFactura()
-    // {
-    //     try {
-    //         Log::info('Inicio de generación de factura.');
-
-    //         // Cargar configuración desde config/sunat.php
-    //         Log::info('Cargando configuración de Greenter...');
-    //         $config = config('sunat');
-
-    //         // Crear instancia de See
-    //         $see = new See();
-    //         $see->setCertificate(file_get_contents($config['certificate_path']));
-    //         $see->setClaveSOL($config['ruc'], $config['sol_user'], $config['sol_password']);
-    //         $see->setService($config['endpoint']); // Endpoint BETA o Producción
-
-    //         // Crear cliente
-    //         Log::info('Creando datos del cliente...');
-    //         $client = (new Client())
-    //             ->setTipoDoc('6')
-    //             ->setNumDoc('20000000001')
-    //             ->setRznSocial('EMPRESA X');
-
-    //         // Crear dirección del emisor
-    //         Log::info('Configurando dirección de la empresa...');
-    //         $address = (new Address())
-    //             ->setUbigueo('150101')
-    //             ->setDepartamento('LIMA')
-    //             ->setProvincia('LIMA')
-    //             ->setDistrito('LIMA')
-    //             ->setUrbanizacion('-')
-    //             ->setDireccion('Av. Villa Nueva 221')
-    //             ->setCodLocal('0000');
-
-    //         // Crear empresa (emisor)
-    //         Log::info('Configurando empresa emisora...');
-    //         $company = (new Company())
-    //             ->setRuc('20123456789')
-    //             ->setRazonSocial('GREEN SAC')
-    //             ->setNombreComercial('GREEN')
-    //             ->setAddress($address);
-
-    //         // Crear factura
-    //         Log::info('Creando factura...');
-    //         $invoice = (new Invoice())
-    //             ->setUblVersion('2.1')
-    //             ->setTipoOperacion('0101')
-    //             ->setTipoDoc('01')
-    //             ->setSerie('F001')
-    //             ->setCorrelativo('1')
-    //             ->setFechaEmision(new DateTime('now', new \DateTimeZone('America/Lima')))
-    //             ->setFormaPago(new FormaPagoContado())
-    //             ->setTipoMoneda('PEN')
-    //             ->setCompany($company)
-    //             ->setClient($client)
-    //             ->setMtoOperGravadas(100.00)
-    //             ->setMtoIGV(18.00)
-    //             ->setTotalImpuestos(18.00)
-    //             ->setValorVenta(100.00)
-    //             ->setSubTotal(118.00)
-    //             ->setMtoImpVenta(118.00);
-
-    //         // Agregar detalle
-    //         Log::info('Agregando detalle de la venta...');
-    //         $item = (new SaleDetail())
-    //             ->setCodProducto('P001')
-    //             ->setUnidad('NIU')
-    //             ->setCantidad(2)
-    //             ->setMtoValorUnitario(50.00)
-    //             ->setDescripcion('PRODUCTO 1')
-    //             ->setMtoBaseIgv(100.00)
-    //             ->setPorcentajeIgv(18.00)
-    //             ->setIgv(18.00)
-    //             ->setTipAfeIgv('10')
-    //             ->setTotalImpuestos(18.00)
-    //             ->setMtoValorVenta(100.00)
-    //             ->setMtoPrecioUnitario(59.00);
-
-    //         // Agregar leyenda
-    //         Log::info('Agregando leyenda...');
-    //         $legend = (new Legend())
-    //             ->setCode('1000')
-    //             ->setValue('SON DOSCIENTOS TREINTA Y SEIS CON 00/100 SOLES');
-
-    //         // Asociar detalle y leyenda
-    //         $invoice->setDetails([$item])
-    //             ->setLegends([$legend]);
-
-    //         // Enviar a SUNAT
-    //         Log::info('Enviando factura a SUNAT...');
-    //         $result = $see->send($invoice);
-
-    //         if ($result->isSuccess()) {
-    //             Log::info('Factura aceptada por SUNAT.');
-
-    //             // Obtener XML generado
-    //             $xml = $see->getFactory()->getLastXml();  // Usamos este método para obtener el XML
-
-    //             // Guardar el XML
-    //             file_put_contents(storage_path('app/xml/Factura_F001-1.xml'), $xml);
-
-    //             // Obtener CDR en formato ZIP (contenido binario)
-    //             $cdrZip = $result->getCdrZip();  // Obtiene el archivo ZIP con el CDR
-
-    //             // Guardar el CDR usando file_put_contents
-    //             file_put_contents(storage_path('app/cdr/Factura_F001-1_CDR.zip'), $cdrZip);
-
-    //             return response()->json([
-    //                 'success' => true,
-    //                 'message' => 'Factura aceptada por SUNAT',
-    //                 'cdr' => [
-    //                     'code' => $result->getCdrResponse()->getCode(),
-    //                     'description' => $result->getCdrResponse()->getDescription(),
-    //                     'notes' => $result->getCdrResponse()->getNotes(),
-    //                 ]
-    //             ]);
-    //         } else {
-    //             $error = $result->getError();
-    //             Log::error('Error al enviar factura: ' . $error->getMessage(), ['code' => $error->getCode()]);
-    //             return response()->json([
-    //                 'success' => false,
-    //                 'message' => $error->getMessage(),
-    //                 'code' => $error->getCode()
-    //             ]);
-    //         }
-    //     } catch (\Exception $e) {
-    //         Log::error('Excepción en la generación de factura: ' . $e->getMessage());
-    //         return response()->json([
-    //             'success' => false,
-    //             'message' => 'Ocurrió un error al generar la factura',
-    //             'error' => $e->getMessage()
-    //         ]);
-    //     }
-    // }
 }

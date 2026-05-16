@@ -7,9 +7,10 @@ use App\Models\Scopes\SedeScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class campanaPromo extends Model
+class CampanaPromo extends Model
 {
     protected $fillable = [
+        'id',
         'nombre',
         'tipo',
         'codigo_cupon',
@@ -18,6 +19,7 @@ class campanaPromo extends Model
         'monto_minimo_compra',
         'limite_uso',
         'fecha_inicio',
+        'usados',
         'fecha_fin',
         'estado'
     ];

@@ -494,6 +494,8 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::prefix('campanasPromos')->controller(CampañasController::class)->group(function () {
         Route::get('/', 'getCampanasPromo');
         Route::post('/', 'saveCampanasPromo');
+        Route::put('/{id}', 'updateCampanasPromo');
+        Route::delete('/{id}', 'deleteCampanasPromo');
     });
 
     // ========================================================
@@ -584,6 +586,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // RUTAS PARA REALZIAR PAGO Y PEDIDOS
     Route::post('/cliente/pedidos/crear', [VenderAppCliente::class, 'Pagar']);
     Route::get('/cliente/misPedidos', [VenderAppCliente::class, 'getMisPedidos']);
+    Route::get('/cliente/aplicarCupon/{codigo_cupon}', [VenderAppCliente::class, 'aplicarCupon']);
 
     // GESTION DE DIRECCIONES
     Route::post('/cliente/direcciones', [ClienteController::class, 'addDireccion']);
@@ -592,7 +595,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/cliente/direcciones/{id}', [ClienteController::class, 'deleteDireccion']);
 
     // GESTION DATOS PERFIL CLIENTE
-    Route::put('/cliente/telefono/{id}', [ClienteController::class, 'updateTelefono']);
+    Route::put('/cliente/telefono', [ClienteController::class, 'updateTelefono']);
     Route::get('/cliente/sedes', [SedesController::class, 'getSedesCliente']);
 
     // SELECCIONAR SEDE POR DEFECTO DEL CLIENTE

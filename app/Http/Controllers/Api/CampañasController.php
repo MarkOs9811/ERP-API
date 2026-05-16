@@ -44,6 +44,7 @@ class CampañasController extends Controller
                     'monto_minimo_compra' => $validatedData['monto_minimo_compra'] ?? 0,
                     'limite_uso'          => $validatedData['limite_uso'] ?? null,
                     'fecha_inicio'        => $validatedData['fecha_inicio'],
+                    'usados'              => 0, // Inicializamos el contador de usos en 0
                     'fecha_fin'           => $validatedData['fecha_fin'],
                     'estado'              => $validatedData['estado'] ?? true,
                 ]);
@@ -75,5 +76,75 @@ class CampañasController extends Controller
             'message' => '¡Campaña de fidelización creada exitosamente!',
             'data'    => $campana
         ], 200);
+    }
+
+    public function deleteCampanasPromo($id)
+    {
+
+        try {
+            $campana = CampanaPromo::findOrFail($id);
+            $campana->delete();
+
+            return response()->json([
+                'success'  => true,
+                'message' => '¡Campaña de fidelización eliminada exitosamente!',
+            ], 200);
+        } catch (\Exception $e) {
+            Log::error("Error al eliminar campaña: " . $e->getMessage());
+
+            return response()->json([
+                'success'  => false,
+                'message' => 'No se pudo eliminar la campaña.',
+                'error'   => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function updateCampanasPromo(Request $request, $id)
+    {
+        // 1. Validación de entrada (Tus reglas están perfectas)
+        $validatedData = $request->validate([
+            'nombre'              => 'sometimes|required|string|max:255',
+            'tipo'                => 'sometimes|required|in:cupon,puntos,recompensa',
+            'fecha_inicio'        => 'sometimes|required|date',
+            'fecha_fin'           => 'sometimes|required|date|after_or_equal:fecha_inicio',
+            'estado'              => 'sometimes|boolean',
+            'codigo_cupon'        => 'sometimes|required_if:tipo,cupon|nullable|string|unique:campana_promos,codigo_cupon,' . $id,
+            'tipo_descuento'      => 'sometimes|required_if:tipo,cupon|nullable|in:porcentaje,monto_fijo',
+            'valor_descuento'     => 'sometimes|required_if:tipo,cupon|nullable|numeric|min:0',
+            'monto_minimo_compra' => 'sometimes|nullable|numeric|min:0',
+            'limite_uso'          => 'sometimes|nullable|integer|min:1',
+        ]);
+
+        try {
+
+            if (isset($validatedData['codigo_cupon'])) {
+                $validatedData['codigo_cupon'] = strtoupper($validatedData['codigo_cupon']);
+            }
+
+
+            $campana = CampanaPromo::findOrFail($id);
+            $campana->update($validatedData);
+
+            // 4. Respuesta de éxito
+            return response()->json([
+                'success' => true,
+                'message' => 'Campaña actualizada exitosamente.',
+                'data'    => $campana
+            ], 200);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'La campaña no existe.'
+            ], 404);
+        } catch (\Exception $e) {
+            Log::error("Error al actualizar campaña: " . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'No se pudo actualizar la campaña.',
+                'error'   => $e->getMessage()
+            ], 500);
+        }
     }
 }

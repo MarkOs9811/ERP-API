@@ -83,6 +83,4 @@ class GestionClienteController extends Controller
             return response()->json(['success' => false, 'message' => 'Error al procesar analíticas.'], 500);
         }
     }
-
-   
 }
