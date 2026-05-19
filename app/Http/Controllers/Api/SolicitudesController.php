@@ -11,6 +11,7 @@ use App\Models\UnidadMedida;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class
 SolicitudesController extends Controller
@@ -193,10 +194,12 @@ SolicitudesController extends Controller
     // PARA SOLICITUDES EXTERNAS
     public function solicitudAddExterna(Request $request)
     {
+        $tempFiles = []; // Array dinámico para rastrear y limpiar archivos locales temporales
+
         try {
             $usuario = Auth::user();
 
-            // ✅ Validar datos y archivos
+            // ✅ Validar datos y archivos de entrada
             $validated = $request->validate([
                 'unidad_medida' => 'required|exists:unidad_medidas,id',
                 'proveedor' => 'required|exists:proveedores,id',
@@ -216,10 +219,10 @@ SolicitudesController extends Controller
             ]);
 
             // ✅ Buscar registros relacionados
-            $empresa = MiEmpresa::find($usuario->idEmpresa);
-            $area = Area::find($validated['area_origen']);
-            $proveedor = Proveedore::find($validated['proveedor']);
-            $unidad = UnidadMedida::find($validated['unidad_medida']);
+            $empresa = \App\Models\MiEmpresa::find($usuario->idEmpresa);
+            $area = \App\Models\Area::find($validated['area_origen']);
+            $proveedor = \App\Models\Proveedore::find($validated['proveedor']);
+            $unidad = \App\Models\UnidadMedida::find($validated['unidad_medida']);
 
             if (!$area || !$proveedor || !$unidad) {
                 return response()->json([
@@ -228,21 +231,34 @@ SolicitudesController extends Controller
                 ], 422);
             }
 
-            // 🖋️ Guardar firmas
-            $firmaSolicitantePath = $request->file('firmaSolicitante')->store('public/firmas');
-            $firmaAprobadorPath = $request->hasFile('firmaAprobador')
-                ? $request->file('firmaAprobador')->store('public/firmas')
-                : null;
+            // 1. 🖋️ Guardar firmas TEMPORALMENTE en el disco local para FPDF
+            $firmaSolicitanteLocal = $request->file('firmaSolicitante')->store('tmp', 'local');
+            $tempFiles[] = $firmaSolicitanteLocal;
 
-            // 🧾 Crear PDF con FPDF
+            $firmaAprobadorLocal = null;
+            if ($request->hasFile('firmaAprobador')) {
+                $firmaAprobadorLocal = $request->file('firmaAprobador')->store('tmp', 'local');
+                $tempFiles[] = $firmaAprobadorLocal;
+            }
+
+            // 2. 🏢 Descargar el logo de S3 temporalmente si existe
+            $logoLocalPath = null;
+            if ($empresa && $empresa->logo && Storage::disk('s3')->exists($empresa->logo)) {
+                $logoContent = Storage::disk('s3')->get($empresa->logo);
+                $logoLocalPath = 'tmp/logo_temp_' . time() . '.png';
+                Storage::disk('local')->put($logoLocalPath, $logoContent);
+                $tempFiles[] = $logoLocalPath;
+            }
+
+            // 3. 🧾 Crear PDF con FPDF
             require_once base_path('vendor/setasign/fpdf/fpdf.php');
             $pdf = new \FPDF();
             $pdf->AddPage();
             $pdf->SetFont('Arial', 'B', 16);
 
-            // 🏢 Encabezado de empresa
-            if ($empresa && $empresa->logo && file_exists(public_path('storage/' . $empresa->logo))) {
-                $pdf->Image(public_path('storage/' . $empresa->logo), 10, 10, 25, 25);
+            // Estampar el Logo desde la ruta local temporal
+            if ($logoLocalPath) {
+                $pdf->Image(storage_path('app/' . $logoLocalPath), 10, 10, 25, 25);
             }
 
             $pdf->Cell(0, 10, utf8_decode($empresa->nombre ?? 'Mi Empresa'), 0, 1, 'C');
@@ -257,10 +273,10 @@ SolicitudesController extends Controller
             $pdf->MultiCell(
                 0,
                 7,
-                "Nombre: {$validated['nombre_solicitante']}\n" .
-                    "Área: {$area->nombre}\n" .
-                    "Correo: {$validated['correo_electronico']}\n" .
-                    "Teléfono: {$validated['telefono']}"
+                "Nombre: " . utf8_decode($validated['nombre_solicitante']) . "\n" .
+                    "Area: " . utf8_decode($area->nombre) . "\n" .
+                    "Correo: " . utf8_decode($validated['correo_electronico']) . "\n" .
+                    "Telefono: " . utf8_decode($validated['telefono'])
             );
             $pdf->Ln(6);
 
@@ -271,13 +287,13 @@ SolicitudesController extends Controller
             $pdf->MultiCell(
                 0,
                 7,
-                "Descripción: {$validated['descripcion']}\n" .
-                    "Marca: " . ($validated['marcaProducto'] ?? 'N/A') . "\n" .
-                    "Cantidad: {$validated['cantidad']} {$unidad->nombre}\n" .
-                    "Proveedor: {$proveedor->nombre}\n" .
+                utf8_decode("Descripción: {$validated['descripcion']}\n") .
+                    "Marca: " . utf8_decode($validated['marcaProducto'] ?? 'N/A') . "\n" .
+                    "Cantidad: {$validated['cantidad']} " . utf8_decode($unidad->nombre) . "\n" .
+                    "Proveedor: " . utf8_decode($proveedor->nombre) . "\n" .
                     "Precio Estimado: S/ {$validated['precio_estimado']}\n" .
-                    "Motivo: {$validated['motivo']}\n" .
-                    "Uso Previsto: {$validated['uso_previsto']}\n" .
+                    "Motivo: " . utf8_decode($validated['motivo']) . "\n" .
+                    "Uso Previsto: " . utf8_decode($validated['uso_previsto']) . "\n" .
                     "Prioridad: " . ucfirst($validated['prioridad'])
             );
             $pdf->Ln(10);
@@ -288,34 +304,46 @@ SolicitudesController extends Controller
 
             $pdf->SetFont('Arial', '', 11);
             $pdf->Cell(0, 8, utf8_decode('Firma del Solicitante:'), 0, 1);
-            if (file_exists(storage_path('app/' . $firmaSolicitantePath))) {
-                $pdf->Image(storage_path('app/' . $firmaSolicitantePath), 10, $pdf->GetY(), 40);
-            }
+            $pdf->Image(storage_path('app/' . $firmaSolicitanteLocal), 10, $pdf->GetY(), 40);
             $pdf->Ln(30);
 
-            if ($firmaAprobadorPath && file_exists(storage_path('app/' . $firmaAprobadorPath))) {
+            if ($firmaAprobadorLocal) {
                 $pdf->Cell(0, 8, utf8_decode('Firma del Aprobador:'), 0, 1);
-                $pdf->Image(storage_path('app/' . $firmaAprobadorPath), 10, $pdf->GetY(), 40);
+                $pdf->Image(storage_path('app/' . $firmaAprobadorLocal), 10, $pdf->GetY(), 40);
                 $pdf->Ln(30);
             }
 
-            // 📁 Guardar PDF en storage
-            $pdfFileName = 'solicitud_' . time() . '.pdf';
-            $pdfPath = 'public/documentos_solicitud/' . $pdfFileName;
-            $pdf->Output(storage_path('app/' . $pdfPath), 'F');
+            // 4. 📁 Guardar PDF localmente de forma temporal
+            $tempPdfPath = 'tmp/solicitud_' . time() . '.pdf';
+            $tempFiles[] = $tempPdfPath;
+            $pdf->Output(storage_path('app/' . $tempPdfPath), 'F');
 
-            // ✅ Respuesta con URL pública
+            // 5. ☁️ Subir PDF definitivo a la carpeta estructurada en Cloudflare R2
+            $finalPdfPath = 'documentos_solicitud/solicitud_' . time() . '.pdf';
+            Storage::disk('s3')->put($finalPdfPath, file_get_contents(storage_path('app/' . $tempPdfPath)));
+
+            // 6. 🧹 Limpieza masiva de archivos temporales locales
+            Storage::disk('local')->delete($tempFiles);
+
+            // ✅ Respuesta final con la URL generada dinámicamente desde R2
             return response()->json([
                 'success' => true,
                 'message' => 'Solicitud creada correctamente',
-                'pdf_url' => asset(str_replace('public/', 'storage/', $pdfPath)),
+                'pdf_url' => Storage::disk('s3')->url($finalPdfPath),
             ]);
         } catch (\Illuminate\Validation\ValidationException $e) {
+            if (!empty($tempFiles)) {
+                Storage::disk('local')->delete($tempFiles);
+            }
             return response()->json([
                 'error' => 'Errores de validación',
                 'details' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
+            // Limpieza de emergencia ante cualquier excepción
+            if (!empty($tempFiles)) {
+                Storage::disk('local')->delete($tempFiles);
+            }
             Log::error('Error al generar PDF: ' . $e->getMessage(), ['exception' => $e]);
             return response()->json([
                 'error' => 'Error al generar PDF',

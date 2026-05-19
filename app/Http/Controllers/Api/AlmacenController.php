@@ -75,7 +75,7 @@ class AlmacenController extends Controller
     public function saveAlmacen(Request $request)
     {
         try {
-            // Validar y guardar archivos
+            // 1. Validar datos
             $request->validate([
                 'pdf_file' => 'required|mimes:pdf|max:10000', // Tamaño máximo de 10MB
                 'image_file' => 'required|image|max:5000', // Tamaño máximo de 5MB
@@ -85,32 +85,34 @@ class AlmacenController extends Controller
                 'categoria' => 'required|exists:categorias,id',
                 'unidad' => 'required|exists:unidad_medidas,id',
                 'proveedor' => 'required|exists:proveedores,id',
-                'precioUnit' => 'required|numeric|min:0', // Validar precioUnit
+                'precioUnit' => 'required|numeric|min:0',
+                'cantidad' => 'required|integer|min:1', // Agregado para el Kardex y Almacen
             ]);
 
-            // Validar si ya existe un producto con el mismo nombre, laboratorio y presentación
-            $existingProduct = Almacen::where('nombre', $request->nombreProducto)
-                ->where('laboratorio', $request->laboratorio)
-                ->where('presentacion', $request->presentacion)
+            // 2. Validar si ya existe el producto
+            $existingProduct = \App\Models\Almacen::where('nombre', $request->nombreProducto)
+                ->where('laboratorio', $request->laboratorio ?? null)
+                ->where('presentacion', $request->presentacion ?? null)
                 ->first();
 
             if ($existingProduct) {
                 return response()->json(['errors' => ['Ya existe un producto con el mismo nombre, laboratorio y presentación.']], 422);
             }
 
-            $pdfFilePath = $request->file('pdf_file')->store('pdfs');
-            $imageFilePath = $request->file('image_file')->store('images');
+            // 3. GUARDADO TEMPORAL LOCAL PARA FPDI
+            // Forzamos el disco 'local' porque FPDI necesita archivos físicos
+            $pdfFilePath = $request->file('pdf_file')->store('tmp', 'local');
+            $imageFilePath = $request->file('image_file')->store('tmp', 'local');
 
             $pdfFullPath = storage_path('app/' . $pdfFilePath);
             $imageFullPath = storage_path('app/' . $imageFilePath);
 
             if (!file_exists($pdfFullPath) || !file_exists($imageFullPath)) {
-                return response()->json(['errors' => ['Archivo no encontrado.']], 422);
+                return response()->json(['errors' => ['Archivo temporal no encontrado.']], 422);
             }
 
-            $fpdi = new Fpdi();
-
-            // Cargar el PDF original y agregar la firma
+            // 4. Procesar PDF con FPDI
+            $fpdi = new \setasign\Fpdi\Fpdi();
             $pageCount = $fpdi->setSourceFile($pdfFullPath);
 
             for ($pageNo = 1; $pageNo <= $pageCount; $pageNo++) {
@@ -118,40 +120,39 @@ class AlmacenController extends Controller
                 $fpdi->AddPage();
                 $fpdi->useTemplate($templateId, 0, 0);
 
-                // Ajustar coordenadas para la imagen de firma y texto
-                $x = 20; // Coordenada X (horizontal)
-                $y = 251; // Coordenada Y (vertical) para la firma
-                $textY = $y + 16; // Coordenada Y para el texto "Firma almacen"
+                // Coordenadas de firma
+                $x = 20;
+                $y = 251;
+                $textY = $y + 16;
 
-                // Agregar la imagen de firma en la parte inferior izquierda
-                $fpdi->Image($imageFullPath, $x, $y, 50); // Ajustar tamaño y posición según sea necesario
-
-                // Agregar texto "Firma del almacenero" debajo de la firma
+                $fpdi->Image($imageFullPath, $x, $y, 50);
                 $fpdi->SetFont('Arial', 'B', 12);
                 $fpdi->SetTextColor(0, 0, 0);
-                $fpdi->SetXY($x, $textY); // Ajustar la posición Y para el texto para que esté alineado con la firma
-                $fpdi->Cell(0, 10, 'Firma almacen', 0, 1, 'L'); // Texto alineado a la izquierda
+                $fpdi->SetXY($x, $textY);
+                $fpdi->Cell(0, 10, 'Firma almacen', 0, 1, 'L');
             }
 
+            // 5. Guardar PDF firmado temporalmente en disco local
+            $tempOutputName = 'temp_signed_' . time() . '.pdf';
+            $tempOutputFullPath = storage_path('app/tmp/' . $tempOutputName);
+            $fpdi->Output($tempOutputFullPath, 'F');
 
-            // Generar nombre único para el PDF firmado
+            // 6. SUBIDA DEFINITIVA A CLOUDFLARE R2
             $outputPdfPath = 'documentosFirmados/documentoCompleto_' . time() . '.pdf';
-            $outputPdfFullPath = storage_path('app/public/' . $outputPdfPath); // Guardar en la carpeta public
-            $fpdi->Output($outputPdfFullPath, 'F');
+            \Illuminate\Support\Facades\Storage::disk('s3')->put($outputPdfPath, file_get_contents($tempOutputFullPath));
 
-            // Generar la URL pública
-            $pdfUrl = Storage::url($outputPdfPath);
+            // 7. LIMPIEZA DE BASURA LOCAL
+            \Illuminate\Support\Facades\Storage::disk('local')->delete([$pdfFilePath, $imageFilePath]);
+            if (file_exists($tempOutputFullPath)) {
+                unlink($tempOutputFullPath);
+            }
 
-            // Eliminar los archivos originales
-            Storage::delete($pdfFilePath);
-            Storage::delete($imageFilePath);
-
-            // Generar código de producto único
+            // 8. Generar código de producto único
             $codigoProd = $this->generateUniqueProductCode();
 
-            // Guardar en la base de datos
-            $producto = new Almacen();
-            $producto->codigoProd = $codigoProd; // Asignar código generado
+            // 9. Guardar en la base de datos (Almacen)
+            $producto = new \App\Models\Almacen();
+            $producto->codigoProd = $codigoProd;
             $producto->idCategoria = $request->categoria;
             $producto->idUnidadMedida = $request->unidad;
             $producto->idProveedor = $request->proveedor;
@@ -159,31 +160,32 @@ class AlmacenController extends Controller
             $producto->marca = $request->marca;
             $producto->descripcion = $request->descripcion;
             $producto->cantidad = $request->cantidad;
-            $producto->precioUnit = $request->precioUnit; // Guardar precioUnit
-            $producto->estado = 1; // Estado activo por defecto
+            $producto->precioUnit = $request->precioUnit;
+            $producto->estado = 1;
             $producto->save();
 
-            // Registro en el kardex
-            $kardex = new Kardex();
+            // 10. Registro en el Kardex (CON LA RUTA CORTA DE S3)
+            $kardex = new \App\Models\Kardex();
             $kardex->idProducto = $producto->id;
             $kardex->idUsuario = auth()->user()->id;
             $kardex->cantidad = $request->cantidad;
             $kardex->tipo_movimiento = 'entrada';
             $kardex->descripcion = 'Nuevo ingreso';
-            $kardex->stock_anterior = 0; // Nuevo producto, no tiene stock anterior
-            $kardex->stock_actual = $request->cantidad; // El stock actual es igual a la cantidad ingresada
+            $kardex->stock_anterior = 0;
+            $kardex->stock_actual = $request->cantidad;
             $kardex->fecha_movimiento = now();
-            $kardex->documento = $pdfUrl; // Guardar la URL pública del documento
+            $kardex->documento = $outputPdfPath; // <--- RUTA CORTA LIMPIA
             $kardex->save();
 
-            // Devolver respuesta JSON de éxito
             return response()->json(['success' => true, 'message' => 'Producto ingresado correctamente'], 200);
         } catch (\Exception $e) {
-            // Devolver errores detallados en la respuesta JSON
-            return response()->json(['error' => false, 'message' => 'Error al procesar la solicitud: ' . $e->getMessage()], 500);
+            // Limpieza de emergencia en caso de que algo falle en medio proceso
+            if (isset($tempOutputFullPath) && file_exists($tempOutputFullPath)) {
+                unlink($tempOutputFullPath);
+            }
+            return response()->json(['success' => false, 'message' => 'Error al procesar la solicitud: ' . $e->getMessage()], 500);
         }
     }
-
 
 
     public function acualizarProducto(Request $request, $id)
@@ -195,13 +197,13 @@ class AlmacenController extends Controller
                     'required',
                     'string',
                     'max:255',
-                    $this->uniqueEmpresaSede('almacens','nombre',$id),
+                    $this->uniqueEmpresaSede('almacens', 'nombre', $id),
                 ],
                 'marca' => [
                     'required',
                     'string',
                     'max:255',
-                    $this->uniqueEmpresaSede('almacens','marca',$id),
+                    $this->uniqueEmpresaSede('almacens', 'marca', $id),
                 ],
                 'cantidad' => 'required|numeric|min:0',
                 'precioUnit' => 'required|numeric|min:0',
@@ -301,22 +303,23 @@ class AlmacenController extends Controller
             $user = auth()->user();  // Obtiene el usuario actual desde Sanctum
             Log::info('Inicio de la operación de agregar stock.');
 
-            // Almacenar archivos
-            $pdfFilePath = $request->file('pdf_file')->store('pdfs');
-            $imageFilePath = $request->file('image_file')->store('images');
-            Log::info('Archivos almacenados:', ['pdf' => $pdfFilePath, 'image' => $imageFilePath]);
+            // 1. Almacenamiento local temporal para procesamiento con FPDI
+            $pdfFilePath = $request->file('pdf_file')->store('tmp');
+            $imageFilePath = $request->file('image_file')->store('tmp');
+            Log::info('Archivos almacenados temporalmente:', ['pdf' => $pdfFilePath, 'image' => $imageFilePath]);
 
-            // Verificar existencia de archivos
+            // Verificar existencia de archivos locales temporales
             $pdfFullPath = storage_path('app/' . $pdfFilePath);
             $imageFullPath = storage_path('app/' . $imageFilePath);
             if (!file_exists($pdfFullPath) || !file_exists($imageFullPath)) {
-                Log::error('Uno de los archivos no existe:', ['pdf' => $pdfFullPath, 'image' => $imageFullPath]);
+                Log::error('Uno de los archivos temporales no existe:', ['pdf' => $pdfFullPath, 'image' => $imageFullPath]);
                 return response()->json(['errors' => ['Archivo no encontrado.']], 422);
             }
 
-            // Manipular PDF con FPDI
-            $fpdi = new Fpdi();
+            // 2. Manipular PDF con FPDI
+            $fpdi = new \setasign\Fpdi\Fpdi();
             $pageCount = $fpdi->setSourceFile($pdfFullPath);
+
             for ($pageNo = 1; $pageNo <= $pageCount; $pageNo++) {
                 $templateId = $fpdi->importPage($pageNo);
                 $fpdi->AddPage();
@@ -327,27 +330,35 @@ class AlmacenController extends Controller
                 $fpdi->SetFont('Arial', 'B', 12);
                 $fpdi->SetTextColor(0, 0, 0);
                 $fpdi->SetXY(20, 265);
-                $fpdi->Cell(0, 10, 'Firma Almacen', -250, 1, 'C');
+                $fpdi->Cell(0, 10, 'Firma Almacen', 0, 1, 'C'); // Ojo: Corregí el -250 por 0, el ancho negativo suele causar bugs en FPDF
             }
 
-            // Guardar PDF firmado
+            // 3. Generar y guardar el PDF firmado localmente de forma temporal
+            $tempOutputName = 'temp_signed_' . time() . '.pdf';
+            $tempOutputFullPath = storage_path('app/tmp/' . $tempOutputName);
+            $fpdi->Output($tempOutputFullPath, 'F');
+
+            // 4. SUBIDA DEFINITIVA A CLOUDFLARE R2
             $outputPdfPath = 'documentosFirmados/documentoCompleto_' . time() . '.pdf';
-            $outputPdfFullPath = storage_path('app/public/' . $outputPdfPath);
-            $fpdi->Output($outputPdfFullPath, 'F');
-            $pdfUrl = Storage::url($outputPdfPath);
+            Storage::disk('s3')->put($outputPdfPath, file_get_contents($tempOutputFullPath));
+            Log::info('PDF firmado subido a la nube correctamente.', ['path' => $outputPdfPath]);
+
+            // 5. Limpieza de archivos temporales (Muy importante para no saturar tu servidor)
             Storage::delete($pdfFilePath);
             Storage::delete($imageFilePath);
-            Log::info('PDF firmado almacenado correctamente.', ['path' => $pdfUrl]);
+            if (file_exists($tempOutputFullPath)) {
+                unlink($tempOutputFullPath);
+            }
 
-            // Actualizar stock del producto
-            $producto = Almacen::findOrFail($validatedData['idProductoEdit']);
+            // 6. Actualizar stock del producto
+            $producto = \App\Models\Almacen::findOrFail($validatedData['idProductoEdit']);
             $nuevoStock = $producto->cantidad + $validatedData['cantidadIngresar'];
             $producto->cantidad = $nuevoStock;
             $producto->save();
             Log::info('Stock actualizado correctamente.', ['producto_id' => $producto->id, 'nuevo_stock' => $nuevoStock]);
 
-            // Guardar en el Kardex
-            $kardex = new Kardex();
+            // 7. Guardar en el Kardex (Con la ruta corta)
+            $kardex = new \App\Models\Kardex();
             $kardex->idProducto = $producto->id;
             $kardex->idUsuario = $user->id;
             $kardex->cantidad = $validatedData['cantidadIngresar'];
@@ -356,7 +367,7 @@ class AlmacenController extends Controller
             $kardex->stock_anterior = $producto->cantidad - $validatedData['cantidadIngresar'];
             $kardex->stock_actual = $nuevoStock;
             $kardex->fecha_movimiento = now();
-            $kardex->documento = $pdfUrl;
+            $kardex->documento = $outputPdfPath; // <--- AQUÍ VA LA RUTA CORTA
             $kardex->save();
             Log::info('Registro en Kardex completado.', ['kardex_id' => $kardex->id]);
 
@@ -365,6 +376,11 @@ class AlmacenController extends Controller
                 'message' => 'Stock actualizado correctamente',
             ], 200);
         } catch (\Exception $e) {
+            // Limpieza de emergencia en caso de error
+            if (isset($tempOutputFullPath) && file_exists($tempOutputFullPath)) {
+                unlink($tempOutputFullPath);
+            }
+
             Log::error('Error en la operación de agregar stock.', ['error' => $e->getMessage()]);
             return response()->json([
                 'status' => 'error',
@@ -401,21 +417,24 @@ class AlmacenController extends Controller
 
         try {
             $user = auth()->user();
-            $areaOrigen = Area::where('nombre', 'almacen')->firstOrFail();
+            $areaOrigen = \App\Models\Area::where('nombre', 'almacen')->firstOrFail();
             $idAreaOrigen = $areaOrigen->id;
 
-            // Manejar la subida del archivo
+            // Manejar la subida del archivo directamente a Cloudflare R2
             $documentoPath = null;
             if ($request->hasFile('archivo')) {
-                $outputPdfPath = 'documentosFirmados/documentoCompleto_' . time() . '.pdf';
-                $outputPdfFullPath = storage_path('app/public/' . $outputPdfPath);
-                $request->file('archivo')->storeAs('public', $outputPdfPath);
-                $documentoPath = Storage::url($outputPdfPath);
+                // Generamos un nombre único con su extensión original
+                $extension = $request->file('archivo')->getClientOriginalExtension();
+                $nombreArchivo = 'documentoCompleto_' . time() . '.' . $extension;
+
+                // storeAs(carpeta_destino, nombre_archivo, disco)
+                // Esto devuelve la ruta corta: "documentosFirmados/documentoCompleto_123.pdf"
+                $documentoPath = $request->file('archivo')->storeAs('documentosFirmados', $nombreArchivo, 's3');
             }
 
             // Procesar cada producto
             foreach ($productos as $producto) {
-                $productoAlmacen = Almacen::findOrFail($producto['id']);
+                $productoAlmacen = \App\Models\Almacen::findOrFail($producto['id']);
                 $stockActual = $productoAlmacen->cantidad;
 
                 if ($producto['cantidad'] > $stockActual) {
@@ -429,8 +448,8 @@ class AlmacenController extends Controller
                 }
 
                 // Transferencia a área de ventas
-                if ($request->idDestino == Area::where('nombre', 'ventas')->value('id')) {
-                    $unidadMedida = UnidadMedida::findOrFail($productoAlmacen->idUnidadMedida);
+                if ($request->idDestino == \App\Models\Area::where('nombre', 'ventas')->value('id')) {
+                    $unidadMedida = \App\Models\UnidadMedida::findOrFail($productoAlmacen->idUnidadMedida);
                     $cantidadUnidades = $producto['cantidad'];
 
                     // Conversión de unidades
@@ -441,15 +460,15 @@ class AlmacenController extends Controller
                     }
 
                     // Buscar o crear en inventario
-                    $productoInventario = Inventario::where('codigoProd', $productoAlmacen->codigoProd)->first();
+                    $productoInventario = \App\Models\Inventario::where('codigoProd', $productoAlmacen->codigoProd)->first();
 
                     if ($productoInventario) {
                         $productoInventario->stock += $cantidadUnidades;
                         $productoInventario->save();
                     } else {
-                        Inventario::create([
+                        \App\Models\Inventario::create([
                             'idCategoria' => $productoAlmacen->idCategoria,
-                            'idUnidad' => UnidadMedida::where('nombre', 'unidad')->value('id'),
+                            'idUnidad' => \App\Models\UnidadMedida::where('nombre', 'unidad')->value('id'),
                             'codigoProd' => $productoAlmacen->codigoProd,
                             'nombre' => $productoAlmacen->nombre,
                             'marca' => $productoAlmacen->marca,
@@ -467,8 +486,8 @@ class AlmacenController extends Controller
                     }
                 }
 
-                // Registrar movimiento
-                Movimiento::create([
+                // Registrar movimiento (guardando la ruta corta del documento)
+                \App\Models\Movimiento::create([
                     'idProductoAlmacen' => $productoAlmacen->id,
                     'idAreaOrigen' => $idAreaOrigen,
                     'idAreaDestino' => $request->idDestino,
@@ -476,7 +495,7 @@ class AlmacenController extends Controller
                     'tipo_movimiento' => 'transferencia',
                     'cantidad' => $producto['cantidad'],
                     'fecha_movimiento' => now(),
-                    'documento' => $documentoPath
+                    'documento' => $documentoPath // <--- AQUÍ VA LA RUTA CORTA
                 ]);
 
                 // Actualizar stock en almacén
@@ -484,8 +503,8 @@ class AlmacenController extends Controller
                 $productoAlmacen->cantidad -= $producto['cantidad'];
                 $productoAlmacen->save();
 
-                // Registrar en kardex
-                Kardex::create([
+                // Registrar en kardex (guardando la ruta corta del documento)
+                \App\Models\Kardex::create([
                     'idProducto' => $productoAlmacen->id,
                     'idUsuario' => $user->id,
                     'cantidad' => $producto['cantidad'],
@@ -494,7 +513,7 @@ class AlmacenController extends Controller
                     'stock_anterior' => $stockAnterior,
                     'stock_actual' => $productoAlmacen->cantidad,
                     'fecha_movimiento' => now(),
-                    'documento' => $documentoPath
+                    'documento' => $documentoPath // <--- AQUÍ VA LA RUTA CORTA
                 ]);
             }
 

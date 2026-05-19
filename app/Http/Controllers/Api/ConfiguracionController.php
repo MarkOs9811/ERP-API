@@ -46,10 +46,10 @@ class ConfiguracionController extends Controller
                 if ($request->hasFile('logo')) {
 
                     if ($empresa->logo) {
-                        Storage::disk('public')->delete($empresa->logo);
+                        Storage::disk('s3')->delete($empresa->logo);
                     }
 
-                    $logoPath = $request->file('logo')->store('miEmpresa', 'public');
+                    $logoPath = $request->file('logo')->store('miEmpresa', 's3');
                 } else {
 
                     $logoPath = $empresa->logo;
@@ -59,7 +59,7 @@ class ConfiguracionController extends Controller
                 $empresa->update(array_merge($validated, ['logo' => $logoPath]));
             } else {
                 // Crear una nueva empresa si no existe
-                $logoPath = $request->hasFile('logo') ? $request->file('logo')->store('miEmpresa', 'public') : null;
+                $logoPath = $request->hasFile('logo') ? $request->file('logo')->store('miEmpresa', 's3') : null;
                 MiEmpresa::create(array_merge($validated, ['logo' => $logoPath]));
             }
 
@@ -103,7 +103,7 @@ class ConfiguracionController extends Controller
     public function getConfiguracion()
     {
         try {
-            $configuracion = Configuraciones::all();
+            $configuracion = Configuraciones::get();
             Log::info($configuracion);
             return response()->json([
                 'success' => true,

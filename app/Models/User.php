@@ -9,6 +9,7 @@ use App\Models\Scopes\EmpresaScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\HasApiTokens;
 
 /**
@@ -23,6 +24,7 @@ class User extends Authenticatable
         'idSede',
         'idEmpleado',
         'email',
+        'correo',
         'password',
         'estadoIncidencia',
         'fotoPerfil',
@@ -31,7 +33,17 @@ class User extends Authenticatable
         'auth_type',
         'google_spreadsheet_id',
     ];
+    protected $appends = ['foto_url'];
 
+    public function getFotoUrlAttribute()
+    {
+        if ($this->fotoPerfil) {
+            // Esto genera: https://pub-11a4bc2...r2.dev/fotosPlatos/mi_foto.jpg
+            return Storage::disk('s3')->url($this->fotoPerfil);
+        }
+
+        return null;
+    }
 
     /**
      * The attributes that should be hidden for serialization.

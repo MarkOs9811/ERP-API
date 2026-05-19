@@ -65,12 +65,12 @@ class InventarioController extends Controller
             // Manejo de la foto
             if ($request->hasFile('foto')) {
                 // Eliminar foto anterior si existe
-                if ($inventario->foto && Storage::disk('public')->exists($inventario->foto)) {
-                    Storage::disk('public')->delete($inventario->foto);
+                if ($inventario->foto && Storage::disk('s3')->exists($inventario->foto)) {
+                    Storage::disk('s3')->delete($inventario->foto);
                 }
 
                 // Guardar nueva foto
-                $path = $request->file('foto')->store('fotosInventario', 'public');
+                $path = $request->file('foto')->store('fotosInventario', 's3');
                 $inventario->foto = $path; // ej: fotosInventario/nombre.jpg
             }
 

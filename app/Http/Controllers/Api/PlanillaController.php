@@ -97,8 +97,8 @@ class PlanillaController extends Controller
 
         try {
 
-            // Guardar imagen
-            $path = $request->file('fotoPerfil')->store('fotos', 'public');
+            // Guardar imagen en S3 (R2) - ¡Esto ya lo tenías perfecto!
+            $path = $request->file('fotoPerfil')->store('fotos', 's3');
 
             // Crear persona
             $persona = Persona::create([
@@ -114,7 +114,7 @@ class PlanillaController extends Controller
                 'estado' => 1,
             ]);
 
-            // Definir nombre y ruta del archivo PDF
+            // Definir nombre y ruta corta del archivo PDF
             $pdfFileName = 'contrato_' . $request->input('num_documento') . '_' . time() . '.pdf';
             $pdfPathDB = 'contratos/' . $pdfFileName;
 
@@ -128,11 +128,11 @@ class PlanillaController extends Controller
                 'fecha_contrato' => $request->input('fecha_contrato'),
                 'fecha_fin_contrato' => $request->input('fecha_fin_contrato'),
                 'salario' => $request->input('salario'),
-                'docContrato' => $pdfPathDB, // Guardamos la ruta en la DB
+                'docContrato' => $pdfPathDB, // Guardamos la ruta corta limpia en la DB
                 'estado' => 1,
             ]);
 
-            // Generar y guardar el PDF físicamente
+            // Generar y guardar el PDF directamente en Cloudflare
             $dataPdf = [
                 'nombre_completo' => $request->input('nombre') . ' ' . $request->input('apellidos'),
                 'tipo_documento' => $request->input('tipo_documento'),
@@ -143,13 +143,13 @@ class PlanillaController extends Controller
                 'fecha_fin' => $request->input('fecha_fin_contrato'),
             ];
 
-            $pdf = Pdf::loadView('contrato', $dataPdf);
-            Storage::disk('public')->put($pdfPathDB, $pdf->output());
+            $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('contrato', $dataPdf);
+            Storage::disk('s3')->put($pdfPathDB, $pdf->output());
 
             // Registrar deducciones y bonificaciones
             if ($request->has('deducciones')) {
                 foreach ($request->input('deducciones') as $deduccion) {
-                    EmpleadoDeduccione::create([
+                    \App\Models\EmpleadoDeduccione::create([
                         'idEmpleado' => $empleado->id,
                         'idDeduccion' => $deduccion,
                     ]);
@@ -166,23 +166,13 @@ class PlanillaController extends Controller
             }
 
             // Crear usuario
-            // $nombre = explode(' ', $request->input('nombre'))[0];
-            // $email_base = strtolower($nombre) . '.123';
-            // $email = $email_base;
-            // $counter = 123;
-
-            // while (User::where('email', $email)->exists()) {
-            //     $counter++;
-            //     $email = strtolower($nombre) . '.' . $counter;
-            // }
-
             $user = User::create([
                 'idEmpleado' => $empleado->id,
                 'email' => $request->input('correo'),
                 'password' => Hash::make('123'),
                 'estadoIncidencia' => 'libre',
                 'estado' => 1,
-                'fotoPerfil' => $path,
+                'fotoPerfil' => $path, // Se guarda la ruta corta de S3
             ]);
 
             // Obtener roles asociados al cargo
@@ -211,7 +201,7 @@ class PlanillaController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Empleado registrado exitosamente',
-                'pdf_url' => asset('storage/' . $pdfPathDB) // Retornamos la URL pública para el frontend
+                'pdf_url' => Storage::disk('s3')->url($pdfPathDB)
             ], 200);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -899,7 +889,7 @@ class PlanillaController extends Controller
             // Registrar adelantos para los usuarios válidos
             $rutaDocumento = null;
             if ($request->hasFile('documento')) {
-                $rutaDocumento = $request->file('documento')->store('doc_justificacion_sueldo', 'public');
+                $rutaDocumento = $request->file('documento')->store('doc_justificacion_sueldo', 's3');
             }
 
             foreach ($usuariosValidos as $user) {

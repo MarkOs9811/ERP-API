@@ -6,6 +6,7 @@ use App\Models\Scopes\EmpresaScope;
 use App\Models\Scopes\SedeScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Storage;
 
 class Empleado extends Model
 {
@@ -22,16 +23,29 @@ class Empleado extends Model
         'docContrato',
         'estado',
     ];
+    protected $appends = ['docContratoUrl'];
+
+    /**
+     * Genera el campo virtual 'docContratoUrl'
+     */
+    public function getDocContratoUrlAttribute()
+    {
+        if ($this->docContrato) {
+            return Storage::disk('s3')->url($this->docContrato);
+        }
+
+        return null;
+    }
+    
     public function cargo()
     {
         return $this->belongsTo(Cargo::class, 'idCargo', 'id');
     }
+
     public function contrato()
     {
         return $this->belongsTo(TipoContrato::class, 'idContrato', 'id');
     }
-
-
     public function horario()
     {
         return $this->belongsTo(Horario::class, 'idHorario', 'id');

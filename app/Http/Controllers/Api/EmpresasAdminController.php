@@ -80,7 +80,7 @@ class EmpresasAdminController extends Controller
 
             // Guardar Logo
             if ($request->hasFile('logo')) {
-                $dataEmpresa['logo'] = $request->file('logo')->store('miEmpresa', 'public');
+                $dataEmpresa['logo'] = $request->file('logo')->store('miEmpresa', 's3');
             }
 
             // 3. Crear Registro de Empresa
@@ -281,10 +281,10 @@ class EmpresasAdminController extends Controller
 
             // 3. Lógica de reemplazo de imagen
             if ($request->hasFile('logo')) {
-                if ($empresa->logo && Storage::disk('public')->exists($empresa->logo)) {
-                    Storage::disk('public')->delete($empresa->logo);
+                if ($empresa->logo && Storage::disk('s3')->exists($empresa->logo)) {
+                    Storage::disk('s3')->delete($empresa->logo);
                 }
-                $data['logo'] = $request->file('logo')->store('miEmpresa', 'public');
+                $data['logo'] = $request->file('logo')->store('miEmpresa', 's3');
             }
 
             // 4. Actualizar

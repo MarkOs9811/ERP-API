@@ -1,10 +1,12 @@
 <?php
 
 namespace App\Models;
+
 use App\Models\Scopes\SedeScope;
 use App\Models\Scopes\EmpresaScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Storage;
 
 class Kardex extends Model
 {
@@ -21,6 +23,22 @@ class Kardex extends Model
         'documento',
     ];
     protected $dates = ['fecha_movimiento'];
+
+
+    protected $appends = ['kardex_url'];
+
+    /**
+     * Genera el campo virtual 'kardex_url'
+     */
+    public function getKardexUrlAttribute()
+    {
+        if ($this->documento) {
+            return Storage::disk('s3')->url($this->documento);
+        }
+
+        return null;
+    }
+
 
     public function producto()
     {

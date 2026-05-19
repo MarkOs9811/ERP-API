@@ -1,6 +1,7 @@
 <?php
 
 namespace App\Models;
+
 use App\Models\Scopes\SedeScope;
 use App\Models\Scopes\EmpresaScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;

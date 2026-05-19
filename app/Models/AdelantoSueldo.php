@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Model;
 // 1. IMPORTAMOS EL MODELO DE PERIODO
 use App\Models\PeriodoNomina;
 use App\Traits\FiltraPorPeriodoDePago;
+use Illuminate\Support\Facades\Storage;
 
 class AdelantoSueldo extends Model
 {
@@ -29,6 +30,22 @@ class AdelantoSueldo extends Model
         'idSede',    // (Asumo que también están aquí)
         'idPeriodo'  // <-- AÑADIDO
     ];
+
+    protected $appends = ['doc_justificacion_url'];
+
+    /**
+     * Genera el campo virtual 'doc_justificacion_url'
+     */
+    public function getDocJustificacionUrlAttribute()
+    {
+        if ($this->rutaJustificacion) {
+            /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
+            $disk = Storage::disk('s3');
+            return $disk->url($this->rutaJustificacion);
+        }
+
+        return null;
+    }
 
     public function usuario()
     {

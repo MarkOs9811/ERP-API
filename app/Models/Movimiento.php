@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Storage;
 
 class Movimiento extends Model
 {
@@ -18,7 +19,19 @@ class Movimiento extends Model
         'fecha_movimiento',
         'documento',
     ];
+    protected $appends = ['kardex_url'];
 
+    /**
+     * Genera el campo virtual 'kardex_url'
+     */
+    public function getKardexUrlAttribute()
+    {
+        if ($this->documento) {
+            return Storage::disk('s3')->url($this->documento);
+        }
+
+        return null;
+    }
     public function usuario()
     {
         return $this->belongsTo(User::class, 'idUsuario', 'id');

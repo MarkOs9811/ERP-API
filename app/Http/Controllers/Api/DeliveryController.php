@@ -59,7 +59,7 @@ class DeliveryController extends Controller
                 $nombreArchivo = time() . '_' . $archivo->getClientOriginalName();
 
 
-                $path = $archivo->storeAs('fotosPromociones', $nombreArchivo, 'public');
+                $path = $archivo->storeAs('fotosPromociones', $nombreArchivo, 's3');
                 $promociones->imagen_banner = $path;
             }
 
@@ -113,13 +113,13 @@ class DeliveryController extends Controller
 
                 // 1. Si ya existía una imagen anterior, la borramos del disco para ahorrar espacio
                 if ($promociones->imagen_banner) {
-                    Storage::disk('public')->delete($promociones->imagen_banner);
+                    Storage::disk('s3')->delete($promociones->imagen_banner);
                 }
 
                 // 2. Guardamos la nueva imagen exactamente como lo hicimos en el método save
                 $archivo = $request->file('imagen_banner');
                 $nombreArchivo = time() . '_' . $archivo->getClientOriginalName();
-                $path = $archivo->storeAs('fotosPromociones', $nombreArchivo, 'public');
+                $path = $archivo->storeAs('fotosPromociones', $nombreArchivo, 's3');
 
                 $promociones->imagen_banner = $path;
             }
@@ -174,8 +174,8 @@ class DeliveryController extends Controller
         try {
             $promociones = PromocionesApp::findOrFail($id);
             if ($promociones->imagen_banner) {
-                if (Storage::disk('public')->exists($promociones->imagen_banner)) {
-                    Storage::disk('public')->delete($promociones->imagen_banner);
+                if (Storage::disk('s3')->exists($promociones->imagen_banner)) {
+                    Storage::disk('s3')->delete($promociones->imagen_banner);
                 }
             }
             $promociones->delete();

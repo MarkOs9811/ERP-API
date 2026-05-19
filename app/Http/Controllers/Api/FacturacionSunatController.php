@@ -18,6 +18,7 @@ use Greenter\Ws\Services\SunatEndpoints;
 use DateTime;
 use Greenter\Model\Sale\Charge;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class FacturacionSunatController extends Controller
 {
@@ -205,13 +206,14 @@ class FacturacionSunatController extends Controller
                 $xml = $see->getFactory()->getLastXml();
 
                 // GUARDAR XML
+                // GUARDAR XML EN LA NUBE (S3/R2)
                 $rutaXmlRelativa = "xml/{$serie}-{$correlativo}.xml";
-                file_put_contents(storage_path("app/public/{$rutaXmlRelativa}"), $xml);
+                Storage::disk('s3')->put($rutaXmlRelativa, $xml);
 
-                // GUARDAR CDR
+                // GUARDAR CDR EN LA NUBE (S3/R2)
                 $cdrZip = $result->getCdrZip();
                 $rutaCdrRelativa = "cdr/{$serie}-{$correlativo}_CDR.zip";
-                file_put_contents(storage_path("app/public/{$rutaCdrRelativa}"), $cdrZip);
+                Storage::disk('s3')->put($rutaCdrRelativa, $cdrZip);
 
                 $observaciones = $result->getCdrResponse()->getNotes();
                 $estado = empty($observaciones) ? 1 : 3; // 1: Aceptado, 3: Aceptado con observaciones

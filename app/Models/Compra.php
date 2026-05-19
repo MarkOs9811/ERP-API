@@ -6,6 +6,7 @@ use App\Models\Scopes\EmpresaScope;
 use App\Models\Scopes\SedeScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Storage;
 
 class Compra extends Model
 {
@@ -21,17 +22,31 @@ class Compra extends Model
         'estado'
     ];
 
+
+    protected $appends = ['compra_url'];
+
+    /**
+     * Genera el campo virtual 'compra_url'
+     */
+    public function getCompraUrlAttribute()
+    {
+        if ($this->documento) {
+            return Storage::disk('s3')->url($this->document_path);
+        }
+
+        return null;
+    }
     public function usuario()
     {
-        return $this->belongsTo(User::class , 'idUsuario', 'id');
+        return $this->belongsTo(User::class, 'idUsuario', 'id');
     }
     public function proveedor()
     {
-        return $this->belongsTo(Proveedore::class , 'idProveedor', 'id');
+        return $this->belongsTo(Proveedore::class, 'idProveedor', 'id');
     }
     public function cuentaPorPagar()
     {
-        return $this->belongsTo(CuentasPorPagar::class , 'idCuentaPorPagar', 'id');
+        return $this->belongsTo(CuentasPorPagar::class, 'idCuentaPorPagar', 'id');
     }
     protected static function booted()
     {

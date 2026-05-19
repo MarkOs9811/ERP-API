@@ -78,7 +78,7 @@ class ComprasController extends Controller
             ]);
 
             // Obtener el último número de compra
-            $lastCompra = Compra::orderBy('id', 'desc')->first();
+            $lastCompra = \App\Models\Compra::orderBy('id', 'desc')->first();
             $newNumeroCompra = $lastCompra
                 ? str_pad(intval($lastCompra->numero_compra) + 1, 5, '0', STR_PAD_LEFT)
                 : '00001';
@@ -89,7 +89,7 @@ class ComprasController extends Controller
             // Si el método de pago es crédito
             if ($request->metodoPago === 'credito') {
                 Log::info('Registrando compra a crédito.');
-                $cuentaPorPagar = new CuentasPorPagar();
+                $cuentaPorPagar = new \App\Models\CuentasPorPagar();
                 $cuentaPorPagar->idUsuario = auth()->id();
                 $cuentaPorPagar->idProveedor = $request->idProveedor;
                 $cuentaPorPagar->nombreTransaccion = 'Cuentas por Pagar';
@@ -105,7 +105,7 @@ class ComprasController extends Controller
 
                 $montoPorCuota = $request->totalPagado / $request->numeroCuotas;
                 for ($i = 1; $i <= $request->numeroCuotas; $i++) {
-                    $cuota = new CuotasPorPagar();
+                    $cuota = new \App\Models\CuotasPorPagar();
                     $cuota->idCuentaPorPagar = $cuentaPorPagar->id;
                     $cuota->cuotas = $i;
                     $cuota->fecha_pago = now()->addMonths($i);
@@ -117,31 +117,28 @@ class ComprasController extends Controller
                 Log::info('Cuotas registradas correctamente.');
             } else {
                 Log::info('Registrando compra al contado.');
-                $libroDiario = new LibroDiario();
+                $libroDiario = new \App\Models\LibroDiario();
                 $libroDiario->idUsuario = auth()->id();
                 $libroDiario->fecha = $request->fecha_compra;
                 $libroDiario->descripcion = "Compra al contado a proveedor";
                 $libroDiario->estado = 0;
                 $libroDiario->save();
 
-                // --- CORRECCIÓN AQUÍ ---
+                // Registrar en libro diario
                 $this->registrarDetalleLibro($libroDiario->id, [
                     // 1. El Gasto (Mercadería/Compra) va al DEBE (Aumenta el gasto)
                     ['codigo' => '601', 'accion' => 'debe', 'monto' => $montoBase],
-
                     // 2. El IGV va al DEBE (Es un crédito fiscal a tu favor)
                     ['codigo' => '4011', 'accion' => 'debe', 'monto' => $igv],
-
                     // 3. La Caja va al HABER (El dinero sale de tu bolsillo)
                     ['codigo' => '101', 'accion' => 'haber', 'monto' => $request->totalPagado],
                 ]);
-
 
                 Log::info('Libro diario registrado.');
             }
 
             // Registrar la compra
-            $compra = new Compra();
+            $compra = new \App\Models\Compra();
             $compra->idUsuario = auth()->id();
             $compra->idProveedor = $request->idProveedor;
             $compra->idCuentaPorPagar = $idCuentaPorPagar;
@@ -152,11 +149,17 @@ class ComprasController extends Controller
             $compra->tipoCompra = $request->metodoPago;
             $compra->estado = $request->metodoPago === 'credito' ? 0 : 1;
 
+            // Manejo de archivo a la nube
             if ($request->hasFile('documento')) {
-                $filename = 'facturacion' . time() . '.' . $request->file('documento')->getClientOriginalExtension();
-                $path = $request->file('documento')->storeAs('public/documentosCompras', $filename);
-                $compra->document_path = Storage::url($path);
-                Log::info('Documento cargado:', ['path' => $compra->document_path]);
+                $filename = 'facturacion_' . time() . '.' . $request->file('documento')->getClientOriginalExtension();
+
+                // Subir al disco 's3' (Cloudflare R2) y obtener la ruta corta
+                $path = $request->file('documento')->storeAs('documentosCompras', $filename, 's3');
+
+                // Guardamos solo la ruta corta en la base de datos (Ej: documentosCompras/facturacion_123.pdf)
+                $compra->document_path = $path;
+
+                Log::info('Documento cargado en la nube:', ['path' => $compra->document_path]);
             }
 
             $compra->save();
@@ -168,7 +171,7 @@ class ComprasController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('Error en storeCompra: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
-            return response()->json(['success' => false, 'message' => 'Error al registrar la compra: ' . $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => 'Error al registrar la compra: ' . $e->getMessage()], 500);
         }
     }
 

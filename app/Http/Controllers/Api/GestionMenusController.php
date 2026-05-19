@@ -179,7 +179,7 @@ class GestionMenusController extends Controller
             $plato->descripcion = $validated['descripcion'];
 
             if ($request->hasFile('foto')) {
-                $fotoPath = $request->file('foto')->store('fotosPlatos', 'public');
+                $fotoPath = $request->file('foto')->store('fotosPlatos', 's3');
 
                 $plato->foto = $fotoPath;
             }
@@ -232,18 +232,20 @@ class GestionMenusController extends Controller
             $plato->descripcion = $request->descripcion;
             $plato->idCategoria = $request->categoria;
 
-            // Manejo de imagen
+            // Manejo de imagen en la nube (R2/S3)
             if ($request->hasFile('foto')) {
                 Log::debug("Procesando nueva imagen...");
 
-                if ($plato->foto && Storage::disk('public')->exists($plato->foto)) {
-                    Log::debug("Eliminando imagen anterior...");
-                    Storage::disk('public')->delete($plato->foto);
+                // Verificamos y eliminamos la imagen anterior usando el disco 's3'
+                if ($plato->foto && Storage::disk('s3')->exists($plato->foto)) {
+                    Log::debug("Eliminando imagen anterior en Cloudflare R2...");
+                    Storage::disk('s3')->delete($plato->foto);
                 }
 
-                $fotoPath = $request->file('foto')->store('fotosPlatos', 'public');
+                // Guardamos la nueva imagen usando el disco 's3'
+                $fotoPath = $request->file('foto')->store('fotosPlatos', 's3');
                 $plato->foto = $fotoPath;
-                Log::debug("Nueva imagen guardada", ['path' => $fotoPath]);
+                Log::debug("Nueva imagen guardada en nube", ['path' => $fotoPath]);
             } else {
                 Log::debug("No se recibió nueva imagen");
             }
@@ -260,7 +262,8 @@ class GestionMenusController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Plato actualizado correctamente',
-                'foto_url' => $plato->foto ? Storage::url($plato->foto) : null
+                // Forzamos al disco s3 a generar la URL pública configurada en el .env
+                'foto_url' => $plato->foto ? Storage::disk('s3')->url($plato->foto) : null
             ], 200);
         } catch (\Illuminate\Validation\ValidationException $e) {
             Log::error("Error de validación", [
