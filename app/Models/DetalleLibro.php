@@ -24,6 +24,6 @@ class DetalleLibro extends Model
 
     public function libroDiario()
     {
-        return $this->belongsTo(libroDiario::class, 'idLibroDiario');
+        return $this->belongsTo(LibroDiario::class, 'idLibroDiario');
     }
 }

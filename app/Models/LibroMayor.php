@@ -19,6 +19,6 @@ class LibroMayor extends Model
     ];
     public function cuenta()
     {
-        return $this->belongsTo(cuentasContables::class, 'idCuentaContable');
+        return $this->belongsTo(CuentasContables::class, 'idCuentaContable');
     }
 }
