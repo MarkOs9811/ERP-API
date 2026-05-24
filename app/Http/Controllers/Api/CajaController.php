@@ -158,7 +158,7 @@ class CajaController extends Controller
             $caja->save();
 
             // Crear un nuevo registro de caja
-            registrosCajas::create([
+            RegistrosCajas::create([
                 'idUsuario' => $user->id,
                 'idCaja' => $caja->id,
                 'montoInicial' => $request->input('montoApertura'),
@@ -185,7 +185,7 @@ class CajaController extends Controller
         try {
 
             // Buscar el registro de caja
-            $registroCaja = registrosCajas::with('usuario.empleado.persona')->where('idCaja', $id)
+            $registroCaja = RegistrosCajas::with('usuario.empleado.persona')->where('idCaja', $id)
                 ->whereNull('fechaCierre')
                 ->whereNull('horaCierre')
                 ->orderBy('created_at', 'desc')
