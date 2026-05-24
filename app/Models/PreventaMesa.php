@@ -20,19 +20,19 @@ class PreventaMesa extends Model
 
     public function plato()
     {
-        return $this->belongsTo(plato::class, 'idPlato');
+        return $this->belongsTo(Plato::class, 'idPlato');
     }
     public function usuario()
     {
-        return $this->belongsTo(empleado::class, 'idUsuario');
+        return $this->belongsTo(Empleado::class, 'idUsuario');
     }
     public function mesa()
     {
-        return $this->belongsTo(mesa::class, 'idMesa');
+        return $this->belongsTo(Mesa::class, 'idMesa');
     }
     public function caja()
     {
-        return $this->belongsTo(caja::class, 'idCaja');
+        return $this->belongsTo(Caja::class, 'idCaja');
     }
     public function pedido()
     {
