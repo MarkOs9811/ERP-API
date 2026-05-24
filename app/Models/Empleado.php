@@ -36,7 +36,7 @@ class Empleado extends Model
 
         return null;
     }
-    
+
     public function cargo()
     {
         return $this->belongsTo(Cargo::class, 'idCargo', 'id');
