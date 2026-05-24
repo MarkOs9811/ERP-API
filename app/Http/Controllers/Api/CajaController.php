@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Caja;
 use App\Models\Mesa;
-use App\Models\registrosCajas;
+use App\Models\RegistrosCajas;
 use App\Models\Venta;
 use App\Traits\EmpresaSedeValidation;
 use Carbon\Carbon;
@@ -311,7 +311,7 @@ class CajaController extends Controller
             Log::info("Caja cerrada en tabla Caja", $caja->toArray());
 
             // 3. Buscar último registro de caja abierto
-            $registroCaja = registrosCajas::where('idCaja', $idCaja)
+            $registroCaja = RegistrosCajas::where('idCaja', $idCaja)
                 ->whereNull('fechaCierre')
                 ->whereNull('horaCierre')
                 ->orderBy('created_at', 'desc')
