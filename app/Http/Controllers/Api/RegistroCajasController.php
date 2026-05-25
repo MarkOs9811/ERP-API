@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Caja;
-use App\Models\registrosCajas;
+use App\Models\RegistrosCajas;
 use Illuminate\Http\Request;
 
 class RegistroCajasController extends Controller
@@ -22,7 +22,7 @@ class RegistroCajasController extends Controller
     public function getRegistrosCajas()
     {
         try {
-            $registroCajas = registrosCajas::with('usuario.empleado.persona', 'caja')->orderBy('id', 'desc')->get();
+            $registroCajas = RegistrosCajas::with('usuario.empleado.persona', 'caja')->orderBy('id', 'desc')->get();
             return response()->json(['success' => true, 'data' => $registroCajas, 'message' => 'registros caja Obtenidas'], 200);
         } catch (\Exception $e) {
             return response()->json(['success' => false,  'message' => 'Error' . $e->getMessage()], 500);

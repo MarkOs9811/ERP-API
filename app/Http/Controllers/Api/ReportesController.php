@@ -19,7 +19,7 @@ use App\Models\Movimiento;
 use App\Models\PedidosWebRegistro;
 use App\Models\Plato;
 use App\Models\Proveedore;
-use App\Models\registrosCajas;
+use App\Models\RegistrosCajas;
 use App\Models\RegistrosCajas as ModelsRegistrosCajas;
 use App\Models\Solicitud;
 use App\Models\User;
@@ -444,7 +444,7 @@ class ReportesController extends Controller
                 'kardex'              => Kardex::class,
                 'inventario'          => Inventario::class,
                 'ventas'              => Venta::class,
-                'cajas'               => registrosCajas::class,
+                'cajas'               => RegistrosCajas::class,
                 'compras'             => Compra::class,
                 'vacaciones'          => Vacacione::class,
                 'adelantoSueldo'      => AdelantoSueldo::class,

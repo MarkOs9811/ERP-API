@@ -141,7 +141,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     // RUTAS PARA EL REGISTRO DE CAJAS - MODULO VENTAS
     Route::get('/cajasTools', [RegistroCajasController::class, 'getCajasAll']);
-    Route::get('/registrosCajas', [RegistroCajasController::class, 'getRegistrosCajas']);
+    Route::get('/RegistrosCajas', [RegistroCajasController::class, 'getRegistrosCajas']);
 
     // RUTAS PARA  SOLICITUDES  - MODULO VENTAS
     Route::get('/solicitudes', [SolicitudesController::class, 'getSolicitudes']);
