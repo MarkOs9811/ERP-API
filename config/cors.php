@@ -10,6 +10,7 @@ return [
     'allowed_origins' => [
         'http://localhost:3000',
         'http://localhost:4000',
+        'https://firewok-admin.vercel.app',
         'https://lustrous-cupcake-b9cf4a.netlify.app',
 
     ],
