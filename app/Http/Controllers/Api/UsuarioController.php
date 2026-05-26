@@ -15,7 +15,9 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\ValidationException;
 
 class UsuarioController extends Controller
 {
@@ -165,61 +167,63 @@ class UsuarioController extends Controller
 
     public function updateUsuario(Request $request, $id)
     {
-        Log::info('Iniciando actualización del usuario con ID: ' . $request);
-        $user = User::where('id', $id)->first();
-        $idPersona = $user->empleado->persona->id;
-        // Validación de datos
-        $validatedData = $request->validate([
-            'tipo_documento' => 'required|string',
-            'numero_documento' => 'required|numeric|unique:personas,documento_identidad,' . $idPersona,
-            'nombres' => 'required|string',
-            'apellidos' => 'required|string',
-            'correo_electronico' => 'required|email|unique:users,correo,' . $id,
-            'area' => 'required|exists:areas,id',
-            'sede' => 'required|exists:sedes,id',
-            'cargo' => 'required|exists:cargos,id',
-            'salario' => 'nullable|numeric',
-            'horario' => 'required|exists:horarios,id',
-        ]);
-
         try {
-            // Verificar si el DNI ya está registrado
-            $dniExistente = Persona::where('documento_identidad', $validatedData['numero_documento'])
-                ->where('id', '!=', $idPersona) // Asegurarse de que no sea el propio usuario
-                ->exists();
+            $user = User::findOrFail($id);
+            $idPersona = $user->empleado->persona->id;
 
-            if ($dniExistente) {
-                return response()->json(['success' => false, 'message' => 'El DNI ya está registrado para otro usuario.'], 400);
+            $validatedData = $request->validate([
+                'tipo_documento' => 'required|string',
+                'numero_documento' => 'required|numeric|unique:personas,documento_identidad,' . $idPersona,
+                'nombres' => 'required|string',
+                'apellidos' => 'required|string',
+                'correo_electronico' => 'required|email|unique:users,correo,' . $id,
+                'area' => 'required|exists:areas,id',
+                'sede' => 'required|exists:sedes,id',
+                'cargo' => 'required|exists:cargos,id',
+                'salario' => 'nullable|numeric',
+                'horario' => 'required|exists:horarios,id',
+                'foto_perfil' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2048',
+            ]);
+
+            DB::beginTransaction();
+
+            // 1. MANEJO SEGURO DE CLOUDFLARE (El truco está aquí)
+            $pathFoto = $user->fotoPerfil; // Mantenemos la foto actual por defecto
+
+            if ($request->hasFile('foto_perfil')) {
+                // Intentamos borrar la vieja, pero si falla, NO cancelamos el update
+                if ($user->fotoPerfil) {
+                    try {
+                        // Limpiamos la URL por si acaso se guardó la ruta absoluta
+                        $pathRelativo = str_replace(config('filesystems.disks.s3.url') . '/', '', $user->fotoPerfil);
+                        if (Storage::disk('s3')->exists($pathRelativo)) {
+                            Storage::disk('s3')->delete($pathRelativo);
+                        }
+                    } catch (\Exception $e) {
+                        Log::warning("No se pudo borrar foto anterior en S3, pero se continuará: " . $e->getMessage());
+                    }
+                }
+
+                // Guardamos la nueva foto sí o sí
+                $pathFoto = $request->file('foto_perfil')->store('fotos', 's3');
             }
 
-            // Verificar si el correo ya está registrado
-            $correoExistente = User::where('correo', $validatedData['correo_electronico'])
-                ->where('id', '!=', $id) // Asegurarse de que no sea el propio usuario
-                ->exists();
-
-            if ($correoExistente) {
-                return response()->json(['success' => false, 'message' => 'El correo electrónico ya está registrado para otro usuario.'], 400);
-            }
-
-            // Actualizar los datos del usuario
-            $usuario = User::findOrFail($id);
-            $usuario->update([
+            // 2. ACTUALIZAR MODELOS
+            $user->update([
                 'email' => $validatedData['correo_electronico'],
                 'correo' => $validatedData['correo_electronico'],
                 'idSede' => $validatedData['sede'],
+                'fotoPerfil' => $pathFoto, // Actualizamos la ruta de la nueva foto
             ]);
 
-            // Actualizar los datos del empleado
-            $empleado = $usuario->empleado;
-            $empleado->update([
+            $user->empleado->update([
                 'idArea' => $validatedData['area'],
                 'idCargo' => $validatedData['cargo'],
                 'salario' => $validatedData['salario'],
                 'idHorario' => $validatedData['horario'],
             ]);
 
-            $persona = $usuario->empleado->persona;
-            $persona->update([
+            $user->empleado->persona->update([
                 'tipo_documento' => $validatedData['tipo_documento'],
                 'documento_identidad' => $validatedData['numero_documento'],
                 'nombre' => $validatedData['nombres'],
@@ -227,9 +231,18 @@ class UsuarioController extends Controller
                 'correo' => $validatedData['correo_electronico'],
             ]);
 
-            return response()->json(['success' => true, 'message' => 'Usuario actualizado correctamente.']);
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Usuario actualizado correctamente'
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json(['success' => false, 'message' => 'Error de validación', 'errors' => $e->errors()], 422);
         } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Hubo un error al actualizar el usuario.'], 500);
+            DB::rollBack();
+            Log::error("Error crítico en updateUsuario: " . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'Error interno: ' . $e->getMessage()], 500);
         }
     }
 

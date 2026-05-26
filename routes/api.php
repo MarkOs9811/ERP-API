@@ -219,7 +219,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::get('/usuarios', [UsuarioController::class, 'showUser']);
     Route::post('/storeUsuario', [UsuarioController::class, 'guardarUsuario']);
     Route::get('/getUsuarioById/{id}', [UsuarioController::class, 'getUsuarioById']);
-    Route::put('/updateUsuario/{id}', [UsuarioController::class, 'updateUsuario']);
+    Route::post('/updateUsuario/{id}', [UsuarioController::class, 'updateUsuario']);
     Route::post('/usuarios/eliminar/{id}', [UsuarioController::class, 'eliminarUsuario']);
     Route::post('/usuarios/activar/{id}', [UsuarioController::class, 'activarUsuario']);
     Route::get('/usuarios/estadisticas', [UsuarioController::class, 'estadisticas']);
