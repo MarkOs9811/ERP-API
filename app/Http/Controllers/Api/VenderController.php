@@ -625,7 +625,7 @@ class VenderController extends Controller
                         'total' => $total,
                     ];
                     $facturacionSunatController = new FacturacionSunatController();
-                    $respuesta = $facturacionSunatController->generarFactura($datosFactura);
+                    $respuesta = $facturacionSunatController->generarFactura($datosFactura)->getData();
                     $this->registrarComprobante(
                         $venta,
                         $tipoComprobante,

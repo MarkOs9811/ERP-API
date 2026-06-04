@@ -328,7 +328,7 @@ class VenderAppCliente extends Controller
                         ];
 
                         $facturacionSunatController = new FacturacionSunatController();
-                        $respuesta = $facturacionSunatController->generarFactura($datosFactura);
+                        $respuesta = $facturacionSunatController->generarFactura($datosFactura)->getData();
 
                         $this->registrarComprobante(
                             $venta,
