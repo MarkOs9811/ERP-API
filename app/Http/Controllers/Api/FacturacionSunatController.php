@@ -50,10 +50,23 @@ class FacturacionSunatController extends Controller
             $solUser = ConfiguracionHelper::valor3('sunat');
             $solPassword = ConfiguracionHelper::valor4('sunat');
 
-            $certificatePath = storage_path('app/sunat_certificados/' . $certificateFile);
+            $rutaCertificado = 'sunat_certificados/' . $certificateFile;
+
+            if (!Storage::disk('s3')->exists($rutaCertificado)) {
+                throw new \Exception(
+                    "No se encontró el certificado SUNAT en R2: {$rutaCertificado}"
+                );
+            }
+            Log::info('Buscando certificado SUNAT', [
+                'archivo' => $certificateFile,
+                'ruta' => $rutaCertificado,
+                'existe' => Storage::disk('s3')->exists($rutaCertificado)
+            ]);
+            $certificateContent = Storage::disk('s3')
+                ->get('sunat_certificados/' . $certificateFile);
 
             $see = new See();
-            $see->setCertificate(file_get_contents($certificatePath));
+            $see->setCertificate($certificateContent);
             $see->setClaveSOL($ruc, $solUser, $solPassword);
             $see->setService($endpoint);
 
