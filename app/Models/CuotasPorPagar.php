@@ -21,4 +21,22 @@ class CuotasPorPagar extends Model
     {
         return $this->belongsTo(CuentasPorPagar::class);
     }
+    protected static function booted()
+    {
+
+        static::addGlobalScope(new EmpresaScope);
+        static::addGlobalScope(new SedeScope);
+        static::creating(function ($cuotasPagar) {
+            $user = auth()->user();
+
+            if ($user) {
+                if (empty($cuotasPagar->idSede)) {
+                    $cuotasPagar->idSede = $user->idSede;
+                }
+                if (empty($cuotasPagar->idEmpresa)) {
+                    $cuotasPagar->idEmpresa = $user->idEmpresa;
+                }
+            }
+        });
+    }
 }
