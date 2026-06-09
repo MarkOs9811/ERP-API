@@ -72,7 +72,7 @@ Route::post('/forgot-password', [PasswordResetController::class, 'sendResetLinkE
 Route::post('/reset-password', [PasswordResetController::class, 'reset']);
 
 
-// RUTAS PARA LOGEARSE CON GOOGLE
+// RUTAS PARA LOGEARSE CON GOOGLE PARA UNA UNICA VEZ
 Route::get('/auth/google/redirect', [GoogleController::class, 'redirectToGoogle']);
 Route::get('/auth/google/callback', [GoogleController::class, 'handleGoogleCallback']);
 

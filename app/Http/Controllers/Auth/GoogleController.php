@@ -94,13 +94,23 @@ class GoogleController extends Controller
 
             // 3. OBTENER TOKEN DE GOOGLE
             $googleUser = Socialite::driver('google')->stateless()->user();
-            $refreshToken = $googleUser->refreshToken;
 
+            Log::info('Google User recibido', [
+                'email' => $googleUser->email ?? null,
+                'id' => $googleUser->id ?? null,
+            ]);
+            $refreshToken = $googleUser->refreshToken;
+            Log::info('Refresh Token recibido', [
+                'existe' => !empty($refreshToken),
+                'primeros_20_caracteres' => $refreshToken ? substr($refreshToken, 0, 20) . '...' : null,
+            ]);
             if (!$refreshToken) {
                 Log::error('No se recibió Refresh Token de Google.');
                 return redirect("$frontendUrl/configuracion/integraciones?google_auth=failed&error=NoRefreshToken");
             }
-
+            Log::info('Buscando configuración Google Service', [
+                'empresa_id' => $targetCompanyId
+            ]);
             // 4. BUSCAR Y ACTUALIZAR LA CONFIGURACIÓN CORRECTA
             $config = Configuraciones::withoutGlobalScope(EmpresaScope::class)
                 ->where('nombre', 'Google Service')
@@ -112,10 +122,18 @@ class GoogleController extends Controller
                 return redirect("$frontendUrl/configuracion/integraciones?google_auth=failed&error=ConfigNotFound");
             }
 
+            Log::info('Configuración encontrada', [
+                'config_id' => $config->id,
+                'empresa_id' => $config->idEmpresa,
+            ]);
             // 5. GUARDAR TOKEN
             $config->valor4 = $refreshToken;
             $config->save();
-
+            Log::info('Token guardado correctamente', [
+                'config_id' => $config->id,
+                'valor4_existe' => !empty($config->valor4),
+                'primeros_20_caracteres' => substr($config->valor4, 0, 20) . '...',
+            ]);
             Log::info("Google Service autorizado. Token guardado para Empresa ID: $targetCompanyId");
 
             return redirect("$frontendUrl/configuracion/integraciones?google_auth=success");
