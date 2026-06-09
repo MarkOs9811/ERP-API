@@ -27,7 +27,7 @@ class ConfiguracionHelper
         });
     }
 
-    // Obtener estado (1 = activo, 0 = inactivo)
+    // Obtener estado (1 = activo, 0 = inactivo( para un nombre_config dado)
     public static function estado($nombreConfig, $idEmpresa = null)
     {
         $config = self::get($nombreConfig, $idEmpresa);
