@@ -4,19 +4,27 @@ namespace App\Helpers;
 
 use App\Models\Configuraciones;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache; // 👈 IMPORTANTE: Agregamos la fachada Cache
 
 class ConfiguracionHelper
 {
-    // Retorna toda la configuración activa para un nombre_config
+    // Retorna toda la configuración activa para un nombre_config (OPTIMIZADO CON CACHÉ)
     public static function get($nombreConfig, $idEmpresa = null)
     {
-        $query = Configuraciones::where('nombre', $nombreConfig);
+        // 1. Creamos una llave única para el post-it. Ej: "config_sunat_empresa_1"
+        $cacheKey = "config_{$nombreConfig}_empresa_{$idEmpresa}";
 
-        if ($idEmpresa) {
-            $query->where('idEmpresa', $idEmpresa);
-        }
+        // 2. recordamos el valor por 24 horas (86400 segundos). 
+        // Si ya está en memoria RAM, ni siquiera ejecuta la consulta SQL.
+        return Cache::remember($cacheKey, 86400, function () use ($nombreConfig, $idEmpresa) {
+            $query = Configuraciones::where('nombre', $nombreConfig);
 
-        return $query->first();
+            if ($idEmpresa) {
+                $query->where('idEmpresa', $idEmpresa);
+            }
+
+            return $query->first();
+        });
     }
 
     // Obtener estado (1 = activo, 0 = inactivo)
@@ -25,7 +33,6 @@ class ConfiguracionHelper
         $config = self::get($nombreConfig, $idEmpresa);
         return $config?->estado ?? 0; // Si no existe, devuelve 0 por defecto
     }
-
 
     // Obtener la clave secreta para un nombre_config
     public static function clave($nombreConfig, $idEmpresa = null)
@@ -41,7 +48,6 @@ class ConfiguracionHelper
         return $config?->valor1;
     }
 
-    // Igual para valor2, valor3
     public static function valor2($nombreConfig, $idEmpresa = null)
     {
         $config = self::get($nombreConfig, $idEmpresa);
@@ -53,19 +59,31 @@ class ConfiguracionHelper
         $config = self::get($nombreConfig, $idEmpresa);
         return $config?->valor3;
     }
+
     public static function valor4($nombreConfig, $idEmpresa = null)
     {
         $config = self::get($nombreConfig, $idEmpresa);
         return $config?->valor4;
     }
+
+    // ==========================================
+    // SECCIÓN DE ESCRITURA (INVALIDACIÓN DE CACHÉ)
+    // ==========================================
+
     public static function guardarValorColumna($nombreConfig, $columna, $valor, $idEmpresa = null)
     {
         try {
-            $config = self::get($nombreConfig, $idEmpresa);
+            // Buscamos en la BD para actualizar (el get trae de caché, pero no importa porque Laravel sabe actualizar el objeto)
+            $config = Configuraciones::where('nombre', $nombreConfig)->where('idEmpresa', $idEmpresa)->first();
 
             if ($config) {
                 $config->{$columna} = $valor;
                 $config->save();
+
+                // 🚨 LIMPIEZA DE CACHÉ: Como el valor cambió, borramos el "Post-it"
+                $cacheKey = "config_{$nombreConfig}_empresa_{$idEmpresa}";
+                Cache::forget($cacheKey);
+
                 return true;
             }
             return false;
@@ -74,10 +92,10 @@ class ConfiguracionHelper
             return false;
         }
     }
+
     public static function crearOActualizarValor($nombreConfig, $columna, $valor, $idEmpresa = null)
     {
         try {
-            // updateOrCreate buscará la fila y la actualizará, o la creará si no existe
             Configuraciones::updateOrCreate(
                 [
                     'nombre' => $nombreConfig,
@@ -87,6 +105,11 @@ class ConfiguracionHelper
                     $columna => $valor
                 ]
             );
+
+            // 🚨 LIMPIEZA DE CACHÉ: Como el valor cambió o se creó, borramos el "Post-it"
+            $cacheKey = "config_{$nombreConfig}_empresa_{$idEmpresa}";
+            Cache::forget($cacheKey);
+
             return true;
         } catch (\Exception $e) {
             Log::error("Error en crearOActualizarValor para $nombreConfig: " . $e->getMessage());
