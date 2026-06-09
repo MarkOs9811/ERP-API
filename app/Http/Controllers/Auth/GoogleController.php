@@ -62,7 +62,7 @@ class GoogleController extends Controller
 
     public function handleGoogleCallback(Request $request)
     {
-        $frontendUrl = env('FRONTEND_URL', 'http://localhost:3000');
+        $frontendUrl = env('FRONTEND_URL', 'https://firewok-admin.vercel.app');
 
         try {
             // 1. CONFIGURACIÓN SOCIALITE
