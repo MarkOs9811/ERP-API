@@ -367,6 +367,8 @@ class VenderController extends Controller
             $ClienteId = null;
             $idUsuarioAuth = Auth::id();
 
+            // Mostrar el metodo de pago
+            Log::info('metodo pago'.$nombreMetodo);
             // Validaciones básicas
             if ($idUsuarioAuth != $idUsuario) {
                 return response()->json(['success' => false, 'message' => 'Su código no pertenece a esta cuenta.']);

@@ -96,7 +96,18 @@ class PeriodoNominaController extends Controller
                 'success' => true,
                 'message' => 'Periodos generados correctamente. ' . ($debeAbrirPrimerPeriodo ? 'El primer periodo se ha abierto automáticamente.' : '')
             ], 201);
+            
+        } catch (ValidationException $e) {
+            // 1. CAPTURAMOS LA VALIDACIÓN PRIMERO PARA QUE EL FRONTEND LO LEA COMO 422
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Error de validación.',
+                'errors'  => $e->errors()
+            ], 422);
+
         } catch (\Exception $e) {
+            // 2. ERRORES DE BASE DE DATOS O CÓDIGO CAEN AQUÍ
             DB::rollBack();
             return response()->json([
                 'success' => false,
