@@ -24,17 +24,16 @@ class PromocionesApp extends Model
         'estado',
     ];
 
-    protected $appends = ['foto_promocion'];
+    protected $appends = ['foto_url'];
 
     public function getFotoUrlAttribute()
     {
         if ($this->imagen_banner) {
-            // Esto genera: https://pub-11a4bc2...r2.dev/fotosPlatos/mi_foto.jpg
             return Storage::disk('s3')->url($this->imagen_banner);
         }
-
         return null;
     }
+
     public function plato()
     {
         return $this->belongsTo(Plato::class, 'idPlato', 'id');
