@@ -6,6 +6,7 @@ use App\Models\Scopes\EmpresaScope;
 use App\Models\Scopes\SedeScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Storage;
 
 class PromocionesApp extends Model
 {
@@ -22,9 +23,21 @@ class PromocionesApp extends Model
         'fecha_fin',
         'estado',
     ];
+
+    protected $appends = ['foto_promocion'];
+
+    public function getFotoUrlAttribute()
+    {
+        if ($this->imagen_banner) {
+            // Esto genera: https://pub-11a4bc2...r2.dev/fotosPlatos/mi_foto.jpg
+            return Storage::disk('s3')->url($this->imagen_banner);
+        }
+
+        return null;
+    }
     public function plato()
     {
-        return $this->belongsTo(Plato::class , 'idPlato', 'id');
+        return $this->belongsTo(Plato::class, 'idPlato', 'id');
     }
 
     protected static function booted()
