@@ -140,7 +140,7 @@ class GoogleController extends Controller
             ->redirect();
     }
 
-    // 2. Maneja la respuesta (Callback)
+    // 2. Maneja la respuesta (Callback) PARA CLIENTES DE LA APP MOVIL
     public function handleGoogleCallbackCliente()
     {
         try {
