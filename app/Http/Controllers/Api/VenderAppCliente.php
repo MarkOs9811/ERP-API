@@ -145,13 +145,20 @@ class VenderAppCliente extends Controller
                 $referenciaPagoMp = $payment->id;
                 Log::info("✅ Cobro Mercado Pago Exitoso. ID: " . $referenciaPagoMp);
             } catch (MPApiException $e) {
-                $apiResponse = $e->getApiResponse();
-                $detalleError = $apiResponse ? $apiResponse->getContent() : ['error' => 'Sin detalles adicionales'];
-                Log::error("❌ RECHAZO DE MERCADO PAGO (PRODUCCIÓN): ", (array) $detalleError);
+
+                Log::error('❌ MP ERROR COMPLETO', [
+                    'message' => $e->getMessage(),
+                    'status' => $e->getApiResponse()
+                        ? $e->getApiResponse()->getStatusCode()
+                        : null,
+                    'content' => $e->getApiResponse()
+                        ? $e->getApiResponse()->getContent()
+                        : null,
+                ]);
 
                 return response()->json([
                     'success' => false,
-                    'message' => 'Error de validación con el banco o pasarela. Intenta con otra tarjeta válida.'
+                    'message' => 'Error Mercado Pago'
                 ], 400);
             } catch (\Exception $e) {
                 Log::error("Error general API Mercado Pago: " . $e->getMessage());
