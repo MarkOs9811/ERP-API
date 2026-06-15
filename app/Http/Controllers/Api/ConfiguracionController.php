@@ -677,12 +677,15 @@ class ConfiguracionController extends Controller
         }
     }
 
-    public function getConfigDeliveryEmpresa()
+    public function getConfigDeliveryEmpresa($idSede)
     {
         try {
             $idEmpresa = 2;
 
-            $configuracion = ConfiguracionDelivery::where('idEmpresa', $idEmpresa)->first();
+            $configuracion = ConfiguracionDelivery::where([
+                'idEmpresa' => $idEmpresa,
+                'idSede'    => $idSede
+            ])->first();
 
             if (!$configuracion) {
                 return response()->json(['success' => false, 'message' => 'No hay configuración para esta empresa'], 404);
