@@ -203,7 +203,6 @@ class DeliveryController extends Controller
     public function saveConfiguracionZonas(Request $request)
     {
         try {
-
             $request->validate([
                 'sede_id' => 'required|integer',
                 'costo_base_delivery' => 'required|numeric',
@@ -211,8 +210,11 @@ class DeliveryController extends Controller
                 'tiempo_min' => 'required|integer',
                 'tiempo_max' => 'required|integer',
                 'propinas_sugeridas' => 'nullable|json',
+                // NUEVOS CAMPOS
+                'hora_apertura' => 'required|date_format:H:i',
+                'hora_cierre' => 'required|date_format:H:i',
+                'dias_atencion' => 'required|json',
             ]);
-
 
             $configuracion = ConfiguracionDelivery::updateOrCreate(
                 [
@@ -224,6 +226,10 @@ class DeliveryController extends Controller
                     'tiempo_min' => $request->tiempo_min,
                     'tiempo_max' => $request->tiempo_max,
                     'propinas_sugeridas' => $request->propinas_sugeridas ? json_decode($request->propinas_sugeridas, true) : null,
+                    // NUEVOS CAMPOS
+                    'hora_apertura' => $request->hora_apertura,
+                    'hora_cierre' => $request->hora_cierre,
+                    'dias_atencion' => $request->dias_atencion ? json_decode($request->dias_atencion, true) : null,
                     'estado' => '1',
                 ]
             );
@@ -250,20 +256,20 @@ class DeliveryController extends Controller
     {
         try {
             $request->validate([
-                // Validamos que el idSede sea único, pero ignoramos el ID del registro actual
-
                 'sede_id' => 'required|integer|unique:configuracion_deliveries,idSede,' . $id,
                 'costo_base_delivery' => 'required|numeric',
                 'costo_prioridad' => 'nullable|numeric',
                 'tiempo_min' => 'required|integer',
                 'tiempo_max' => 'required|integer',
                 'propinas_sugeridas' => 'nullable|json',
+                // NUEVOS CAMPOS
+                'hora_apertura' => 'required|date_format:H:i',
+                'hora_cierre' => 'required|date_format:H:i',
+                'dias_atencion' => 'required|json',
             ]);
 
-            // 1. Buscamos el registro existente por su $id
             $configuracion = ConfiguracionDelivery::findOrFail($id);
 
-            // 2. Actualizamos los datos de ese registro específico
             $configuracion->update([
                 'idSede' => $request->sede_id,
                 'costo_base_delivery' => $request->costo_base_delivery,
@@ -271,7 +277,10 @@ class DeliveryController extends Controller
                 'tiempo_min' => $request->tiempo_min,
                 'tiempo_max' => $request->tiempo_max,
                 'propinas_sugeridas' => $request->propinas_sugeridas ? json_decode($request->propinas_sugeridas, true) : null,
-
+                // NUEVOS CAMPOS
+                'hora_apertura' => $request->hora_apertura,
+                'hora_cierre' => $request->hora_cierre,
+                'dias_atencion' => $request->dias_atencion ? json_decode($request->dias_atencion, true) : null,
             ]);
 
             return response()->json([

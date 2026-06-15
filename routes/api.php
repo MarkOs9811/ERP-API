@@ -462,7 +462,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
 
     // CRUD ZONA Y TARIFAS
-    Route::get('delivery/zona-tarifa', [DeliveryController::class, 'getZonas']);
+
     Route::post('delivery/zona-tarifa', [DeliveryController::class, 'saveConfiguracionZonas']);
     Route::put('delivery/zona-tarifa-estado/{id}', [DeliveryController::class, 'updateEstadoZonas']);
     Route::put('delivery/zona-tarifa/{id}', [DeliveryController::class, 'updateConfiguracionZonas']);
