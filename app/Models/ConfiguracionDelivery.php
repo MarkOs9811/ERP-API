@@ -18,6 +18,9 @@ class ConfiguracionDelivery extends Model
         'costo_prioridad',
         'tiempo_min',
         'tiempo_max',
+        'hora_apertura',
+        'hora_cierre',
+        'dias_atencion',
         'propinas_sugeridas',
         'estado',
     ];
@@ -32,11 +35,11 @@ class ConfiguracionDelivery extends Model
     // Relación inversa (opcional)
     public function empresa()
     {
-        return $this->belongsTo(MiEmpresa::class , 'idEmpresa', 'id');
+        return $this->belongsTo(MiEmpresa::class, 'idEmpresa', 'id');
     }
     public function sede()
     {
-        return $this->belongsTo(Sede::class , 'idSede', 'id');
+        return $this->belongsTo(Sede::class, 'idSede', 'id');
     }
     protected static function booted()
     {
