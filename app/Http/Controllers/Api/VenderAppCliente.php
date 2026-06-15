@@ -114,6 +114,9 @@ class VenderAppCliente extends Controller
 
         if ($request->filled('token_mercadopago')) {
             try {
+                Log::info('ACCESS TOKEN', [
+                    'token' => substr(env('MERCADOPAGO_ACCESS_TOKEN'), 0, 20)
+                ]);
                 MercadoPagoConfig::setAccessToken(env('MERCADOPAGO_ACCESS_TOKEN'));
                 $client = new PaymentClient();
 
@@ -172,9 +175,7 @@ class VenderAppCliente extends Controller
                 $lat = $direccion ? $direccion->latitud : null;
                 $lng = $direccion ? $direccion->longitud : null;
                 $codigo = 'PED-' . strtoupper(Str::random(6));
-                Log::info('ACCESS TOKEN', [
-                    'token' => substr(env('MERCADOPAGO_ACCESS_TOKEN'), 0, 20)
-                ]);
+
                 $pedidoWeb = PedidosWebRegistro::create([
                     'idEmpresa'      => $request->idEmpresa,
                     'idSede'         => $request->idSede,
