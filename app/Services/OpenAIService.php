@@ -329,129 +329,129 @@ class OpenAIService
         }
     }
 
-    public function generarComboConOpenAI($datos)
-    {
-        try {
-            if (!$this->client) {
-                throw new \Exception("OpenAI no está configurado.");
-            }
-            // Procesar cada categoría para extraer nombres y precios
-            $procesarCategoria = function ($items) {
-                if (empty($items)) return [];
-                if (is_array($items)) {
-                    return array_map(function ($item) {
-                        return [
-                            'nombre' => $item['nombre'] ?? '',
-                            'precio' => $item['precio'] ?? 0
-                        ];
-                    }, $items);
-                } else {
-                    return $items->map(function ($item) {
-                        return [
-                            'nombre' => $item->nombre,
-                            'precio' => $item->precio
-                        ];
-                    })->toArray();
-                }
-            };
+    // public function generarComboConOpenAI($datos)
+    // {
+    //     try {
+    //         if (!$this->client) {
+    //             throw new \Exception("OpenAI no está configurado.");
+    //         }
+    //         // Procesar cada categoría para extraer nombres y precios
+    //         $procesarCategoria = function ($items) {
+    //             if (empty($items)) return [];
+    //             if (is_array($items)) {
+    //                 return array_map(function ($item) {
+    //                     return [
+    //                         'nombre' => $item['nombre'] ?? '',
+    //                         'precio' => $item['precio'] ?? 0
+    //                     ];
+    //                 }, $items);
+    //             } else {
+    //                 return $items->map(function ($item) {
+    //                     return [
+    //                         'nombre' => $item->nombre,
+    //                         'precio' => $item->precio
+    //                     ];
+    //                 })->toArray();
+    //             }
+    //         };
 
-            // Obtener datos de cada categoría
-            $brasas = $procesarCategoria($datos['brasas'] ?? []);
-            $hamburguesas = $procesarCategoria($datos['hamburguesas'] ?? []);
-            $platos = $procesarCategoria($datos['platos'] ?? []);
-            $bebidas = $procesarCategoria($datos['bebidas'] ?? []);
+    //         // Obtener datos de cada categoría
+    //         $brasas = $procesarCategoria($datos['brasas'] ?? []);
+    //         $hamburguesas = $procesarCategoria($datos['hamburguesas'] ?? []);
+    //         $platos = $procesarCategoria($datos['platos'] ?? []);
+    //         $bebidas = $procesarCategoria($datos['bebidas'] ?? []);
 
-            // Crear listas para el prompt
-            $formatItems = function ($items) {
-                return implode("\n", array_map(
-                    fn($item) => "• {$item['nombre']} (S/ {$item['precio']})",
-                    $items
-                ));
-            };
+    //         // Crear listas para el prompt
+    //         $formatItems = function ($items) {
+    //             return implode("\n", array_map(
+    //                 fn($item) => "• {$item['nombre']} (S/ {$item['precio']})",
+    //                 $items
+    //             ));
+    //         };
 
-            $mensajeSistema = "
-        [CONTEXTO ACTUALIZADO]
-        Eres un chef y experto en precios para restaurantes. Tu tarea es:
-        1. Crear combos innovadores mezclando categorías
-        2. Calcular un precio final atractivo considerando:
-           - Suma de precios individuales
-           - Descuento del 10-15% por ser combo
-           - Precios psicológicos (ej: S/ 39.90 en lugar de S/ 40)
+    //         $mensajeSistema = "
+    //     [CONTEXTO ACTUALIZADO]
+    //     Eres un chef y experto en precios para restaurantes. Tu tarea es:
+    //     1. Crear combos innovadores mezclando categorías
+    //     2. Calcular un precio final atractivo considerando:
+    //        - Suma de precios individuales
+    //        - Descuento del 10-15% por ser combo
+    //        - Precios psicológicos (ej: S/ 39.90 en lugar de S/ 40)
 
-        [CATEGORÍAS DISPONIBLES CON PRECIOS]
-        1. BRASAS:
-        " . $formatItems($brasas) . "
+    //     [CATEGORÍAS DISPONIBLES CON PRECIOS]
+    //     1. BRASAS:
+    //     " . $formatItems($brasas) . "
 
-        2. HAMBURGUESAS:
-        " . $formatItems($hamburguesas) . "
+    //     2. HAMBURGUESAS:
+    //     " . $formatItems($hamburguesas) . "
 
-        3. PLATOS:
-        " . $formatItems($platos) . "
+    //     3. PLATOS:
+    //     " . $formatItems($platos) . "
 
-        4. BEBIDAS:
-        " . ($bebidas ? $formatItems($bebidas) : "NINGUNA - Sugerir bebida") . "
+    //     4. BEBIDAS:
+    //     " . ($bebidas ? $formatItems($bebidas) : "NINGUNA - Sugerir bebida") . "
 
-        [REGLAS DE PRECIO]
-        • Calcular como: (Suma de precios) - (10% a 15% de descuento)
-        • Redondear a .90 o .50 (ej: S/ 29.90 en lugar de S/ 30)
-        • Mostrar siempre 2 decimales
+    //     [REGLAS DE PRECIO]
+    //     • Calcular como: (Suma de precios) - (10% a 15% de descuento)
+    //     • Redondear a .90 o .50 (ej: S/ 29.90 en lugar de S/ 30)
+    //     • Mostrar siempre 2 decimales
 
-        [FORMATO REQUERIDO]
-        {
-          \"nombre\": \"Nombre basado en los items\",
-          \"descripcion\": \"Descripción atractiva\",
-          \"precioCombo\": 39.90, // Precio calculado con descuento
-          \"items\": [
-            { \"tipo\": \"categoría\", \"nombre\": \"Item 1\", \"precio\": 15.00 },
-            { \"tipo\": \"categoría\", \"nombre\": \"Item 2\", \"precio\": 20.00 },
-            { \"tipo\": \"bebida\", \"nombre\": \"Bebida\", \"precio\": 8.50 }
-          ]
-        }
+    //     [FORMATO REQUERIDO]
+    //     {
+    //       \"nombre\": \"Nombre basado en los items\",
+    //       \"descripcion\": \"Descripción atractiva\",
+    //       \"precioCombo\": 39.90, // Precio calculado con descuento
+    //       \"items\": [
+    //         { \"tipo\": \"categoría\", \"nombre\": \"Item 1\", \"precio\": 15.00 },
+    //         { \"tipo\": \"categoría\", \"nombre\": \"Item 2\", \"precio\": 20.00 },
+    //         { \"tipo\": \"bebida\", \"nombre\": \"Bebida\", \"precio\": 8.50 }
+    //       ]
+    //     }
 
-        [EJEMPLO]
-        {
-          \"nombre\": \"Pollo & Causa Fusion\",
-          \"descripcion\": \"Lo mejor de la parrilla con sabores tradicionales\",
-          \"precioCombo\": 42.90,
-          \"items\": [
-            { \"tipo\": \"brasa\", \"nombre\": \"1/2 Pollo a la Brasa\", \"precio\": 25.00 },
-            { \"tipo\": \"plato\", \"nombre\": \"Causa Limeña\", \"precio\": 18.00 },
-            { \"tipo\": \"bebida\", \"nombre\": \"Chicha Morada\", \"precio\": 6.50 }
-          ]
-        }";
+    //     [EJEMPLO]
+    //     {
+    //       \"nombre\": \"Pollo & Causa Fusion\",
+    //       \"descripcion\": \"Lo mejor de la parrilla con sabores tradicionales\",
+    //       \"precioCombo\": 42.90,
+    //       \"items\": [
+    //         { \"tipo\": \"brasa\", \"nombre\": \"1/2 Pollo a la Brasa\", \"precio\": 25.00 },
+    //         { \"tipo\": \"plato\", \"nombre\": \"Causa Limeña\", \"precio\": 18.00 },
+    //         { \"tipo\": \"bebida\", \"nombre\": \"Chicha Morada\", \"precio\": 6.50 }
+    //       ]
+    //     }";
 
-            // Resto de la llamada a la API...
-            $response = $this->client->chat()->create([
-                'model' => 'gpt-3.5-turbo',
-                'messages' => [
-                    ['role' => 'system', 'content' => $mensajeSistema],
-                    ['role' => 'user', 'content' => 'Genera un combo con precio especial.']
-                ],
-                'temperature' => 0.7,
-                'max_tokens' => 400
-            ]);
+    //         // Resto de la llamada a la API...
+    //         $response = $this->client->chat()->create([
+    //             'model' => 'gpt-3.5-turbo',
+    //             'messages' => [
+    //                 ['role' => 'system', 'content' => $mensajeSistema],
+    //                 ['role' => 'user', 'content' => 'Genera un combo con precio especial.']
+    //             ],
+    //             'temperature' => 0.7,
+    //             'max_tokens' => 400
+    //         ]);
 
-            $respuesta = json_decode($response->choices[0]->message->content, true);
+    //         $respuesta = json_decode($response->choices[0]->message->content, true);
 
-            // Validación mejorada
-            $requiredFields = ['nombre', 'descripcion', 'precioCombo', 'items'];
-            foreach ($requiredFields as $field) {
-                if (!isset($respuesta[$field])) {
-                    throw new \Exception("Falta el campo requerido: $field");
-                }
-            }
+    //         // Validación mejorada
+    //         $requiredFields = ['nombre', 'descripcion', 'precioCombo', 'items'];
+    //         foreach ($requiredFields as $field) {
+    //             if (!isset($respuesta[$field])) {
+    //                 throw new \Exception("Falta el campo requerido: $field");
+    //             }
+    //         }
 
-            return $respuesta;
-        } catch (\Exception $e) {
-            Log::error("Error al generar combo: " . $e->getMessage());
-            return [
-                'nombre' => 'Combo Especial',
-                'descripcion' => 'Nuestro chef está preparando nuevas combinaciones',
-                'precioCombo' => 0,
-                'items' => []
-            ];
-        }
-    }
+    //         return $respuesta;
+    //     } catch (\Exception $e) {
+    //         Log::error("Error al generar combo: " . $e->getMessage());
+    //         return [
+    //             'nombre' => 'Combo Especial',
+    //             'descripcion' => 'Nuestro chef está preparando nuevas combinaciones',
+    //             'precioCombo' => 0,
+    //             'items' => []
+    //         ];
+    //     }
+    // }
 
     public function consultarAgenteMoodle($mensajeUsuario, $herramientasMCP, $moodleMcpUrl, $token)
     {

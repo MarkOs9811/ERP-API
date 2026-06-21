@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Inventario;
 use App\Models\Plato;
+use App\Services\GeminiService;
 use App\Services\OpenAIService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
@@ -22,6 +24,7 @@ class CombosController extends Controller
             return response()->json(['success' => false, 'message' => 'Error al obtener combos:' . $e->getMessage(),], 500);
         }
     }
+
     public function updateCombo(Request $request, $id)
     {
         try {
@@ -46,6 +49,7 @@ class CombosController extends Controller
             return response()->json(['success' => false, 'message' => 'Error al actualizar combo: ' . $e->getMessage()], 500);
         }
     }
+
     public function registerCombo(Request $request)
     {
         try {
@@ -160,9 +164,11 @@ class CombosController extends Controller
         }
     }
 
-    public function generarComboIA(OpenAIService $openAiService)
+    public function generarComboIA(GeminiService $geminiService)
     {
         try {
+
+
             $platos = Plato::where('estado', 1)->get();
 
             // Solo bebidas desde el inventario con categoría "bebidas"
@@ -173,23 +179,22 @@ class CombosController extends Controller
                 ->where('estado', 1)
                 ->get();
 
+            // Clasificamos los datos (puedes ajustar esto según tus modelos reales)
             $datosParaAI = [
-                'platos' => $platos,
+                'brasas' => $platos->where('categoria', 'brasas'),
+                'hamburguesas' => $platos->where('categoria', 'hamburguesas'),
+                'platos' => $platos->whereNotIn('categoria', ['brasas', 'hamburguesas']),
                 'bebidas' => $bebidas,
             ];
-            Log::info('Datos para IA', [
-                'platos' => $platos,
-                'bebidas' => $bebidas,
-            ]);
 
-            // Llama al método del servicio OpenAiService
-            $comboArmadoAi = $openAiService->generarComboConOpenAI($datosParaAI);
+            Log::info('Datos enviados a Gemini', ['datos' => $datosParaAI]);
 
-            Log::info('Combo generado por IA', [
-                'combo' => $comboArmadoAi,
-            ]);
+            // Llamamos al método del servicio GeminiService
+            $comboArmadoAi = $geminiService->generarCombo($datosParaAI);
 
-            // Guardar el combo generado en la base de datos
+            Log::info('Combo generado por Gemini', ['combo' => $comboArmadoAi]);
+
+            // Retornamos al frontend de React
             return response()->json([
                 'success' => true,
                 'message' => 'Combo generado con éxito',

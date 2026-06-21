@@ -200,7 +200,32 @@ class ConfiguracionController extends Controller
             return response()->json(['success' => false, 'message' => 'Error al actualizar la configuración: ' . $e->getMessage(),], 500);
         }
     }
+    public function configuracionGeminiAi(Request $request, $id)
+    {
+        try {
+            $validated = $request->validate([
+                'apiKey' => ['required', 'string', 'max:255', 'regex:/^\S+$/'],
 
+            ]);
+            // Buscar la configuración por ID
+            $configuracion = Configuraciones::find($id);
+
+            if ($configuracion) {
+                // Actualizar la configuración con los datos validados
+                $configuracion->clave = $validated['apiKey'];
+                $configuracion->save();
+                return response()->json(['success' => true, 'message' => 'Configuración actualizada correctamente'], 200);
+            } else {
+                return response()->json(['success' => false, 'message' => 'Configuración no encontrada'], 404);
+            }
+        } catch (\Exception $e) {
+            // Registrar el error
+            Log::error('Error al actualizar la configuración: ' . $e->getMessage());
+
+            // Retornar un mensaje de error
+            return response()->json(['success' => false, 'message' => 'Error al actualizar la configuración: ' . $e->getMessage(),], 500);
+        }
+    }
     public function configurarTwilio(Request $request, $id)
     {
         try {

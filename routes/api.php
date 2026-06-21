@@ -505,6 +505,8 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     // INTEGRACIONES
     Route::put('/configuraciones/{id}', [ConfiguracionController::class, 'configurarIntegracion']);
     Route::put('/configuracionesOpenAi/{id}', [ConfiguracionController::class, 'configurarOpenAi']);
+    Route::put('/configuracionesGeminiAi/{id}', [ConfiguracionController::class, 'configuracionGeminiAi']);
+
     Route::put('/configuracionesTwilio/{id}', [ConfiguracionController::class, 'configurarTwilio']);
     Route::post('/configuracionesSunat/{id}', [ConfiguracionController::class, 'configurarSunat']);
 
