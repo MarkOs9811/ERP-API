@@ -368,7 +368,7 @@ class VenderController extends Controller
             $idUsuarioAuth = Auth::id();
 
             // Mostrar el metodo de pago
-            Log::info('metodo pago'.$nombreMetodo);
+            Log::info('metodo pago' . $nombreMetodo);
             // Validaciones básicas
             if ($idUsuarioAuth != $idUsuario) {
                 return response()->json(['success' => false, 'message' => 'Su código no pertenece a esta cuenta.']);
@@ -378,7 +378,7 @@ class VenderController extends Controller
             if (!$metodoPago) {
                 return response()->json(['success' => false, 'message' => 'Método de pago no encontrado.']);
             }
-            $metodoPagoId = $metodoPago->id;
+
 
             $caja = Caja::findOrFail($idCaja);
             $pedidosToVender = collect([]);
@@ -592,7 +592,7 @@ class VenderController extends Controller
             // Registrar Venta Final en tabla `ventas`
             if ($tipoVenta === 'web') {
                 // ... logica web ...
-                $venta = $this->registrarVentaWeb($idPedidoWeb, $idUsuario, $metodoPagoId, $tipoComprobante, $igv, $subtotal, $total, $ClienteId);
+                $venta = $this->registrarVentaWeb($idPedidoWeb, $idUsuario, $nombreMetodo, $tipoComprobante, $igv, $subtotal, $total, $ClienteId);
                 $pedidoWeb = PedidosWebRegistro::find($idPedidoWeb);
                 if ($pedidoWeb) {
                     $pedidoWeb->estado_pedido = 6;
@@ -600,7 +600,7 @@ class VenderController extends Controller
                     $pedidoWeb->save();
                 }
             } else {
-                $venta = $this->registrarVenta($nuevoPedido->id, $idUsuario, $metodoPagoId, $tipoComprobante, $igv, $subtotal, $total, $ClienteId);
+                $venta = $this->registrarVenta($nuevoPedido->id, $idUsuario, $nombreMetodo, $tipoComprobante, $igv, $subtotal, $total, $ClienteId);
             }
 
             // Crédito y Caja
@@ -702,16 +702,16 @@ class VenderController extends Controller
         $detallePedido->save();
     }
 
-    private function registrarVentaWeb($idPedidWeb, $idUsuario, $metodoPagoId, $tipoComprobante, $igv, $subtotal, $total, $ClienteId) // Cambiamos aquí
+    private function registrarVentaWeb($idPedidWeb, $idUsuario, $nombreMetodo, $tipoComprobante, $igv, $subtotal, $total, $ClienteId) // Cambiamos aquí
     {
         $venta = new Venta();
 
         // Determinar el estado de la venta y asignar el ClienteId según sea necesario
-        $estadoVenta = $this->determinarEstadoVenta($metodoPagoId);
+        $estadoVenta = $this->determinarEstadoVenta($nombreMetodo);
         $venta->idCliente =  $ClienteId; // Asigna ClienteId solo si es crédito
 
         $venta->idUsuario = $idUsuario;
-        $venta->idMetodo = $metodoPagoId;
+        $venta->idMetodo = $nombreMetodo;
         $venta->idPedidoWeb = $idPedidWeb;
         $venta->igv = $igv;
         $venta->subtotal = $subtotal;
@@ -725,7 +725,7 @@ class VenderController extends Controller
         return $venta;
     }
 
-    private function registrarVenta($idPedido, $idUsuario, $metodoPagoId, $tipoComprobante, $igv, $subtotal, $total, $ClienteId) // Cambiamos aquí
+    private function registrarVenta($idPedido, $idUsuario, $nombreMetodo, $tipoComprobante, $igv, $subtotal, $total, $ClienteId) // Cambiamos aquí
     {
         // Verificar si ya existe una venta registrada para este pedido
         $ventaExistente = Venta::where('idPedido', $idPedido)->first();
@@ -736,11 +736,11 @@ class VenderController extends Controller
         $venta = new Venta();
 
         // Determinar el estado de la venta y asignar $ClienteId según sea necesario
-        $estadoVenta = $this->determinarEstadoVenta($metodoPagoId);
+        $estadoVenta = $this->determinarEstadoVenta($nombreMetodo);
         $venta->idCliente =  $ClienteId; // Asigna ClienteId solo si es crédito
 
         $venta->idUsuario = $idUsuario;
-        $venta->idMetodo = $metodoPagoId;
+        $venta->idMetodo = $nombreMetodo;
         $venta->idPedido = $idPedido;
         $venta->igv = $igv;
         $venta->subtotal = $subtotal;
@@ -754,9 +754,9 @@ class VenderController extends Controller
         return $venta;
     }
 
-    private function determinarEstadoVenta($metodoPagoId)
+    private function determinarEstadoVenta($nombreMetodo)
     {
-        $metodoPago = MetodoPago::find($metodoPagoId);
+        $metodoPago = MetodoPago::find($nombreMetodo);
         // Consideramos que 'tarjeta credito' implica que la venta es a crédito
         return $metodoPago && $metodoPago->nombre === 'tarjeta credito' ? 0 : 1; // 0 si es crédito, 1 cualquier otro
     }

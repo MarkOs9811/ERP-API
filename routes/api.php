@@ -151,7 +151,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     // RUTAS PARA AJUSTES DE VENTAS - MODULOS VENTAS
     Route::get('/metodos-pagos', [AjusteVentasController::class, 'getMetodosPagosAll']);
     Route::post('/metodos-pagos', [AjusteVentasController::class, 'guardarMetodoPago']);
-
+    Route::delete('/metodos-pagos/{id}', [AjusteVentasController::class, 'deleteMetodoPago']);
     Route::put('/metodos-pagos/{id}', [AjusteVentasController::class, 'updateMetodoPago']);
 
     // CAMBIAR ESTADO DE SOLCIITUD -DESDE MODULO ALMACEN 

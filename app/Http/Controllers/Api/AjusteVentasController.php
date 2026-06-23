@@ -67,4 +67,18 @@ class AjusteVentasController extends Controller
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
+
+    public function deleteMetodoPago($id)
+    {
+        try {
+            $metodo = MetodoPago::find($id);
+            if (!$metodo) {
+                return response()->json(['success' => false, "message" => "Metodo no encontrado"], 404);
+            }
+            $metodo->delete();
+            return response()->json(['success' => true, "message" => "Metodo Eliminado correctamente"], 200);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, "message" => $e->getMessage()], 500);
+        }
+    }
 }

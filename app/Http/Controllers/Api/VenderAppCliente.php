@@ -143,7 +143,7 @@ class VenderAppCliente extends Controller
 
                 $estadoPagoFinal = 'pagado';
                 $referenciaPagoMp = $payment->id;
-                Log::info("✅ Cobro Mercado Pago Exitoso. ID: " . $referenciaPagoMp);
+                Log::info("Cobro Mercado Pago Exitoso. ID: " . $referenciaPagoMp);
             } catch (MPApiException $e) {
 
                 Log::error('❌ MP ERROR COMPLETO', [
@@ -280,11 +280,11 @@ class VenderAppCliente extends Controller
                         ->first();
 
                     if ($cuponAplicado) {
-                        // 🔥 LA MAGIA CONTRA EL NULL ESTÁ AQUÍ 🔥
+                        //  LA MAGIA CONTRA EL NULL ESTÁ AQUÍ 
                         $cuponAplicado->usados = ($cuponAplicado->usados ?? 0) + 1;
                         $cuponAplicado->save();
 
-                        Log::info("✅ CUPÓN ACTUALIZADO -> ID: {$cuponAplicado->id} | Código: {$cuponAplicado->codigo_cupon} | Nuevos Usos: {$cuponAplicado->usados}");
+                        Log::info("CUPÓN ACTUALIZADO -> ID: {$cuponAplicado->id} | Código: {$cuponAplicado->codigo_cupon} | Nuevos Usos: {$cuponAplicado->usados}");
                     } else {
                         Log::warning("⚠️ ALERTA CUPÓN -> Se recibió el código '{$codigoRecibido}' pero NO se encontró ninguna coincidencia en la columna 'codigo_cupon' de la tabla 'campanaPromo'.");
                     }
@@ -299,7 +299,7 @@ class VenderAppCliente extends Controller
                 $venta = $this->registrarVentaWeb(
                     $pedidoWeb->id,
                     null,
-                    $idMetodoPagoVenta,
+                    $nombreMetodoVenta,
                     'B',
                     $igvNeto,
                     $subtotalNeto,
@@ -409,7 +409,7 @@ class VenderAppCliente extends Controller
     }
 
     // Actualizamos la firma para recibir el descuento
-    protected function registrarVentaWeb($idPedidoWeb, $idUsuario, $idMetodoPago, $tipoComprobante, $igv, $subtotal, $total, $idCliente, $descuento = 0.00)
+    protected function registrarVentaWeb($idPedidoWeb, $idUsuario, $nombreMetodoVenta, $tipoComprobante, $igv, $subtotal, $total, $idCliente, $descuento = 0.00)
     {
         $pedidoWeb = PedidosWebRegistro::find($idPedidoWeb);
 
@@ -418,7 +418,7 @@ class VenderAppCliente extends Controller
             'idSede'      => $pedidoWeb->idSede ?? 1,
             'idUsuario'   => $idUsuario,
             'idCliente'   => $idCliente,
-            'idMetodo'    => $idMetodoPago,
+            'idMetodo'    => $nombreMetodoVenta,
             'idPedido'    => null,
             'idPedidoWeb' => $idPedidoWeb,
             'igv'         => $igv,
