@@ -630,38 +630,49 @@ class FinanzasController extends Controller
             return response()->json(['success' => false, 'message' => 'Error al marcar la cuota como pagada'], 500);
         }
     }
-    public function getPresupuestacion()
+
+    public function getPresupuestacion(Request $request)
     {
         try {
-            // Obtener el año actual
-            $anioActual = Carbon::now()->year;
-            $mesActual = Carbon::now()->month;
+            // 1. Capturar el parámetro 'mes' enviado por React (Formato: YYYY-MM)
+            $filtroMes = $request->query('mes');
 
-            // Obtener todos los presupuestos del año actual
-            $presupuestos = Presupuestacion::get();
+            if ($filtroMes && str_contains($filtroMes, '-')) {
+                [$anioCalculo, $mesCalculo] = explode('-', $filtroMes);
+                $anioCalculo = (int)$anioCalculo;
+                $mesCalculo = (int)$mesCalculo;
+            } else {
+                // Valores por defecto si no se pasa filtro o es la vista "Total"
+                $anioCalculo = Carbon::now()->year;
+                $mesCalculo = Carbon::now()->month;
+            }
 
-            // Obtener los presupuestos del mes actual
-            $presupuestosMensual = Presupuestacion::where('anio', $anioActual)
-                ->where('mes', $mesActual)
+            // Obtener todos los presupuestos del año seleccionado
+            $presupuestos = Presupuestacion::where('anio', $anioCalculo)->get();
+
+            // Obtener los presupuestos del mes filtrado
+            $presupuestosMensual = Presupuestacion::where('anio', $anioCalculo)
+                ->where('mes', $mesCalculo)
                 ->where('tipo_presupuesto', 'ingresos')
                 ->sum('monto_presupuestado');
 
-            // Obtener los ingresos (ventas) del mes actual
-            $ingresosMensuales = Venta::whereYear('fechaVenta', $anioActual)
-                ->whereMonth('fechaVenta', $mesActual)
+            // Obtener los ingresos (ventas) del mes filtrado
+            $ingresosMensuales = Venta::whereYear('fechaVenta', $anioCalculo)
+                ->whereMonth('fechaVenta', $mesCalculo)
                 ->sum('total');
 
-            // Obtener los datos del gráfico de gastos
-            $graficoGastos = $this->obtenerDatosGraficoGastos($anioActual, $mesActual);
+            // Obtener los datos del gráfico de gastos filtrado
+            $graficoGastos = $this->obtenerDatosGraficoGastos($anioCalculo, $mesCalculo);
 
             $valorAlmacen = Almacen::sum(DB::raw('precioUnit * cantidad'));
             $valorInventario = Inventario::sum(DB::raw('precio * stock'));
             $valorPagar = CuentasPorPagar::sum(DB::raw('monto - monto_pagado'));
             $cuentaCaja = CuentasContables::where('codigo', '101')->first();
 
-            // CONSULTAS PARA EL FLUJO DE CAJA
-            $flujoCaja = $this->obtenerDatosFlujoCaja();
-            // Enviar estos valores a la vista para el gráfico
+            // CONSULTAS PARA EL FLUJO DE CAJA (Pasamos los filtros temporalmente condicionales)
+            // Si el usuario quiere ver "Total", pasamos null para que sume todo el histórico/año.
+            $flujoCaja = $this->obtenerDatosFlujoCaja($filtroMes ? $anioCalculo : null, $filtroMes ? $mesCalculo : null);
+
             return response()->json([
                 'success' => true,
                 'data' => [
@@ -684,40 +695,47 @@ class FinanzasController extends Controller
             ], 500);
         }
     }
+
     /**
-     * Método privado para obtener datos acumulados del flujo de caja.
+     * Método privado para obtener datos acumulados o mensuales del flujo de caja.
      *
+     * @param int|null $anio
+     * @param int|null $mes
      * @return array
      */
-    private function obtenerDatosFlujoCaja()
+    private function obtenerDatosFlujoCaja($anio = null, $mes = null)
     {
-        // 1. Ventas al contado (total pagado)
-        $ventasContado = Venta::where('estado', '1')
-            ->sum('total');
+        // Preparamos las instancias de consulta básicas
+        $qVentasContado = Venta::where('estado', '1');
+        $qVentasCredito = Cuota::where('estado', 'pagado');
+        $qComprasContado = Compra::where('tipoCompra', 'contado');
+        $qComprasCredito = CuotasPorPagar::where('estado', 'pagado');
+        $qPagosPersonal = Pago::query();
 
-        // 2. Ventas al crédito (monto cobrado)
-        $ventasCreditoCobradas = Cuota::where('estado', 'pagado')
-            ->sum('monto'); // Asumiendo un campo `total_pagado`
+        // APLICAR FILTROS DE FECHAS SÓLO SI SE SOLICITÓ UN MES ESPECÍFICO
+        if ($anio && $mes) {
+            $qVentasContado->whereYear('fechaVenta', $anio)->whereMonth('fechaVenta', $mes);
+            $qVentasCredito->whereYear('created_at', $anio)->whereMonth('created_at', $mes); // Ajusta la columna de fecha de pago de cuota si es distinta
+            $qComprasContado->whereYear('created_at', $anio)->whereMonth('created_at', $mes); // Ajusta según tu columna de fecha de compra
+            $qComprasCredito->whereYear('updated_at', $anio)->whereMonth('updated_at', $mes); // Ajusta según fecha en que se pagó la cuota
+            $qPagosPersonal->whereYear('created_at', $anio)->whereMonth('created_at', $mes); // Ajusta según fecha de pago de planilla
+        }
 
-        // 3. Compras al contado (total pagado)
-        $comprasContado = Compra::where('tipoCompra', 'contado')
-            ->sum('totalPagado');
+        // Ejecutamos las sumatorias con las queries filtradas o globales
+        $ventasContado = $qVentasContado->sum('total');
+        $ventasCreditoCobradas = $qVentasCredito->sum('monto');
+        $comprasContado = $qComprasContado->sum('totalPagado');
+        $comprasCreditoPagadas = $qComprasCredito->sum('monto');
+        $pagosPersonal = $qPagosPersonal->sum('salario_neto');
 
-        // 4. Compras al crédito (monto pagado)
-        $comprasCreditoPagadas = CuotasPorPagar::where('estado', 'pagado')
-            ->sum('monto'); // Asumiendo un campo `monto`
-
-        // 5. Pagos al personal (total acumulado)
-        $pagosPersonal = Pago::sum('salario_neto');
-
-        // 6. Inversiones (aún no se tienen tablas de inversión, asignar 0)
+        // Inversiones estáticas (como mencionas en tu lógica actual)
         $valorAlmacen = Almacen::sum(DB::raw('precioUnit * cantidad'));
         $valorInventario = Inventario::sum(DB::raw('precio * stock'));
         $inversionesActivos = $valorAlmacen + $valorInventario;
 
-        // 7. Financiamiento (aún no se tienen tablas de financiamiento, asignar 0)
-        $prestamosRecibidos = 0;  // No se tiene la tabla de financiamiento, se pone 0 por ahora
-        $pagoDeudas = 0;  // No se tiene la tabla de financiamiento, se pone 0 por ahora
+        // Valores temporales en 0
+        $prestamosRecibidos = 0;
+        $pagoDeudas = 0;
 
         return [
             'ventasContado' => $ventasContado,
@@ -725,9 +743,9 @@ class FinanzasController extends Controller
             'comprasContado' => $comprasContado,
             'comprasCreditoPagadas' => $comprasCreditoPagadas,
             'pagosPersonal' => $pagosPersonal,
-            'inversionesActivos' => $inversionesActivos,  // Agregado a los resultados
-            'prestamosRecibidos' => $prestamosRecibidos,  // Agregado a los resultados
-            'pagoDeudas' => $pagoDeudas,  // Agregado a los resultados
+            'inversionesActivos' => $inversionesActivos,
+            'prestamosRecibidos' => $prestamosRecibidos,
+            'pagoDeudas' => $pagoDeudas,
         ];
     }
 
