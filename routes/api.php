@@ -425,10 +425,13 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     // MODULO FINANZAS - CUENTAS POR COBRAR
     Route::get('/cuentasPorCobrar', [FinanzasController::class, 'getCuentasPorCobrar']);
     Route::put('/cuentasPorCobrar/pagarCuota/{id}', [FinanzasController::class, 'marcarPagada']);
+    Route::get('/cuentasPorCobrar/descargarDetalles/{id}', [FinanzasController::class, 'descargarDetallesCuentasPorCobrar']);
 
     // MODULO FINANZAS - CUENTAS POR PAGAR
     Route::get('/cuentasPorPagar', [FinanzasController::class, 'getCuentasPorPagar']);
     Route::put('/cuentasPorPagar/pagarCuota/{id}', [FinanzasController::class, 'pagarCuota']);
+    Route::get('/cuentasPorPagar/descargarDetalles/{id}', [FinanzasController::class, 'descargarDetallesCuentasPorPagar']);
+
 
     // FINANAS- FIRMAR DOCUMENTOS PDF
     Route::post('/firmar-solicitud', [FinanzasController::class, 'addImageToPdf']);

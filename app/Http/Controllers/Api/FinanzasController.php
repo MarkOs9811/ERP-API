@@ -22,6 +22,7 @@ use App\Models\Presupuestacion;
 use App\Models\Proveedore;
 use App\Models\RegistrosEjercicios;
 use App\Models\Venta;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -533,7 +534,31 @@ class FinanzasController extends Controller
             ], 500);
         }
     }
+    // DESCARGAR DETALLES CUENTAS POR COBRAR DE CLIENTE
+    public function descargarDetallesCuentasPorCobrar($id)
+    {
+        try {
+            // Usamos findOrFail() o first() en lugar de get(), 
+            // ya que buscas un ID específico y quieres un solo objeto, no un array (colección)
+            $cuentasPorCobrar = CuentasPorCobrar::with('cuotasProgramadas', 'cliente.persona', 'cliente.empresa')->findOrFail($id);
 
+            $data = [
+                'cuentas_por_cobrar' => $cuentasPorCobrar
+            ];
+
+            // 1. Cargas una vista Blade (que debes crear) y le pasas la data
+            $pdf = Pdf::loadView('reportes.detalles_cuenta', $data);
+
+            // 2. Retornas el archivo PDF para que Axios lo reciba como Blob
+            return $pdf->download("detalles_cuenta_{$id}.pdf");
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al generar el reporte PDF',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
     public function getCuentasPorPagar()
     {
         try {
@@ -553,6 +578,33 @@ class FinanzasController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error al obtener las cuentas por pagar',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    // DESCARGAR DETALLES CUENTAS POR PAGAR A PROVEEDOR
+    public function descargarDetallesCuentasPorPagar($id)
+    {
+        try {
+            $cuentasPorPagar = CuentasPorPagar::with('cuotasPagar', 'proveedor')->findOrFail($id);
+
+            $data = [
+                'cuentas_por_pagar' => $cuentasPorPagar
+            ];
+
+            $pdf = Pdf::loadView('reportes.detalles_cuenta_pagar', $data);
+            return $pdf->download("detalles_cuenta_{$id}.pdf");
+        } catch (\Exception $e) {
+            // ESTA LÍNEA HARA QUE APAREZCA EN LARAVEL.LOGs
+            Log::error("Error en PDF Cuentas por Pagar:", [
+                'mensaje' => $e->getMessage(),
+                'archivo' => $e->getFile(),
+                'linea'   => $e->getLine()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al generar el reporte PDF',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -910,31 +962,23 @@ class FinanzasController extends Controller
     public function addImageToPdf(Request $request)
     {
         try {
-            // Validar y cargar archivos
+            // 1. Validar archivos
             $request->validate([
-                'pdf_file' => 'required|mimes:pdf|max:10000', // Tamaño máximo de 10MB
-                'image_file' => 'required|image|max:5000', // Tamaño máximo de 5MB
+                'pdf_file' => 'required|mimes:pdf|max:10000', // Máx 10MB
+                'image_file' => 'required|image|max:5000',  // Máx 5MB
             ]);
 
-            Log::info('Archivos recibidos para firmar PDF', [
+            Log::info('Archivos recibidos para firmar PDF en S3/R2', [
                 'pdf_file' => $request->file('pdf_file')->getClientOriginalName(),
                 'image_file' => $request->file('image_file')->getClientOriginalName()
             ]);
 
-            $pdfFilePath = $request->file('pdf_file')->store('pdfs');
-            $imageFilePath = $request->file('image_file')->store('images');
-
-            $pdfFullPath = storage_path('app/' . $pdfFilePath);
-            $imageFullPath = storage_path('app/' . $imageFilePath);
-
-            if (!file_exists($pdfFullPath) || !file_exists($imageFullPath)) {
-                Log::error('Archivo PDF o imagen no encontrado');
-                return response()->json(['success' => false, 'message' => 'Archivo no encontrado.'], 404);
-            }
+            // OJO AQUÍ: Definimos ambas rutas temporales y la extensión de la imagen
+            $pdfFullPath   = $request->file('pdf_file')->getRealPath();
+            $imageFullPath = $request->file('image_file')->getRealPath();
+            $imageType     = $request->file('image_file')->getClientOriginalExtension(); // 'png', 'jpg', etc.
 
             $fpdi = new Fpdi();
-
-            // Cargar el PDF original
             $pageCount = $fpdi->setSourceFile($pdfFullPath);
 
             for ($pageNo = 1; $pageNo <= $pageCount; $pageNo++) {
@@ -942,42 +986,43 @@ class FinanzasController extends Controller
                 $fpdi->AddPage();
                 $fpdi->useTemplate($templateId, 0, 0);
 
-                // Obtener dimensiones de la página
+                // Dimensiones de la página
                 $pageSize = $fpdi->getTemplateSize($templateId);
                 $pageWidth = $pageSize['width'];
-                $pageHeight = $pageSize['height'];
 
-                // Agregar la imagen de firma en la parte superior derecha
-                $fpdi->Image($imageFullPath, $pageWidth - 70, 250, 50);
+                // Agregamos la imagen forzando su tipo real (.png/.jpg) para saltar el error del .tmp
+                $fpdi->Image($imageFullPath, $pageWidth - 70, 250, 50, 0, $imageType);
 
-                // Agregar texto "Firma de finanzas" debajo de la firma
+                // Agregar texto debajo de la firma
                 $fpdi->SetFont('Arial', 'B', 12);
                 $fpdi->SetTextColor(0, 0, 0);
-                $fpdi->SetXY($pageWidth - 70, 265, 80);
+                $fpdi->SetXY($pageWidth - 70, 265);
                 $fpdi->Cell(0, 10, 'Firma de finanzas', 0, 1, 'C');
             }
 
-            // Guardar el PDF firmado en storage/app/public/pdfs
+            // Generamos el PDF como string binario
+            $pdfContent = $fpdi->Output('', 'S');
+
+            // Ruta estructurada para tu contenedor R2 / S3
             $outputPdfPath = 'pdfs/solicitud_' . time() . '.pdf';
-            $outputPdfFullPath = storage_path('app/public/' . $outputPdfPath);
-            $fpdi->Output($outputPdfFullPath, 'F');
 
-            // Devolver la URL pública del PDF generado
-            $pdfUrl = Storage::url($outputPdfPath);
+            // Subimos directamente a la nube sin almacenar localmente
+            Storage::disk('s3')->put($outputPdfPath, $pdfContent);
 
+            // Guardamos la ruta relativa en la base de datos
             $documento_firmado = new DocumentosFirmados();
             $documento_firmado->idUsuario = Auth::id();
             $documento_firmado->nombre_archivo = $request->file('pdf_file')->getClientOriginalName();
-            $documento_firmado->ruta_archivo = $pdfUrl;
+            $documento_firmado->ruta_archivo = $outputPdfPath;
             $documento_firmado->save();
 
             return response()->json([
                 'success' => true,
-                'pdf_url' => $pdfUrl,
-                'message' => 'Documento firmado correctamente'
+                'pdf_url' => $documento_firmado->documento_url, // Atributo del modelo
+                'message' => 'Documento firmado y guardado en la nube correctamente'
             ], 200);
         } catch (\Exception $e) {
-            Log::error('Error al procesar el PDF: ' . $e->getMessage());
+            Log::error('Error al procesar el PDF en la nube: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Error al procesar el PDF: ' . $e->getMessage()
