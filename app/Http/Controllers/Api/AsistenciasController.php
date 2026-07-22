@@ -65,90 +65,85 @@ class AsistenciasController extends Controller
     {
         try {
             $dni = $request->dni;
-            $horaActual = Carbon::now();
+            $salidaReal = Carbon::now(); // Fecha y hora actual completa
 
-            // Buscar el registro de asistencia de hoy sin hora de salida
+            // 1. Buscar el registro pendiente
             $asistencia = Asistencia::where('codigoUsuario', $dni)
                 ->whereNull('fechaSalida')
                 ->whereNull('horaSalida')
-                ->whereNull('horasTrabajadas')
                 ->where('estado', 0)
                 ->first();
 
             if (!$asistencia) {
-                return response()->json(['success' => false, 'message' => 'No se encontró un registro de entrada para el DNI proporcionado o ya se ha registrado la salida'], 404);
+                return response()->json(['success' => false, 'message' => 'No hay entrada pendiente o ya marcó salida.'], 404);
             }
 
-            // Obtener la hora de salida del horario del empleado
+            // Relaciones (Asegúrate de tener foreign keys para cargar esto con Eager Loading en el futuro: $asistencia->empleado->horario)
             $persona = Persona::where('documento_identidad', $dni)->first();
-            if (!$persona) {
-                return response()->json(['success' => false, 'message' => 'No se encontró un registro para el DNI proporcionado'], 404);
-            }
+            if (!$persona) return response()->json(['success' => false, 'message' => 'Persona no encontrada'], 404);
+
             $empleado = Empleado::where('idPersona', $persona->id)->first();
-            if (!$empleado) {
-                return response()->json(['success' => false, 'message' => 'No se encontró un empleado para la persona proporcionada'], 404);
-            }
+            if (!$empleado) return response()->json(['success' => false, 'message' => 'Empleado no encontrado'], 404);
+
             $horario = Horario::find($empleado->idHorario);
-            if (!$horario) {
-                return response()->json(['success' => false, 'message' => 'No se encontró un horario para el empleado proporcionado'], 404);
-            }
+            if (!$horario) return response()->json(['success' => false, 'message' => 'Horario no encontrado'], 404);
 
             $usuario = User::where('idEmpleado', $empleado->id)->first();
 
+            // 2. HORAS EXTRAS - Usar la fecha de ENTRADA, NO la de hoy
             if ($usuario) {
-                // BUSCAR SI TIENE HORAS EXTRAS EL DIA DE HOY
-                $horasExtras = HoraExtras::where('idUsuario', $usuario->id)
-                    ->whereDate('fecha', '=', now()->toDateString())
+                $horasExtrasPendiente = HoraExtras::where('idUsuario', $usuario->id)
+                    ->whereDate('fecha', '=', Carbon::parse($asistencia->fechaEntrada)->toDateString())
                     ->first();
 
-                if ($horasExtras) {
-                    $horasExtras->estado = 1;
-                    $horasExtras->save();
+                if ($horasExtrasPendiente) {
+                    $horasExtrasPendiente->estado = 1;
+                    $horasExtrasPendiente->save();
                 }
             }
 
-            // Calcular horas trabajadas considerando fecha y hora de entrada y salida
-            $fechaEntrada = Carbon::parse($asistencia->fechaEntrada);
-            $horaEntrada = Carbon::parse($asistencia->horaEntrada);
-            $fechaSalida = Carbon::parse($horaActual->toDateString());
-            $horaSalida = Carbon::parse($horaActual->toTimeString());
+            // 3. Cálculos de tiempo usando Datetimes combinados (Evita errores de cambio de día)
+            $entradaCompleta = Carbon::parse($asistencia->fechaEntrada . ' ' . $asistencia->horaEntrada);
+            $salidaHorarioCompleta = Carbon::parse($asistencia->fechaEntrada . ' ' . $horario->horaSalida);
 
-            // Calcular la diferencia en minutos y luego convertir a horas y minutos
-            $diferenciaMinutos = $fechaEntrada->diffInMinutes($fechaSalida) + $horaEntrada->diffInMinutes($horaSalida);
-            $horasTrabajadas = floor($diferenciaMinutos / 60); // Horas trabajadas
-            $minutosTrabajados = $diferenciaMinutos % 60; // Minutos restantes
+            // Si el horario de salida cruza la medianoche (ej. entra 10 PM sale 6 AM)
+            if ($salidaHorarioCompleta->lessThan($entradaCompleta)) {
+                $salidaHorarioCompleta->addDay();
+            }
 
-            // Calcular la hora de salida del horario del empleado
-            $horaSalidaHorario = Carbon::parse($horario->horaSalida);
+            $diferenciaMinutosTotales = $entradaCompleta->diffInMinutes($salidaReal);
+            $horasTrabajadas = floor($diferenciaMinutosTotales / 60);
 
-            // Inicializar horas extras
+            // 4. Calcular horas extras
             $horasExtras = 0;
             $minutosExtrasRestantes = 0;
 
-            // Verificar si se debe registrar horas extras
-            if ($horaActual->greaterThan($horaSalidaHorario)) {
-                // Calcular las horas extras en minutos desde la hora de salida
-                $minutosExtras = $horaSalidaHorario->diffInMinutes($horaActual);
-                $horasExtras = floor($minutosExtras / 60); // Horas extras
-                $minutosExtrasRestantes = $minutosExtras % 60; // Minutos extras restantes
+            if ($salidaReal->greaterThan($salidaHorarioCompleta)) {
+                $minutosExtrasTotales = $salidaHorarioCompleta->diffInMinutes($salidaReal);
+
+                // 🔥 REGLA DE NEGOCIO (Evitar fraude por olvido de marcado)
+                // Si pasan más de 4 horas extras (240 min), se limita y requiere revisión de RRHH.
+                if ($minutosExtrasTotales > 240) {
+                    $minutosExtrasTotales = 240; // Tope máximo automático (Ajusta este valor según política)
+                    // Opcional: Aquí podrías disparar un flag "requiere_auditoria = true"
+                }
+
+                $horasExtras = floor($minutosExtrasTotales / 60);
+                $minutosExtrasRestantes = $minutosExtrasTotales % 60;
             }
 
-            // Mantener horas trabajadas en 8 horas si no hay horas extras
-            $horasTrabajadasFormateadas = '08:00:00';
-            $horasExtrasFormateadas = sprintf('%02d:%02d:00', $horasExtras, $minutosExtrasRestantes); // Formato HH:MM:SS
-
-            // Actualizar el registro de asistencia con los datos calculados
-            $asistencia->fechaSalida = $horaActual->toDateString();
-            $asistencia->horaSalida = $horaActual->toTimeString();
-            $asistencia->horasTrabajadas = $horasTrabajadasFormateadas;
-            $asistencia->horas_extras = $horasExtrasFormateadas;
+            // 5. Guardar
+            $asistencia->fechaSalida = $salidaReal->toDateString();
+            $asistencia->horaSalida = $salidaReal->toTimeString();
+            // Si tu política indica que las horas trabajadas regulares siempre son 8, mantenemos tu lógica, sino usarías $horasTrabajadas
+            $asistencia->horasTrabajadas = '08:00:00';
+            $asistencia->horas_extras = sprintf('%02d:%02d:00', $horasExtras, $minutosExtrasRestantes);
             $asistencia->estado = 1;
             $asistencia->save();
 
             return response()->json(['success' => true, 'message' => 'Salida registrada con éxito'], 200);
         } catch (\Exception $e) {
-            // Manejo de excepciones
-            return response()->json(['success' => false, 'message' => 'Error al registrar la salida: ' . $e->getMessage()], 500);
+            return response()->json(['success' => false, 'message' => 'Error interno: ' . $e->getMessage()], 500);
         }
     }
     public function getAsistencia()

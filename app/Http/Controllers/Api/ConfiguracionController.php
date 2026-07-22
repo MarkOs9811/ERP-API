@@ -721,4 +721,25 @@ class ConfiguracionController extends Controller
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
+    public function configurarTipoVenta(Request $request, $id)
+    {
+        try {
+            $config = Configuraciones::findOrFail($id);
+
+            // Actualizamos la columna 'clave' según tu base de datos
+            $config->clave = $request->clave;
+            $config->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Configuración actualizada con éxito',
+                'data' => $config
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al actualizar: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

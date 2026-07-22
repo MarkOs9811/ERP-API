@@ -1642,26 +1642,39 @@ class PlanillaController extends Controller
             $periodo->estado = 3;
             $periodo->save();
 
-            // --- NUEVO PASO: 4.5 APERTURAR EL SIGUIENTE PERIODO ---
-            // Buscamos el siguiente periodo cronológico de la misma empresa y sede
+            // --- 4.5 APERTURAR EL SIGUIENTE PERIODO (Corregido) ---
+            // 1. Buscamos el INMEDIATO SIGUIENTE cronológicamente (sin filtrar por estado 0)
             $siguientePeriodo = PeriodoNomina::where('idEmpresa', $periodo->idEmpresa)
                 ->where('idSede', $periodo->idSede)
-                ->where('estado', 0) // Buscamos solo los que están en espera (0)
-                ->where('fecha_inicio', '>', $periodo->fecha_inicio) // Que inicie después del actual
-                ->orderBy('fecha_inicio', 'asc') // El más próximo
+                ->where('fecha_inicio', '>', $periodo->fecha_inicio)
+                ->orderBy('fecha_inicio', 'asc')
                 ->first();
 
             $mensajeExtra = "";
 
             if ($siguientePeriodo) {
-                $siguientePeriodo->estado = 1; // Lo pasamos a ABIERTO
-                $siguientePeriodo->save();
-                Log::info("Transición Automática: Se aperturó el periodo '{$siguientePeriodo->nombrePeriodo}' (ID: {$siguientePeriodo->id}).");
-                $mensajeExtra = " Y se ha aperturado el periodo: " . $siguientePeriodo->nombrePeriodo;
+                if ($siguientePeriodo->estado == 1) {
+                    // Si ya está abierto (probablemente por tu Evento MySQL), no hacemos nada.
+                    Log::info("El periodo siguiente ({$siguientePeriodo->nombrePeriodo}) ya se encontraba abierto.");
+                    $mensajeExtra = " (El periodo de {$siguientePeriodo->nombrePeriodo} ya estaba abierto).";
+                } elseif ($siguientePeriodo->estado == 0) {
+                    // Solo lo abrimos si la fecha de inicio es HOY o en el PASADO
+                    if ($siguientePeriodo->fecha_inicio <= now()->toDateString()) {
+                        $siguientePeriodo->estado = 1; // ABIERTO
+                        $siguientePeriodo->save();
+                        Log::info("Transición Automática: Se aperturó '{$siguientePeriodo->nombrePeriodo}'.");
+                        $mensajeExtra = " Y se ha aperturado el periodo: " . $siguientePeriodo->nombrePeriodo;
+                    } else {
+                        // Es un periodo futuro (Ej. Agosto). Lo dejamos en 0. El Evento MySQL lo abrirá en su fecha.
+                        Log::info("El periodo '{$siguientePeriodo->nombrePeriodo}' es futuro. El Evento de MySQL lo abrirá el {$siguientePeriodo->fecha_inicio}.");
+                        $mensajeExtra = " El periodo de {$siguientePeriodo->nombrePeriodo} se abrirá automáticamente el " . Carbon::parse($siguientePeriodo->fecha_inicio)->format('d/m/Y') . ".";
+                    }
+                }
             } else {
-                Log::warning("Cierre completado, pero no se encontró un periodo futuro para abrir automáticamente.");
-                $mensajeExtra = " (No se encontró un periodo siguiente para abrir).";
+                Log::warning("Cierre completado, pero no se encontró un periodo futuro configurado.");
+                $mensajeExtra = " (Atención: No hay más periodos configurados en el sistema).";
             }
+            // -----------------------------------------------------
             // -----------------------------------------------------
 
             // 5. Registrar en Contabilidad (Libro Diario)

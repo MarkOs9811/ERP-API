@@ -85,6 +85,12 @@ class Empleado extends Model
     {
         return $this->hasOne(User::class, 'idEmpleado', 'id');
     }
+
+    public function sede()
+    {
+        return $this->belongsTo(Sede::class, 'idSede', 'id');
+    }
+
     protected static function booted()
     {
         static::addGlobalScope(new EmpresaScope);

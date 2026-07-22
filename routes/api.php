@@ -512,6 +512,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     Route::put('/configuracionesTwilio/{id}', [ConfiguracionController::class, 'configurarTwilio']);
     Route::post('/configuracionesSunat/{id}', [ConfiguracionController::class, 'configurarSunat']);
+    Route::put('/configuracionesTipoVenta/{id}', [ConfiguracionController::class, 'configurarTipoVenta']);
 
 
     Route::put('/activarServicio/{id}', [ConfiguracionController::class, 'activarServicio']);
@@ -533,7 +534,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::get('/reporteCompras', [ReportesController::class, 'reporteCompras']);
     Route::get('/reporteHorasExtras', [ReportesController::class, 'reporteHorasExtras']);
     Route::get('/reporteVacaciones', [ReportesController::class, 'reporteVacaciones']);
-
+    Route::get('/reporteNomina/{periodo}', [ReportesController::class, 'reporteNomina']);
 
     // REPORTE DE CLIENTES
     Route::get('/reporteClientes', [ReportesController::class, 'reporteClientes']);

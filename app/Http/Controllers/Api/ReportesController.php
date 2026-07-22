@@ -1049,4 +1049,38 @@ class ReportesController extends Controller
             ], 500);
         }
     }
+
+    public function reporteNomina($periodo)
+    {
+        try {
+
+            $nomina = Empleado::with(['persona', 'usuario', 'cargo', 'area', 'sede'])
+                ->where('estado', 1)
+                ->get();
+
+            $data = $nomina->map(function ($item) use ($periodo) {
+                return [
+                    'ID' => $item->id,
+                    'Nombre' => optional($item->persona)->nombre ?? '-',
+                    'Apellidos' => optional($item->persona)->apellidos ?? '-',
+                    'Documento' => optional($item->persona)->documento_identidad ?? '-',
+                    'Cargo' => optional($item->cargo)->nombre ?? '-',
+                    'Área' => optional($item->area)->nombre ?? '-',
+                    'Sede' => optional($item->sede)->nombre ?? '-',
+                    'Salario Base' => $item->salario ?? 0,
+                    'Periodo' => $periodo,
+                ];
+            });
+
+            $filename = "reporte_nomina_{$periodo}_" . now()->format('Ymd_His') . ".xlsx";
+
+            return (new FastExcel($data))->download($filename);
+        } catch (\Exception $e) {
+            Log::error('Error al generar reporte de nómina: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al generar el reporte de nómina: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }
