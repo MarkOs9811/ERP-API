@@ -89,94 +89,94 @@ class OpenAIService
     }
 
 
-    public function predecirVentas($ventas)
-    {
-        try {
-            if (!$this->client) {
-                throw new \Exception("OpenAI no está configurado.");
-            }
+    // public function predecirVentas($ventas)
+    // {
+    //     try {
+    //         if (!$this->client) {
+    //             throw new \Exception("OpenAI no está configurado.");
+    //         }
 
-            $ventasArray = $ventas->toArray();
+    //         $ventasArray = $ventas->toArray();
 
-            // Calculamos promedio de referencia
-            $totales = array_column($ventasArray, 'total');
-            $diasConVenta = array_filter($totales, fn($t) => $t > 0);
-            $promedio = count($diasConVenta) > 0 ? array_sum($diasConVenta) / count($diasConVenta) : 0;
+    //         // Calculamos promedio de referencia
+    //         $totales = array_column($ventasArray, 'total');
+    //         $diasConVenta = array_filter($totales, fn($t) => $t > 0);
+    //         $promedio = count($diasConVenta) > 0 ? array_sum($diasConVenta) / count($diasConVenta) : 0;
 
-            // Preparamos fechas futuras
-            $proximosDias = [];
-            for ($i = 0; $i < 7; $i++) {
-                $date = now()->addDays($i + 1);
-                $proximosDias[] = [
-                    'fecha' => $date->format('Y-m-d'),
-                    'dia_semana' => $date->locale('es')->dayName
-                ];
-            }
+    //         // Preparamos fechas futuras
+    //         $proximosDias = [];
+    //         for ($i = 0; $i < 7; $i++) {
+    //             $date = now()->addDays($i + 1);
+    //             $proximosDias[] = [
+    //                 'fecha' => $date->format('Y-m-d'),
+    //                 'dia_semana' => $date->locale('es')->dayName
+    //             ];
+    //         }
 
-            $response = $this->client->chat()->create([
-                'model' => 'gpt-3.5-turbo',
-                'messages' => [
-                    [
-                        'role' => 'system',
-                        'content' => "Eres una API que SOLO devuelve JSON.
-                    
-                    CONTEXTO:
-                    Analiza 30 días de ventas de un restaurante.
-                    Promedio activo aprox: {$promedio}.
-                    
-                    TAREA:
-                    Predice ventas para 7 días futuros basándote en patrones semanales (fines de semana vs lunes).
-                    
-                    REGLAS ESTRICTAS:
-                    1. Tu respuesta debe contener SOLO el JSON crudo.
-                    2. NO incluyas explicaciones, ni saludos, ni texto introductorio.
-                    3. NO uses bloques de código Markdown (```json).
-                    4. Si el historial tiene ceros, sé conservador pero marca tendencia.
+    //         $response = $this->client->chat()->create([
+    //             'model' => 'gpt-3.5-turbo',
+    //             'messages' => [
+    //                 [
+    //                     'role' => 'system',
+    //                     'content' => "Eres una API que SOLO devuelve JSON.
 
-                    ESTRUCTURA EXACTA:
-                    {\"predicciones\": [{\"fecha\": \"YYYY-MM-DD\", \"total\": 120.50}]}
-                    "
-                    ],
-                    [
-                        'role' => 'user',
-                        'content' => "Historial: " . json_encode($ventasArray) .
-                            ". Futuro: " . json_encode($proximosDias)
-                    ]
-                ],
-                'temperature' => 0.5,
-                'max_tokens' => 600
-            ]);
+    //                 CONTEXTO:
+    //                 Analiza 30 días de ventas de un restaurante.
+    //                 Promedio activo aprox: {$promedio}.
 
-            $content = $response->choices[0]->message->content;
+    //                 TAREA:
+    //                 Predice ventas para 7 días futuros basándote en patrones semanales (fines de semana vs lunes).
 
-            Log::info("Respuesta cruda OpenAI: " . $content);
-            $cleanContent = str_replace(["```json", "```"], "", $content);
-            $inicio = strpos($cleanContent, '{');
-            $fin = strrpos($cleanContent, '}');
+    //                 REGLAS ESTRICTAS:
+    //                 1. Tu respuesta debe contener SOLO el JSON crudo.
+    //                 2. NO incluyas explicaciones, ni saludos, ni texto introductorio.
+    //                 3. NO uses bloques de código Markdown (```json).
+    //                 4. Si el historial tiene ceros, sé conservador pero marca tendencia.
 
-            if ($inicio !== false && $fin !== false) {
-                $cleanContent = substr($cleanContent, $inicio, $fin - $inicio + 1);
-            }
+    //                 ESTRUCTURA EXACTA:
+    //                 {\"predicciones\": [{\"fecha\": \"YYYY-MM-DD\", \"total\": 120.50}]}
+    //                 "
+    //                 ],
+    //                 [
+    //                     'role' => 'user',
+    //                     'content' => "Historial: " . json_encode($ventasArray) .
+    //                         ". Futuro: " . json_encode($proximosDias)
+    //                 ]
+    //             ],
+    //             'temperature' => 0.5,
+    //             'max_tokens' => 600
+    //         ]);
 
-            $respuesta = json_decode($cleanContent, true);
+    //         $content = $response->choices[0]->message->content;
+
+    //         Log::info("Respuesta cruda OpenAI: " . $content);
+    //         $cleanContent = str_replace(["```json", "```"], "", $content);
+    //         $inicio = strpos($cleanContent, '{');
+    //         $fin = strrpos($cleanContent, '}');
+
+    //         if ($inicio !== false && $fin !== false) {
+    //             $cleanContent = substr($cleanContent, $inicio, $fin - $inicio + 1);
+    //         }
+
+    //         $respuesta = json_decode($cleanContent, true);
 
 
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                Log::error("Error JSON Decode: " . json_last_error_msg());
-                throw new \Exception("La IA devolvió un formato inválido.");
-            }
+    //         if (json_last_error() !== JSON_ERROR_NONE) {
+    //             Log::error("Error JSON Decode: " . json_last_error_msg());
+    //             throw new \Exception("La IA devolvió un formato inválido.");
+    //         }
 
-            return $respuesta['predicciones'] ?? [];
-        } catch (\Exception $e) {
-            Log::error("Error OpenAI o Parsing: " . $e->getMessage());
-            return array_map(function ($dia) use ($promedio) {
-                return [
-                    'fecha' => $dia['fecha'],
-                    'total' => round($promedio, 2)
-                ];
-            }, $proximosDias);
-        }
-    }
+    //         return $respuesta['predicciones'] ?? [];
+    //     } catch (\Exception $e) {
+    //         Log::error("Error OpenAI o Parsing: " . $e->getMessage());
+    //         return array_map(function ($dia) use ($promedio) {
+    //             return [
+    //                 'fecha' => $dia['fecha'],
+    //                 'total' => round($promedio, 2)
+    //             ];
+    //         }, $proximosDias);
+    //     }
+    // }
 
     public function generarRecomendacionesIA($ventasReales, $ventasIA)
     {

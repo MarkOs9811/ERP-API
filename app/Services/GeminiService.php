@@ -95,10 +95,9 @@ class GeminiService
                 ]
             ];
 
-            // AQUÍ ESTÁ LA SOLUCIÓN AL ERROR 401
             $response = Http::withHeaders([
                 'Content-Type' => 'application/json',
-                'X-Goog-Api-Key' => $this->apiKey // Pasamos la llave AQ. por el header oficial
+                'X-Goog-Api-Key' => $this->apiKey
             ])->post($this->url, $payload);
 
             if ($response->failed()) {
@@ -126,6 +125,109 @@ class GeminiService
                 'precioCombo' => 0,
                 'items' => []
             ];
+        }
+    }
+
+    // ========================================================================
+    // NUEVO MÉTODO: PREDECIR VENTAS MIGRADO A GEMINI
+    // ========================================================================
+    public function predecirVentas($ventas)
+    {
+        // 1. Lógica matemática intacta (Promedios y Fechas)
+        $ventasArray = is_array($ventas) ? $ventas : $ventas->toArray();
+        $totales = array_column($ventasArray, 'total');
+        $diasConVenta = array_filter($totales, fn($t) => $t > 0);
+        $promedio = count($diasConVenta) > 0 ? array_sum($diasConVenta) / count($diasConVenta) : 0;
+
+        $proximosDias = [];
+        for ($i = 0; $i < 7; $i++) {
+            $date = now()->addDays($i + 1);
+            $proximosDias[] = [
+                'fecha' => $date->format('Y-m-d'),
+                'dia_semana' => $date->locale('es')->dayName
+            ];
+        }
+
+        try {
+            if (!$this->apiKey) {
+                throw new \Exception("La API Key de Gemini no está configurada.");
+            }
+
+            // 2. Construcción del System Prompt para Gemini
+            $mensajeSistema = "
+            Eres una API de análisis financiero predictivo.
+            
+            CONTEXTO:
+            Analiza un historial de 30 días de ventas de un restaurante.
+            Promedio de días activos: " . round($promedio, 2) . ".
+            
+            TAREA:
+            Predice las ventas para los próximos 7 días basándote en el promedio activo y patrones semanales (fines de semana venden más).
+            
+            REGLAS ESTRICTAS:
+            1. Devuelve ÚNICAMENTE un JSON válido.
+            2. IMPORTANTE: Si el historial tiene muchos ceros (porque el software recién se está usando), IGNORA los ceros. 
+            3. NINGÚN DÍA FUTURO DEBE SER 0.0 si el promedio activo es mayor a 0. Basa tus predicciones futuras en el Promedio de días activos, variando de forma realista (+/- 15%).
+
+            ESTRUCTURA EXACTA:
+            {
+                \"predicciones\": [
+                    {\"fecha\": \"YYYY-MM-DD\", \"total\": 120.50}
+                ]
+            }";
+
+            $mensajeUsuario = "Historial: " . json_encode($ventasArray) . ". \nFuturo a predecir: " . json_encode($proximosDias);
+
+            // 3. Payload nativo de Gemini (Aprovechando responseMimeType)
+            $payload = [
+                'system_instruction' => [
+                    'parts' => [['text' => $mensajeSistema]]
+                ],
+                'contents' => [
+                    [
+                        'role' => 'user',
+                        'parts' => [['text' => $mensajeUsuario]]
+                    ]
+                ],
+                'generationConfig' => [
+                    'temperature' => 0.5,
+                    'responseMimeType' => 'application/json', // Esto nos garantiza que Gemini NO enviará Markdown
+                ]
+            ];
+
+            // 4. Petición HTTP usando la llave por Header
+            $response = Http::withHeaders([
+                'Content-Type' => 'application/json',
+                'X-Goog-Api-Key' => $this->apiKey
+            ])->post($this->url, $payload);
+
+            if ($response->failed()) {
+                throw new \Exception("Error en la API de Gemini: " . $response->body());
+            }
+
+            // 5. Extracción y Parsing
+            $responseData = $response->json();
+            $textoRespuesta = $responseData['candidates'][0]['content']['parts'][0]['text'] ?? '{}';
+
+            $respuestaJSON = json_decode($textoRespuesta, true);
+
+            // Validación de estructura
+            if (json_last_error() !== JSON_ERROR_NONE || !isset($respuestaJSON['predicciones'])) {
+                Log::error("Error JSON Decode Gemini Predictivo: " . json_last_error_msg());
+                throw new \Exception("La IA devolvió un formato inválido.");
+            }
+
+            return $respuestaJSON['predicciones'];
+        } catch (\Exception $e) {
+            Log::error("Error en predecirVentas con Gemini: " . $e->getMessage());
+
+            // 6. El mismo Fallback confiable de siempre
+            return array_map(function ($dia) use ($promedio) {
+                return [
+                    'fecha' => $dia['fecha'],
+                    'total' => round($promedio, 2)
+                ];
+            }, $proximosDias);
         }
     }
 }

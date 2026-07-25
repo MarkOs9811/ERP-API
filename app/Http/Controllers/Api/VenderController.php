@@ -386,14 +386,18 @@ class VenderController extends Controller
             // --- 2. PREPARACIÓN DE ÍTEMS A VENDER ---
 
             if ($tipoVenta === 'llevar') {
-                // ... (Lógica existente para llevar) ...
                 if (empty($pedidoToLlevar) || !is_array($pedidoToLlevar)) {
                     return response()->json(['success' => false, 'message' => 'No se recibieron pedidos válidos para llevar.']);
                 }
                 $pedidosToVender = collect($pedidoToLlevar)->map(function ($pedido) use ($factorDivisor) {
                     $precioTotal = (float)$pedido['precio'] * $pedido['cantidad'];
+
+                    // 👉 VALIDAMOS SI ES COMIDA O INVENTARIO
+                    $esComida = isset($pedido['tipo']) ? ($pedido['tipo'] === 'comida') : true;
+
                     return (object)[
-                        "idPlato" => $pedido['id'], // ID del Plato
+                        "idPlato" => $esComida ? $pedido['id'] : null,        // Solo llena idPlato si es comida
+                        "idInventario" => !$esComida ? $pedido['id'] : null,  // Solo llena idInventario si NO es comida
                         "cantidad" => $pedido['cantidad'],
                         "descripcion" => $pedido['nombre'],
                         "valor_unitario" => (float)$pedido['precio'] / $factorDivisor,
@@ -410,6 +414,7 @@ class VenderController extends Controller
                     $precioTotal = (float)$preventa->precio * $preventa->cantidad;
                     return (object)[
                         "idPlato" => $preventa->idPlato,
+                        "idInventario" => null,
                         "cantidad" => $preventa->cantidad,
                         "descripcion" => $platoNombre,
                         "valor_unitario" => (float)$preventa->precio / $factorDivisor,
@@ -455,6 +460,7 @@ class VenderController extends Controller
                         return (object)[
                             "id_preventa" => $item['id'], // ID único de la fila en preventa_mesa (IMPORTANTE PARA BORRAR LUEGO)
                             "idPlato" => $idPlato,
+                            "idInventario" => null,
                             "cantidad" => $cantidadAPagar,
                             "descripcion" => $nombrePlato,
                             "valor_unitario" => $precioUnit / $factorDivisor,
@@ -602,7 +608,33 @@ class VenderController extends Controller
             } else {
                 $venta = $this->registrarVenta($nuevoPedido->id, $idUsuario, $nombreMetodo, $tipoComprobante, $igv, $subtotal, $total, $ClienteId);
             }
+            // =================================================================
+            // =========== 4. DESCUENTO DE STOCK INVENTARIO  ============
+            // =================================================================
+            foreach ($pedidosToVender as $itemVendido) {
 
+                // Verificamos si el item tiene un idInventario válido (no es un plato)
+                if (isset($itemVendido->idInventario) && !is_null($itemVendido->idInventario)) {
+
+                    // Asegúrate de importar el modelo arriba: use App\Models\Inventario;
+                    $productoInventario = Inventario::find($itemVendido->idInventario);
+
+                    if ($productoInventario) {
+                        // 1. Opcional pero recomendado: Validar si hay stock suficiente
+                        if ($productoInventario->stock < $itemVendido->cantidad) {
+                            // Esto lanzará un error, activará el DB::rollBack() y cancelará toda la venta
+                            throw new \Exception("Stock insuficiente para el producto: " . $itemVendido->descripcion . ". Stock actual: " . $productoInventario->stock);
+                        }
+
+                        // 2. Reducir el stock
+                        $productoInventario->stock = $productoInventario->stock - $itemVendido->cantidad;
+                        $productoInventario->save();
+
+                        Log::info("Stock descontado para: {$itemVendido->descripcion}. Nuevo stock: {$productoInventario->stock}");
+                    }
+                }
+            }
+            // =================================================================
             // Crédito y Caja
             if (in_array($metodoPago->nombre, ['credito', 'tarjeta credito'])) {
                 $cuentasPorCobrar = $this->registrarCuentasPorCobrar($venta, $ClienteId, $idUsuario, $total, $numeroCuotas);

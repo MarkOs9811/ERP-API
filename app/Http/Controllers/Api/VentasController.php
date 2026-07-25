@@ -4,6 +4,7 @@ namespace App\Http\Controllers\api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Venta;
+use App\Services\GeminiService;
 use App\Services\OpenAIService;
 use Carbon\CarbonPeriod;
 use Illuminate\Http\Request;
@@ -38,7 +39,7 @@ class VentasController extends Controller
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
-    public function getVentasIA()
+    public function getVentasIA(GeminiService $geminiService)
     {
         try {
             // 1. Aumentamos el rango a 30 días para que la IA detecte patrones semanales
@@ -69,10 +70,14 @@ class VentasController extends Controller
                 ];
             }
 
-            Log::info("Enviando a OpenAI:", $historialCompleto); // <--- VERIFICA ESTO EN TU LOG
-            $resultados = $this->openAIService->predecirVentas(collect($historialCompleto));
+            // Actualizamos el log para reflejar a Gemini
+            Log::info("Enviando a Gemini:", $historialCompleto);
 
-            Log::info("Resultados de la IA: ", ['resultados' => $resultados]);
+
+            // ¡Esto funcionará a la perfección!
+            $resultados = $geminiService->predecirVentas(collect($historialCompleto));
+
+            Log::info("Resultados de la IA (Gemini): ", ['resultados' => $resultados]);
 
             return response()->json([
                 'success' => true,
@@ -84,24 +89,24 @@ class VentasController extends Controller
             return response()->json(['success' => false, 'message' => 'Error al predecir ventas.'], 500);
         }
     }
-    public function generarRecomendaciones()
-    {
-        try {
-            // Obtener las ventas reales (históricas)
-            $ventasRealesResponse = $this->getVentas();
-            $ventasReales = json_decode($ventasRealesResponse->getContent(), true)['data']; // Convertir a array
+    // public function generarRecomendaciones()
+    // {
+    //     try {
+    //         // Obtener las ventas reales (históricas)
+    //         $ventasRealesResponse = $this->getVentas();
+    //         $ventasReales = json_decode($ventasRealesResponse->getContent(), true)['data']; // Convertir a array
 
-            // Obtener las predicciones generadas por la IA
-            $ventasIAResponse = $this->getVentasIA();
-            $ventasIA = json_decode($ventasIAResponse->getContent(), true)['data']; // Convertir a array
+    //         // Obtener las predicciones generadas por la IA
+    //         $ventasIAResponse = $this->getVentasIA(app(GeminiService::class));
+    //         $ventasIA = json_decode($ventasIAResponse->getContent(), true)['data']; // Convertir a array
 
-            // Llamar al método que genera las recomendaciones
-            $recomendaciones = $this->openAIService->generarRecomendacionesIA($ventasReales, $ventasIA);
+    //         // Llamar al método que genera las recomendaciones
+    //         $recomendaciones = $this->openAIService->generarRecomendacionesIA($ventasReales, $ventasIA);
 
-            return response()->json(['success' => true, 'data' => $recomendaciones], 200);
-        } catch (\Exception $e) {
-            Log::error("Error al generar recomendaciones: " . $e->getMessage());
-            return response()->json(['success' => false, 'message' => 'Error al generar recomendaciones.'], 500);
-        }
-    }
+    //         return response()->json(['success' => true, 'data' => $recomendaciones], 200);
+    //     } catch (\Exception $e) {
+    //         Log::error("Error al generar recomendaciones: " . $e->getMessage());
+    //         return response()->json(['success' => false, 'message' => 'Error al generar recomendaciones.'], 500);
+    //     }
+    // }
 }
