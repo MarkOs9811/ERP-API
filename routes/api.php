@@ -561,6 +561,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
 // LOGIN Y CRUD PARA EL SUPERADMIN
 
+
 Route::post('/login/superadmin', [AuthController::class, 'loginSuperAdmin']);
 Route::middleware('auth:sanctum', 'throttle:api')->group(
     function () {
