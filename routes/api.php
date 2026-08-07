@@ -297,6 +297,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::post('/cajas/storeCajaApertura', [CajaController::class, 'storeCajaApertura']);
     Route::get('/caja/getCajaClose/{id}', [CajaController::class, 'getCajaClose']);
     Route::put('/cajas/closeCaja/{id}', [CajaController::class, 'closeCaja']);
+    Route::get('/cajas/verificarActiva', [CajaController::class, 'verificarCajaAbierta']);
 
 
     // RUTAS PARA AGREGAR A PREVENTA UNA MESA

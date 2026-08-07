@@ -379,4 +379,34 @@ class CajaController extends Controller
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
     }
+
+    public function verificarCajaAbierta()
+    {
+        try {
+
+            $cajaActiva = Caja::where('estadoCaja', 1)->first();
+            Log::info('Verificando caja abierta:', ['cajaActiva' => $cajaActiva]);
+
+            if ($cajaActiva) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'id' => $cajaActiva->id, // El ID de la caja
+                        'nombreCaja' => $cajaActiva->nombreCaja, // Ajusta al campo real de tu tabla (ej. "nombre" o "nombre_caja")
+                    ]
+                ], 200);
+            }
+
+            // 3. Si no hay nada abierto, devolvemos success false
+            return response()->json([
+                'success' => false,
+                'message' => 'No hay ninguna caja abierta en este momento.'
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error del servidor al verificar la caja: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }
