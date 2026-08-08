@@ -28,6 +28,7 @@
         "laravel/tinker": "^2.8",
         "league/flysystem-aws-s3-v3": "^3.34",
         "mercadopago/dx-php": "^3.8",
+        "mike42/escpos-php": "^5.0",
         "openai-php/client": "^0.10.3",
         "pusher/pusher-php-server": "^7.2",
         "rap2hpoutre/fast-excel": "*",

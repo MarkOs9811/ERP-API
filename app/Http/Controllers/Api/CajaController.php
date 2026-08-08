@@ -393,6 +393,7 @@ class CajaController extends Controller
                     'data' => [
                         'id' => $cajaActiva->id, // El ID de la caja
                         'nombreCaja' => $cajaActiva->nombreCaja, // Ajusta al campo real de tu tabla (ej. "nombre" o "nombre_caja")
+                        'estadoCaja' => $cajaActiva->estadoCaja,
                     ]
                 ], 200);
             }

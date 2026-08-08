@@ -318,6 +318,9 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::get('/vender/preventa/preventeMesaDiminuir/{idPlato}/{idMesa}', [VenderController::class, 'disminuirPreventaMesa']);
 
 
+    // IMPRESION NORMAL
+    Route::post('/vender/imprimirGenerico', [VenderController::class, 'imprimirGenerico']);
+
     // RUTAS PARA VISTA DE COCINA
     Route::get('/getPedidoCocina', [CocinaController::class, 'getPedidoCocina']);
     Route::put('/pedidoCocina/{id}', [CocinaController::class, 'cambiarEstadoCocina']);

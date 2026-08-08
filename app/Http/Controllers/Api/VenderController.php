@@ -29,6 +29,7 @@ use App\Models\PreventaMesa;
 use App\Models\SerieCorrelativo;
 use App\Models\Venta;
 use App\Services\EstadoPedidoController;
+use App\Services\ImpresionService;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -238,6 +239,26 @@ class VenderController extends Controller
             }
 
             DB::commit();
+
+            // =================================================================
+            // =========== IMPRESIÓN DE COMANDA DE COCINA ======================
+            // =================================================================
+            $datosComanda = [
+                'mesa' => $mesa->numero,
+                'fecha' => date('d/m/Y H:i:s'),
+                'usuario' => $user->nombre ?? 'Mozo', // Puedes ajustarlo al campo real de tu tabla users
+                'productos' => $detallePlatosArray,   // Esto contiene solo lo que se acaba de pedir
+                'nota' => $request->nota
+            ];
+
+            try {
+                // Llamamos a la clase que creamos
+                $impresionService = new \App\Services\ImpresionService();
+                $impresionService->imprimirComandaCocina($datosComanda);
+            } catch (\Exception $eImpresion) {
+                Log::error("Error al imprimir comanda de mesa: " . $eImpresion->getMessage());
+            }
+            // =================================================================
 
             $pedidoCompleto = PedidoMesaRegistro::with(['preVentas.plato'])
                 ->find($idPedido);
@@ -679,7 +700,7 @@ class VenderController extends Controller
             $ticketData = [
                 'id' => $venta->id,
                 'serie_correlativo' => $venta->serie . '-' . $venta->correlativo,
-                'tipo_comprobante' => $tipoComprobante == 'F' ? 'FACTURA ELECTRÓNICA' : ($tipoComprobante == 'B' ? 'BOLETA DE VENTA' : 'BOLETA SIMPLE'),
+                'tipo_comprobante' => $tipoComprobante == 'F' ? 'FACTURA ELECTRÓNICA' : ($tipoComprobante == 'B' ? 'BOLETA DE VENTA' : 'TICKET'),
                 'metodo_pago' => $nombreMetodo,
                 'fecha' => date('d/m/Y H:i:s'),
                 'cliente' => [
@@ -687,13 +708,23 @@ class VenderController extends Controller
                     'documento' => $datosCliente['dni'] ?? ($datosCliente['ruc'] ?? '00000000'),
                     'direccion' => $datosCliente['direccion'] ?? '',
                 ],
-                'productos' => $pedidosToVender,
+                'productos' => $pedidosToVender, // Los items que realmente se están pagando
                 'subtotal' => round($subtotal, 2),
                 'igv' => round($igv, 2),
                 'total' => round($total, 2),
-                'observacion' => $observacion
+                'observacion' => $observacion,
+                'cajero' => Auth::user()->name ?? 'Cajero'
             ];
 
+
+            try {
+                // Llamamos a nuestro servicio de impresión
+                $impresionService = new ImpresionService();
+                $impresionService->imprimirTicketVenta($ticketData);
+            } catch (\Exception $eImpresion) {
+                // Solo logueamos el error, la venta ya se guardó correctamente
+                Log::error("⚠️ Error al intentar imprimir el ticket: " . $eImpresion->getMessage());
+            }
             return response()->json([
                 'success' => true,
                 'message' => 'Venta realizada correctamente.',
@@ -1285,6 +1316,29 @@ class VenderController extends Controller
                 $estadoPedido->estado
             ));
             Log::info("Pedido actualizado y evento reenviado", ['idPedido' => $idPedido]);
+        }
+    }
+
+
+    // IMPRESION GENERICA
+    public function imprimirGenerico(Request $request)
+    {
+        try {
+            $data = $request->all();
+
+            // Validación básica
+            if (!isset($data['titulo']) || !isset($data['contenido'])) {
+                return response()->json(['success' => false, 'message' => 'Faltan campos requeridos: titulo o contenido'], 400);
+            }
+
+            // Llamamos a nuestro servicio de impresión
+            $impresionService = new ImpresionService();
+            $impresionService->imprimirGenerico($data);
+
+            return response()->json(['success' => true, 'message' => 'Impresión generica enviada correctamente']);
+        } catch (\Exception $e) {
+            Log::error("Error al imprimir generico: " . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'Error al imprimir: ' . $e->getMessage()], 500);
         }
     }
 }
