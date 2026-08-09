@@ -314,40 +314,61 @@ class VenderController extends Controller
     public function transferirToMesa($idMesa, Request $request)
     {
         try {
-            // Obtener el ID de la mesa de destino desde la solicitud
-            $mesaDestino = $request->mesaDestino;
+            DB::beginTransaction();
 
-            // Verificar que la mesa de destino exista
-            $mesaDestinoObj = Mesa::find($mesaDestino);
-            if (!$mesaDestinoObj) {
-                return response()->json(['success' => false, 'message' => 'La mesa de destino no existe'], 404);
+            $mesaDestinoId = $request->mesaDestino;
+
+            if ($idMesa == $mesaDestinoId) {
+                throw new \Exception('No puedes transferir a la misma mesa.');
             }
 
-            // Cambiar el estado de la mesa original a disponible (estado = 0)
-            $mesa = Mesa::find($idMesa);
-            if ($mesa) {
-                $mesa->estado = 1;
-                $mesa->save();
-            } else {
-                return response()->json(['success' => false, 'message' => 'La mesa original no existe'], 404);
+            $mesaOrigen = Mesa::find($idMesa);
+            $mesaDestino = Mesa::find($mesaDestinoId);
+
+            if (!$mesaOrigen || !$mesaDestino) {
+                throw new \Exception('Una de las mesas no existe.');
             }
 
-            // Obtener todos los registros de PreventaMesa relacionados con la mesa original
+            // 1. Obtener todos los pedidos de la mesa original
             $preventas = PreventaMesa::where('idMesa', $idMesa)->get();
 
-            // Actualizar el idMesa de cada registro encontrado
-            foreach ($preventas as $preventa) {
-                $preventa->idMesa = $mesaDestino;
-                $preventa->save();
+            if ($preventas->isEmpty()) {
+                throw new \Exception('La mesa original no tiene pedidos para transferir.');
             }
 
-            // Cambiar el estado de la mesa de destino a ocupada (estado = 1)
-            $mesaDestinoObj->estado = 0;
-            $mesaDestinoObj->save();
+            // Extraemos los IDs de los pedidos únicos para actualizar los tickets de cocina
+            $idsPedidos = $preventas->pluck('idPedido')->unique();
 
-            return response()->json(['success' => true, 'mesaOrigen' => $mesa, 'mesaDestino' => $mesaDestinoObj, 'message' => 'Transferencia Desde '], 200);
+            // 2. Mover los platos a la nueva mesa
+            PreventaMesa::where('idMesa', $idMesa)->update(['idMesa' => $mesaDestinoId]);
+
+            // 3. Actualizar la referencia (número de mesa) en los tickets de cocina
+            // Asumiendo que tu modelo es EstadoPedido y usa el campo 'referencia' o similar
+            if (class_exists('\App\Models\EstadoPedido')) {
+                \App\Models\EstadoPedido::whereIn('idPedidoMesa', $idsPedidos)
+                    ->where('tipo', 'mesa')
+                    ->update(['referencia' => $mesaDestino->numero]);
+            }
+
+            // 4. Actualizar estados de las mesas
+            $mesaOrigen->estado = 1; // 1 = Disponible
+            $mesaOrigen->save();
+
+            $mesaDestino->estado = 0; // 0 = Ocupada
+            $mesaDestino->save();
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'mesaOrigen' => $mesaOrigen,
+                'mesaDestino' => $mesaDestino,
+                'message' => "Transferencia exitosa a Mesa {$mesaDestino->numero}"
+            ], 200);
         } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
+            DB::rollBack();
+            Log::error('Error en transferencia de mesa: ' . $e->getMessage());
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
 
@@ -1109,64 +1130,183 @@ class VenderController extends Controller
     public function eliminarPreventaMesa($idMesa)
     {
         try {
-            // Verificar si existen registros para eliminar
-            if (!PreventaMesa::where('idMesa', $idMesa)->exists()) {
+            Log::info('========== INICIO eliminarPreventaMesa ==========', [
+                'idMesa' => $idMesa,
+            ]);
+
+            // 1. Verificar si existen registros
+            $cantidadPreventas = PreventaMesa::where('idMesa', $idMesa)->count();
+
+            Log::info('Preventas encontradas para la mesa', [
+                'idMesa' => $idMesa,
+                'cantidad' => $cantidadPreventas,
+            ]);
+
+            if ($cantidadPreventas === 0) {
+                Log::warning('No se encontraron preventas para la mesa', [
+                    'idMesa' => $idMesa,
+                ]);
+
                 return response()->json([
                     'success' => false,
                     'message' => 'No se encontraron preventas para la mesa especificada.'
                 ], 404);
             }
 
-            // Obtener el idPedido de la primera preventa (todas deberían tener el mismo)
+            // 2. Obtener la primera preventa para obtener el idPedido
             $primerPreventa = PreventaMesa::where('idMesa', $idMesa)->first();
+
+            Log::info('Primera preventa encontrada', [
+                'idMesa' => $idMesa,
+                'preventa' => $primerPreventa ? $primerPreventa->toArray() : null,
+            ]);
+
             $idPedido = $primerPreventa ? $primerPreventa->idPedido : null;
 
-            // Cambiar el estado de la mesa a disponible
+            Log::info('ID de pedido obtenido', [
+                'idMesa' => $idMesa,
+                'idPedido' => $idPedido,
+            ]);
+
+            // 3. Buscar la mesa
             $mesa = Mesa::find($idMesa);
+
             if ($mesa) {
+                Log::info('Mesa encontrada', [
+                    'idMesa' => $idMesa,
+                    'estadoActual' => $mesa->estado,
+                ]);
+
+                // Cambiar estado de la mesa a disponible
                 $mesa->estado = 1;
                 $mesa->save();
+
+                Log::info('Mesa actualizada a disponible', [
+                    'idMesa' => $idMesa,
+                    'nuevoEstado' => $mesa->estado,
+                ]);
+            } else {
+                Log::warning('No se encontró la mesa', [
+                    'idMesa' => $idMesa,
+                ]);
             }
 
-            // Eliminar TODOS los registros encontrados en PreventaMesa con este idMesa
-            PreventaMesa::where('idMesa', $idMesa)->delete();
+            // 4. Eliminar todas las preventas
+            $eliminadas = PreventaMesa::where('idMesa', $idMesa)->delete();
 
-            // Eliminar el registro de EstadoPedido relacionado
+            Log::info('Preventas eliminadas', [
+                'idMesa' => $idMesa,
+                'cantidadEliminada' => $eliminadas,
+            ]);
+
+            // 5. Procesar EstadoPedido y PedidoMesaRegistro
             if ($idPedido) {
-                $estadoPedido = EstadoPedido::where('idPedidoMesa', $idPedido)->where('estado', 0)->first();
+
+                Log::info('Buscando EstadoPedido', [
+                    'idMesa' => $idMesa,
+                    'idPedidoMesa' => $idPedido,
+                    'estadoBuscado' => 0,
+                ]);
+
+                $estadoPedido = EstadoPedido::where('idPedidoMesa', $idPedido)
+                    ->where('estado', 0)
+                    ->first();
+
                 if ($estadoPedido) {
+
+                    Log::info('EstadoPedido encontrado', [
+                        'idEstadoPedido' => $estadoPedido->id,
+                        'idPedidoMesa' => $estadoPedido->idPedidoMesa,
+                        'estado' => $estadoPedido->estado,
+                    ]);
+
                     $idEstadoPedido = $estadoPedido->id;
+
+                    // Eliminar EstadoPedido
                     $estadoPedido->delete();
 
-                    // Lanzar evento indicando que ya no hay platos para esa mesa
+                    Log::info('EstadoPedido eliminado', [
+                        'idEstadoPedido' => $idEstadoPedido,
+                        'idPedidoMesa' => $idPedido,
+                    ]);
+
+                    // Lanzar evento para cocina
+                    Log::info('Lanzando PedidoCocinaEvent', [
+                        'idEstadoPedido' => $idEstadoPedido,
+                        'idMesa' => $idMesa,
+                        'tipo' => 'mesa',
+                        'estado' => 0,
+                        'platos' => [],
+                    ]);
+
                     event(new PedidoCocinaEvent(
                         $idEstadoPedido,
-                        [], // Array vacío porque ya no hay platos
+                        [],
                         'mesa',
-                        0 // Estado 0 (puedes ajustar según tu lógica)
+                        0
                     ));
-                    Log::info("EstadoPedido eliminado al eliminar todas las preventas de la mesa", [
+
+                    Log::info('PedidoCocinaEvent lanzado correctamente', [
+                        'idEstadoPedido' => $idEstadoPedido,
                         'idMesa' => $idMesa,
-                        'idPedidoMesa' => $idPedido
+                    ]);
+                } else {
+
+                    Log::warning('No se encontró EstadoPedido para eliminar', [
+                        'idPedidoMesa' => $idPedido,
+                        'estadoBuscado' => 0,
                     ]);
                 }
 
-                // Eliminar el registro de PedidoMesaRegistro
-                PedidoMesaRegistro::where('id', $idPedido)->delete();
-                Log::info("PedidoMesaRegistro eliminado", [
-                    'idPedido' => $idPedido,
-                    'idMesa' => $idMesa
+                // 6. Eliminar PedidoMesaRegistro
+                $pedidoMesaRegistro = PedidoMesaRegistro::find($idPedido);
+
+                if ($pedidoMesaRegistro) {
+
+                    Log::info('PedidoMesaRegistro encontrado', [
+                        'idPedido' => $idPedido,
+                        'registro' => $pedidoMesaRegistro->toArray(),
+                    ]);
+
+                    $pedidoMesaRegistro->delete();
+
+                    Log::info('PedidoMesaRegistro eliminado correctamente', [
+                        'idPedido' => $idPedido,
+                        'idMesa' => $idMesa,
+                    ]);
+                } else {
+
+                    Log::warning('No se encontró PedidoMesaRegistro', [
+                        'idPedido' => $idPedido,
+                        'idMesa' => $idMesa,
+                    ]);
+                }
+            } else {
+
+                Log::warning('No existe idPedido asociado a las preventas', [
+                    'idMesa' => $idMesa,
                 ]);
             }
+
+            Log::info('========== FIN eliminarPreventaMesa - ÉXITO ==========', [
+                'idMesa' => $idMesa,
+                'idPedido' => $idPedido,
+            ]);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Preventas y estado de cocina eliminados correctamente.'
             ]);
         } catch (\Exception $e) {
-            Log::error('Error al eliminar preventas y estado de cocina: ' . $e->getMessage(), [
-                'idMesa' => $idMesa
+
+            Log::error('========== ERROR eliminarPreventaMesa ==========', [
+                'idMesa' => $idMesa,
+                'error' => $e->getMessage(),
+                'archivo' => $e->getFile(),
+                'linea' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
             ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Error al eliminar las preventas: ' . $e->getMessage()
@@ -1176,48 +1316,43 @@ class VenderController extends Controller
     public function deletePlatoPreventa($idProducto, $idMesa)
     {
         try {
-            Log::info("Intentando eliminar plato preventa", ['idProducto' => $idProducto, 'idMesa' => $idMesa]);
+            DB::beginTransaction();
 
-            // 1. Buscar el plato a eliminar
-            $platoToDelete = PreventaMesa::where('id', $idProducto)->where('idMesa', $idMesa)->first();
+            $platoToDelete = PreventaMesa::where('id', $idProducto)->where('idMesa', $idMesa)->lockForUpdate()->first();
 
             if (!$platoToDelete) {
                 return response()->json(['success' => false, 'message' => 'Plato no encontrado'], 404);
             }
 
-            // 2. Guardar el idPedido antes de eliminar para verificar después
             $idPedido = $platoToDelete->idPedido;
-
-            // 3. Eliminar el plato
             $platoToDelete->delete();
-            Log::info("Plato eliminado correctamente", ['idProducto' => $idProducto]);
 
-            // 4. VERIFICACIÓN CRÍTICA: ¿Quedan platos en este pedido?
+            // Verificar si el pedido se quedó vacío
             $platosRestantesCount = PreventaMesa::where('idPedido', $idPedido)->count();
 
             if ($platosRestantesCount === 0) {
-                // CASO A: El pedido quedó vacío -> Limpieza profunda de las 3 tablas
-                Log::info("El pedido quedó vacío. Iniciando eliminación en cascada.", ['idPedido' => $idPedido]);
+                // El pedido quedó vacío, eliminamos todo en cascada
                 $this->eliminarPedidoCompleto($idPedido);
             } else {
-                // CASO B: Aún quedan platos -> Actualizar JSON y notificar a cocina (Lógica original)
+                // Aún quedan platos, actualizamos el ticket de cocina
                 $this->actualizarEstadoPedido($idPedido);
             }
 
-            // 5. Verificar si la MESA quedó totalmente vacía (sin ningún pedido activo de ninguna ronda)
+            // Verificar si la MESA completa se quedó vacía
             $existenOtrosPlatosEnMesa = PreventaMesa::where('idMesa', $idMesa)->exists();
 
             if (!$existenOtrosPlatosEnMesa) {
                 $mesa = Mesa::find($idMesa);
                 if ($mesa) {
-                    $mesa->estado = 1; // Disponible
+                    $mesa->estado = 1; // 1 = Disponible
                     $mesa->save();
-                    Log::info("Mesa liberada (Disponible)", ['idMesa' => $idMesa]);
                 }
             }
 
+            DB::commit();
             return response()->json(['success' => true, 'message' => 'Plato eliminado y stock actualizado'], 200);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('Error al eliminar plato: ' . $e->getMessage());
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }
