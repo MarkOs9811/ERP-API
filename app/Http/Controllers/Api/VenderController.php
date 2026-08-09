@@ -1052,61 +1052,27 @@ class VenderController extends Controller
 
 
     // CASOS PARA LA PREVENTEA DE MESAS
-    public function aumentarPreventaMesa($idPlatoChange, $idMesaChange)
+    public function actualizarCantidad(Request $request, $idPlato, $idMesa)
     {
         try {
-            $idMesa = $idMesaChange;
-            $idPlato = $idPlatoChange;
-            Log::info("Aumentando preventa mesa", ['idMesa' => $idMesa, 'idPlato' => $idPlato]);
+            Log::info("Actualizando cantidad preventa mesa", ['idMesa' => $idMesa, 'idPlato' => $idPlato, 'body' => $request->all()]);
 
-            $preventa = PreventaMesa::where('idMesa', $idMesa)
-                ->where('idPlato', $idPlato)
-                ->first();
+            // Recibimos la cantidad exacta que nos mandó React
+            $nuevaCantidad = $request->input('cantidad');
 
-            if ($preventa) {
-                // --- NUEVA VALIDACIÓN DE ESTADO ---
-                if ($preventa->idPedido) {
-                    $estadoPedido = EstadoPedido::where('idPedidoMesa', $preventa->idPedido)->first();
-
-                    // Si existe el estado y es 1 (Ya servido/despachado), bloqueamos
-                    if ($estadoPedido && $estadoPedido->estado == 1) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'No se puede aumentar. El pedido ya fue preparado o despachado.'
-                        ], 422); // 422: Entidad no procesable
-                    }
-                }
-                // ----------------------------------
-
-                $preventa->cantidad += 1;
-                $preventa->save();
-
-                return response()->json(['success' => true, 'message' => 'Cantidad aumentada', 'nuevaCantidad' => $preventa->cantidad]);
-            } else {
-                return response()->json(['success' => false, 'message' => 'Preventa no encontrada'], 404);
+            if (!$nuevaCantidad || $nuevaCantidad < 1) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'La cantidad enviada no es válida (mínimo 1)'
+                ], 400);
             }
-        } catch (\Exception $e) {
-            Log::error('Error al aumentar la cantidad en preventa mesa: ' . $e->getMessage(), [
-                'idMesa' => $idMesaChange,
-                'idPlato' => $idPlatoChange
-            ]);
-            return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
-        }
-    }
-
-    public function disminuirPreventaMesa($idPlatoChange, $idMesaChange)
-    {
-        try {
-            $idMesa = $idMesaChange;
-            $idPlato = $idPlatoChange;
-            Log::info("Disminuyendo preventa mesa", ['idMesa' => $idMesa, 'idPlato' => $idPlato]);
 
             $preventa = PreventaMesa::where('idMesa', $idMesa)
                 ->where('idPlato', $idPlato)
                 ->first();
 
             if ($preventa) {
-                // --- NUEVA VALIDACIÓN DE ESTADO ---
+                // --- VALIDACIÓN DE ESTADO (Mantenemos tu lógica intacta) ---
                 if ($preventa->idPedido) {
                     $estadoPedido = EstadoPedido::where('idPedidoMesa', $preventa->idPedido)->first();
 
@@ -1114,29 +1080,28 @@ class VenderController extends Controller
                     if ($estadoPedido && $estadoPedido->estado == 1) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'No se puede disminuir. El pedido ya fue preparado o despachado.'
+                            'message' => 'No se puede modificar la cantidad. El pedido ya fue preparado o despachado.'
                         ], 422);
                     }
                 }
-                // ----------------------------------
+                // ------------------------------------------------------------
 
-                $preventa->cantidad -= 1;
-
-                if ($preventa->cantidad < 1) {
-                    $preventa->cantidad = 1;
-                    return response()->json(['success' => true, 'message' => 'Cantidad minima 1', 'nuevaCantidad' => 1]);
-                }
-
+                // Actualizamos directamente con la nueva cantidad
+                $preventa->cantidad = $nuevaCantidad;
                 $preventa->save();
 
-                return response()->json(['success' => true, 'message' => 'Cantidad disminuida', 'nuevaCantidad' => $preventa->cantidad]);
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Cantidad actualizada correctamente',
+                    'nuevaCantidad' => $preventa->cantidad
+                ]);
             } else {
                 return response()->json(['success' => false, 'message' => 'Preventa no encontrada'], 404);
             }
         } catch (\Exception $e) {
-            Log::error('Error al disminuir la cantidad en preventa mesa: ' . $e->getMessage(), [
-                'idMesa' => $idMesaChange,
-                'idPlato' => $idPlatoChange
+            Log::error('Error al actualizar la cantidad en preventa mesa: ' . $e->getMessage(), [
+                'idMesa' => $idMesa,
+                'idPlato' => $idPlato
             ]);
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 500);
         }

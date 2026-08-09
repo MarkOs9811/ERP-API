@@ -314,9 +314,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::delete('/vender/preventa/deletePlatoPreventa/{idProducto}/{idMesa}', [VenderController::class, 'deletePlatoPreventa']);
     Route::post('/vender/preventa/realizarVenta', [VenderController::class, 'venderTodo']);
 
-    Route::get('/vender/preventa/preventeMesaAumentar/{idPlato}/{idMesa}', [VenderController::class, 'aumentarPreventaMesa']);
-    Route::get('/vender/preventa/preventeMesaDiminuir/{idPlato}/{idMesa}', [VenderController::class, 'disminuirPreventaMesa']);
-
+    Route::put('/vender/preventa/actualizarCantidad/{idPlato}/{idMesa}', [VenderController::class, 'actualizarCantidad']);
 
     // IMPRESION NORMAL
     Route::post('/vender/imprimirGenerico', [VenderController::class, 'imprimirGenerico']);
