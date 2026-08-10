@@ -209,7 +209,7 @@ class CajaController extends Controller
             Log::info('Buscando ventas para usuario: ' . $idUsuario->id . ' después de: ' . $fechaHoraApertura);
 
             // Obtener ventas
-            $ventas = Venta::with('metodoPago', 'pedido', 'pedidoWeb')
+            $ventas = Venta::with('pedido', 'pedidoWeb')
                 ->where('idUsuario', $idUsuario->id)
                 ->where('created_at', '>', $fechaHoraApertura)
                 ->get();
@@ -232,7 +232,7 @@ class CajaController extends Controller
                 return [
                     'pedido' => $pedido ?: 'N/A',
                     'total' => $venta->total,
-                    'metodoPago' => optional($venta->metodoPago)->nombre ?? 'Desconocido',
+                    'metodoPago' => $venta->idMetodo ?? 'Desconocido',
                     'documento' => $venta->documento,
                     'fechaVenta' => optional($venta->created_at)->format('d-m-Y H:i:s') ?? 'N/A',
                 ];

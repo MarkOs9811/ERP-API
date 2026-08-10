@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Boleta;
 use App\Models\campanaPromo;
 use App\Models\Cliente;
+use App\Models\Configuraciones;
 use App\Models\DetallePedidosWeb;
 use App\Models\Direccione;
 use App\Models\Factura;
@@ -307,14 +308,30 @@ class VenderAppCliente extends Controller
                     $request->idCliente,
                     $montoDescuento // <-- SE ENVÍA A LA FUNCIÓN
                 );
+                // ==========================================
+                // D. FACTURACIÓN SUNAT Y COMPROBANTE (ARQUITECTURA CORREGIDA)
+                // ==========================================
 
-                // ==========================================
-                // D. FACTURACIÓN SUNAT Y COMPROBANTE 
-                // ==========================================
+                $docLimpio = preg_replace('/[^0-9]/', '', $dniCliente); // Solo dejamos números
+                $longitudDoc = strlen($docLimpio);
+
+                $tipoDoc = '0'; // 0 = Doc.Trib.No.Dom.Sin.Ruc (Ideal para 00000000 o genéricos)
+                $docFinal = '00000000';
+                $nombreFinal = trim($nombreCliente) ?: 'CLIENTE GENERICO';
+
+                // Validamos si es un DNI (8 dígitos) o RUC (11 dígitos) real
+                if ($longitudDoc === 8 && $docLimpio !== '00000000') {
+                    $tipoDoc = '1';
+                    $docFinal = $docLimpio;
+                } elseif ($longitudDoc === 11) {
+                    $tipoDoc = '6';
+                    $docFinal = $docLimpio;
+                }
+
                 $datosCliente = [
-                    'tipo_documento'   => '1',
-                    'numero_documento' => $dniCliente,
-                    'nombre'           => $nombreCliente,
+                    'tipo_documento'   => $tipoDoc,
+                    'numero_documento' => $docFinal,
+                    'nombre'           => $nombreFinal,
                     'direccion'        => $direccion ? $direccion->direccion : 'Sin dirección'
                 ];
 
@@ -322,47 +339,84 @@ class VenderAppCliente extends Controller
                 $correlativoTicket = '00000000';
 
                 try {
-                    $sunatConfig = ConfiguracionHelper::get('sunat');
-                    $sunatActivo = $sunatConfig && isset($sunatConfig->estado) && $sunatConfig->estado == 1;
+                    // Consultamos directo al modelo para evitar el bug del Helper
+                    //  Tomamos el idEmpresa que manda React (o tu valor por defecto)
+                    $idEmpresaActual = $request->idEmpresa ?? 2;
 
+                    //  Filtramos EXPLÍCITAMENTE para evitar que el Global Scope apagado nos traicione
+                    $sunatConfig = Configuraciones::where('idEmpresa', $idEmpresaActual)
+                        ->where('nombre', 'sunat')
+                        ->first();
+
+                    $sunatActivo = ($sunatConfig && $sunatConfig->estado == 1);
+                    // 1. EXTRAER E INCREMENTAR CORRELATIVO (ÚNICA FUENTE DE VERDAD)
+                    $serieDB = SerieCorrelativo::where('idEmpresa', $idEmpresaActual)
+                        ->where('idSede', $request->idSede ?? 1)
+                        ->where('tipo_documento_sunat', '03') // Web siempre es Boleta (03)
+                        ->where('is_default', 1)
+                        ->lockForUpdate()
+                        ->first();
+
+                    if (!$serieDB) {
+                        throw new \Exception("No hay serie configurada para Boletas Web.");
+                    }
+
+                    $serieDB->correlativo_actual += 1;
+                    $serieDB->usado = 1;
+                    $serieDB->save();
+
+                    $serieTicket = $serieDB->serie;
+                    $correlativoTicket = str_pad($serieDB->correlativo_actual, 8, '0', STR_PAD_LEFT);
+
+                    // 2. ENVIAR A SUNAT
                     if ($sunatActivo) {
                         $datosFactura = [
                             'venta_id'         => $venta->id,
                             'tipo_comprobante' => 'B',
+                            'serie'            => $serieTicket,         // 🎯 AHORA PASAMOS LA SERIE
+                            'correlativo'      => $correlativoTicket,   // 🎯 AHORA PASAMOS EL CORRELATIVO
                             'cliente'          => $datosCliente,
                             'detalle'          => collect($pedidosToVender),
                             'subtotal'         => $subtotalNeto,
                             'igv'              => $igvNeto,
-                            'descuento'        => $montoDescuento, // La SUNAT necesita saber cuánto descontaste
+                            'descuento'        => $montoDescuento,
                             'total'            => $totalNeto,
                         ];
 
                         $facturacionSunatController = new FacturacionSunatController();
                         $respuesta = $facturacionSunatController->generarFactura($datosFactura);
 
+                        $estadoFinal = isset($respuesta['estado']) ? (int)$respuesta['estado'] : 0;
+                        $obs = !empty($respuesta['observaciones']) ? implode(', ', $respuesta['observaciones']) : null;
+
                         $this->registrarComprobante(
                             $venta,
                             'B',
-                            $respuesta['estado'],
-                            !empty($respuesta['observaciones']) ? implode(', ', $respuesta['observaciones']) : null,
+                            $estadoFinal,
+                            $obs,
                             $respuesta['rutaXml'] ?? null,
                             $respuesta['rutaCdr'] ?? null,
+                            $serieTicket,
+                            $correlativoTicket,
                             $referenciaPagoMp
                         );
                     } else {
-                        $this->registrarComprobante($venta, 'B', 1, null, null, null, $referenciaPagoMp);
-                    }
-
-                    $boletaGenerada = Boleta::where('idVenta', $venta->id)->first();
-                    if ($boletaGenerada) {
-                        $serieTicket = $boletaGenerada->numSerie;
-                        $correlativoTicket = $boletaGenerada->numero;
-                    } else {
-                        throw new \Exception("La boleta no se guardó en la base de datos.");
+                        Log::info("⚠️ SUNAT inactivo para Web. Guardando como Pendiente.");
+                        $this->registrarComprobante(
+                            $venta,
+                            'B',
+                            0,
+                            'SUNAT Inactivo',
+                            null,
+                            null,
+                            $serieTicket,
+                            $correlativoTicket,
+                            $referenciaPagoMp
+                        );
                     }
                 } catch (\Exception $eComprobante) {
-                    Log::error("❌ FALLO CRÍTICO AL GUARDAR BOLETA: " . $eComprobante->getMessage());
-                    throw new \Exception("Error al generar el comprobante. Por favor, inténtelo nuevamente.");
+                    Log::error("❌ FALLO CRÍTICO AL GUARDAR BOLETA WEB: " . $eComprobante->getMessage());
+                    throw new \Exception("Error al generar el comprobante de la app. Por favor, comuníquese con soporte.");
                 }
 
                 // ==========================================
@@ -431,60 +485,27 @@ class VenderAppCliente extends Controller
         ]);
     }
     // MERCADO PAGO: Añadí $referenciaPago al final por si a futuro decides agregar una columna en Boleta para guardar el ID de Mercado Pago
-    private function registrarComprobante($venta, $tipoComprobante = 'B', $estado = 1, $observaciones = null, $rutaXml = null, $rutaCdr = null, $referenciaPago = null)
+    // Actualizamos los parámetros para recibir la serie, correlativo y referencia de pago
+    private function registrarComprobante($venta, $tipoComprobante = 'B', $estado = 1, $observaciones = null, $rutaXml = null, $rutaCdr = null, $serieReal = null, $correlativoReal = null, $referenciaPago = null)
     {
-        $usuario = Auth::user();
-        $idEmpresa = ($usuario && isset($usuario->idEmpresa)) ? $usuario->idEmpresa : $venta->idEmpresa;
-        $idSede = ($usuario && isset($usuario->idSede)) ? $usuario->idSede : $venta->idSede;
-
-        if (!$idEmpresa || !$idSede) {
-            throw new \Exception("No se pudo determinar la Empresa o Sede para la Boleta.");
-        }
-
-        $tipoSunat = '03';
-
         try {
-            $datosSerie = DB::transaction(function () use ($idEmpresa, $idSede, $tipoSunat) {
-                $serie = SerieCorrelativo::where('idEmpresa', $idEmpresa)
-                    ->where('idSede', $idSede)
-                    ->where('tipo_documento_sunat', $tipoSunat)
-                    ->where('is_default', 1)
-                    ->lockForUpdate()
-                    ->first();
-
-                if (!$serie) {
-                    throw new \Exception("No se encontró la serie de Boleta por defecto (03) para la Sede $idSede.");
-                }
-
-                $serie->correlativo_actual += 1;
-                $serie->usado = 1;
-                $serie->save();
-
-                return [
-                    'serie' => $serie->serie,
-                    'correlativo' => $serie->correlativo_actual
-                ];
-            });
-
-            $numeroComprobante = str_pad($datosSerie['correlativo'], 8, '0', STR_PAD_LEFT);
-            $serieComprobante = $datosSerie['serie'];
+            // Si existe referencia de Mercado Pago, la adjuntamos a la observación
+            if ($referenciaPago) {
+                $observaciones = trim($observaciones . " - Pago MP: " . $referenciaPago);
+            }
 
             $boleta = Boleta::where('idVenta', $venta->id)->first() ?? new Boleta();
-            $boleta->idEmpresa = $idEmpresa;
+            $boleta->idEmpresa = $venta->idEmpresa ?? 2;
             $boleta->idVenta = $venta->id;
-            $boleta->numSerie = $serieComprobante;
-            $boleta->numero = $numeroComprobante;
+            $boleta->numSerie = $serieReal;
+            $boleta->numero = $correlativoReal;
             $boleta->estado = $estado;
-
-            // Si quieres guardar el ID de Mercado Pago en las observaciones de la boleta, puedes descomentar esto:
-            // if ($referenciaPago) { $observaciones = trim($observaciones . " - Pago MP: " . $referenciaPago); }
-
             $boleta->observaciones = $observaciones;
             $boleta->rutaXml = $rutaXml;
             $boleta->rutaCdr = $rutaCdr;
             $boleta->save();
         } catch (\Exception $e) {
-            throw new \Exception("Error al generar la boleta local: " . $e->getMessage());
+            throw new \Exception("Error al registrar el comprobante Web en BD: " . $e->getMessage());
         }
     }
     // COMROBAR EL CUPON

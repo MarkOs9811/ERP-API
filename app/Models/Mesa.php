@@ -12,6 +12,11 @@ use Illuminate\Database\Eloquent\Model;
 class Mesa extends Model
 {
     use HasFactory;
+    public function preventas()
+    {
+        // belongsTo / hasMany -> (Modelo Destino, foreign_key, local_key)
+        return $this->hasMany(PreventaMesa::class, 'idMesa', 'id');
+    }
     protected static function booted()
     {
         static::addGlobalScope(new SedeScope);

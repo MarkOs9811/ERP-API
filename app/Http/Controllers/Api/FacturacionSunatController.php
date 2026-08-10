@@ -96,9 +96,9 @@ class FacturacionSunatController extends Controller
                 ->setNombreComercial($nombreComercial)
                 ->setAddress($address);
 
-            $serie = $datosFactura['tipo_comprobante'] === 'F' ? 'F001' : 'B001';
-            $correlativo = $datosFactura['venta_id'];
-
+            // Recibimos los datos exactos que calculamos en venderTodo
+            $serie = $datosFactura['serie'];
+            $correlativo = $datosFactura['correlativo'];
             // ==================================================================
             // 🔥 ESCUDO ANTI-BUGS DE SUNAT BETA (FIRE WOK)
             // ==================================================================

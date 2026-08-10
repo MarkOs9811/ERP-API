@@ -41,7 +41,20 @@ class VenderController extends Controller
     public function getMesas()
     {
         try {
-            $mesas = Mesa::get();
+
+            $mesasQuery = Mesa::with('preventas.plato')->get();
+
+
+            $mesas = $mesasQuery->map(function ($mesa) {
+                // 2. Calculamos el total
+                $mesa->total = $mesa->preventas->sum(function ($preventa) {
+                    return $preventa->cantidad * $preventa->precio;
+                });
+
+                // 3. YA NO USAMOS unset($mesa->preventas); lo dejamos para que React lo use
+                return $mesa;
+            });
+
             return response()->json(['success' => true, 'data' => $mesas], 200);
         } catch (\Exception $e) {
             Log::error('Error al obtener las mesas: ' . $e->getMessage());
@@ -435,7 +448,7 @@ class VenderController extends Controller
                     $precioTotal = (float)$pedido['precio'] * $pedido['cantidad'];
 
                     // 👉 VALIDAMOS SI ES COMIDA O INVENTARIO
-                    $esComida = isset($pedido['tipo']) ? ($pedido['tipo'] === 'comida') : true;
+                    $esComida = isset($pedido['tipo']) ? ($pedido['tipo'] === 'restaurante') : true;
 
                     return (object)[
                         "idPlato" => $esComida ? $pedido['id'] : null,        // Solo llena idPlato si es comida
@@ -543,24 +556,39 @@ class VenderController extends Controller
 
             $totalPrecio = 0;
             $detallePlatosArray = [];
-
             // Procesar Detalle y Calcular Totales
+            $detallesParaInsertar = [];
+
             foreach ($pedidosToVender as $itemVenta) {
-                $producto = Plato::find($itemVenta->idPlato);
-                // Validacion opcional si el plato existe
-
-                // Creamos detalle en la tabla `detalle_pedidos`
-                if ($tipoVenta !== 'web') {
-                    $this->crearDetallePedido($nuevoPedido->id, $itemVenta->idPlato, $itemVenta->cantidad, $itemVenta->precio_unitario);
-                }
-
                 $totalPrecio += $itemVenta->cantidad * $itemVenta->precio_unitario;
+
+                // Guardamos el detalle en un array para JSON (Para llevar)
                 $detallePlatosArray[] = [
                     'nombre' => $itemVenta->descripcion,
                     'cantidad' => $itemVenta->cantidad
                 ];
-            }
 
+                if ($tipoVenta !== 'web') {
+                    // En lugar de llamar a un método dudoso, armamos el array para insertar en masa
+                    // o llamamos a un método refactorizado.
+                    $detallesParaInsertar[] = [
+                        'idEmpresa' => Auth::user()->idEmpresa, // Asumiendo que necesitas idEmpresa
+                        'idPedido' => $nuevoPedido->id,
+                        'idPlato' => $itemVenta->idPlato, // Puede ser null
+                        'idInventario' => $itemVenta->idInventario ?? null, // Puede ser null
+                        'producto' => $itemVenta->descripcion, // ✅ GUARDAMOS EL TEXTO SIEMPRE COMO BACKUP
+                        'cantidad' => $itemVenta->cantidad,
+                        'precio_unitario' => $itemVenta->precio_unitario,
+                        'estado' => 1,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ];
+                }
+            }
+            // Inserción en masa (Bulk Insert) - Más rápido y seguro
+            if (!empty($detallesParaInsertar)) {
+                DetallePedido::insert($detallesParaInsertar);
+            }
             // Registrar estado y observación para llevar
             if ($tipoVenta === 'llevar') {
                 $detallePlatos = json_encode($detallePlatosArray);
@@ -685,31 +713,67 @@ class VenderController extends Controller
             $caja->montoVendido += $total;
             $caja->save();
 
-            // Facturación SUNAT
+            // ==========================================
+            // =========== FACTURACIÓN SUNAT ============
+            // ==========================================
             try {
-                $sunatConfig = ConfiguracionHelper::get('sunat');
-                $sunatActivo = $sunatConfig && isset($sunatConfig->estado) && $sunatConfig->estado === 1;
+                $sunatConfig = Configuraciones::where('nombre', 'sunat')->first();
+                $sunatActivo = ($sunatConfig && $sunatConfig->estado == 1);
 
-                if ($sunatActivo && $tipoComprobante !== 'S') {
-                    $datosFactura = [
-                        'venta_id' => $venta->id,
-                        'tipo_comprobante' => $tipoComprobante,
-                        'cliente' => $datosCliente,
-                        'detalle' => $pedidosToVender, // Se envía lo que se vendió (parcial o total)
-                        'subtotal' => $subtotal,
-                        'igv' => $igv,
-                        'total' => $total,
-                    ];
-                    $facturacionSunatController = new FacturacionSunatController();
-                    $respuesta = $facturacionSunatController->generarFactura($datosFactura);
-                    $this->registrarComprobante(
-                        $venta,
-                        $tipoComprobante,
-                        $respuesta['estado'],
-                        !empty($respuesta['observaciones']) ? implode(', ', $respuesta['observaciones']) : null,
-                        $respuesta['rutaXml'] ?? null,
-                        $respuesta['rutaCdr'] ?? null
-                    );
+                $serieReal = 'T001';
+                $correlativoReal = str_pad($venta->id, 8, '0', STR_PAD_LEFT); // Fallback para Ticket
+
+                // 1. SOLO calculamos correlativos oficiales si es Factura o Boleta
+                if ($tipoComprobante === 'F' || $tipoComprobante === 'B') {
+                    $serieReal = $tipoComprobante === 'F' ? 'F001' : 'B001';
+                    $modeloClase = $tipoComprobante === 'F' ? Factura::class : Boleta::class;
+
+                    // Buscamos el último número registrado de esta empresa
+                    $ultimoNumero = $modeloClase::where('idEmpresa', Auth::user()->idEmpresa)->max('numero') ?? 0;
+                    $correlativoReal = str_pad((int)$ultimoNumero + 1, 8, '0', STR_PAD_LEFT);
+                }
+
+                // 2. Lógica de Envío y Registro
+                if ($tipoComprobante !== 'S') { // Si ES Boleta o Factura
+                    if ($sunatActivo) {
+                        Log::info("🟡 Generando {$tipoComprobante} electrónico: {$serieReal}-{$correlativoReal}");
+
+                        $datosFactura = [
+                            'venta_id' => $venta->id,
+                            'tipo_comprobante' => $tipoComprobante,
+                            'serie' => $serieReal,
+                            'correlativo' => $correlativoReal,
+                            'cliente' => $datosCliente,
+                            'detalle' => $pedidosToVender,
+                            'subtotal' => $subtotal,
+                            'igv' => $igv,
+                            'total' => $total,
+                        ];
+
+                        $facturacionSunatController = new FacturacionSunatController();
+                        $respuesta = $facturacionSunatController->generarFactura($datosFactura);
+
+                        // Aseguramos enviar un ENTERO al estado (0 si falla, sino el que devuelve)
+                        $estadoFinal = isset($respuesta['estado']) ? (int)$respuesta['estado'] : 0;
+
+                        $this->registrarComprobante(
+                            $venta,
+                            $tipoComprobante,
+                            $estadoFinal,
+                            !empty($respuesta['observaciones']) ? implode(', ', $respuesta['observaciones']) : null,
+                            $respuesta['rutaXml'] ?? null,
+                            $respuesta['rutaCdr'] ?? null,
+                            $serieReal,        // 🔥 NUEVO: Pasamos la serie
+                            $correlativoReal   // 🔥 NUEVO: Pasamos el correlativo exacto
+                        );
+                    } else {
+                        // SUNAT está inactivo, pero ES una Boleta/Factura. Guardamos como Pendiente (Estado 0)
+                        Log::info("⚠️ Módulo SUNAT inactivo. Guardando comprobante como Pendiente.");
+                        $this->registrarComprobante($venta, $tipoComprobante, 0, 'SUNAT Inactivo - Pendiente', null, null, $serieReal, $correlativoReal);
+                    }
+                } else {
+                    // Es un TICKET SIMPLE ('S'). No hacemos nada con Greenter ni tablas de boletas.
+                    Log::info("✅ Comprobante Simple (S) procesado internamente. No requiere SUNAT.");
                 }
             } catch (\Exception $eSunat) {
                 Log::error("❌ ERROR CRÍTICO SUNAT: " . $eSunat->getMessage());
@@ -717,10 +781,10 @@ class VenderController extends Controller
 
             DB::commit();
 
-            // Respuesta Final
+            // Respuesta Final (Corregida para que el Ticket muestre el número real)
             $ticketData = [
                 'id' => $venta->id,
-                'serie_correlativo' => $venta->serie . '-' . $venta->correlativo,
+                'serie_correlativo' => $serieReal . '-' . $correlativoReal, // <-- AHORA SÍ MOSTRARÁ B001-00000002
                 'tipo_comprobante' => $tipoComprobante == 'F' ? 'FACTURA ELECTRÓNICA' : ($tipoComprobante == 'B' ? 'BOLETA DE VENTA' : 'TICKET'),
                 'metodo_pago' => $nombreMetodo,
                 'fecha' => date('d/m/Y H:i:s'),
@@ -729,12 +793,12 @@ class VenderController extends Controller
                     'documento' => $datosCliente['dni'] ?? ($datosCliente['ruc'] ?? '00000000'),
                     'direccion' => $datosCliente['direccion'] ?? '',
                 ],
-                'productos' => $pedidosToVender, // Los items que realmente se están pagando
+                'productos' => $pedidosToVender,
                 'subtotal' => round($subtotal, 2),
                 'igv' => round($igv, 2),
                 'total' => round($total, 2),
                 'observacion' => $observacion,
-                'cajero' => Auth::user()->name ?? 'Cajero'
+                'cajero' => Auth::user()->empleado->persona->nombre . " " . Auth::user()->empleado->persona->apellidos ?? 'Cajero'
             ];
 
 
@@ -758,57 +822,6 @@ class VenderController extends Controller
             return response()->json(['error' => true, 'message' => 'Error del servidor: ' . $e->getMessage()], 500);
         }
     }
-
-    private function crearNuevoPedido($tipoVenta)
-    {
-        $nuevoPedido = new Pedido();
-        $nuevoPedido->fechaPedido = now();
-        $nuevoPedido->estado = 1;
-        $nuevoPedido->tipoVenta = $tipoVenta;
-        $nuevoPedido->save();
-        return $nuevoPedido;
-    }
-
-    private function obtenerPrecioUnitario($idPlato)
-    {
-        $productoInventario = Plato::findOrFail($idPlato);
-        return $productoInventario->precio;
-    }
-
-    private function crearDetallePedido($idPedido, $idPlato, $cantidad, $precioUnitario)
-    {
-        $detallePedido = new DetallePedido();
-        $detallePedido->idPedido = $idPedido;
-        $detallePedido->idPlato = $idPlato;
-        $detallePedido->cantidad = $cantidad;
-        $detallePedido->precio_unitario = $precioUnitario;
-        $detallePedido->estado = 1;
-        $detallePedido->save();
-    }
-
-    private function registrarVentaWeb($idPedidWeb, $idUsuario, $nombreMetodo, $tipoComprobante, $igv, $subtotal, $total, $ClienteId) // Cambiamos aquí
-    {
-        $venta = new Venta();
-
-        // Determinar el estado de la venta y asignar el ClienteId según sea necesario
-        $estadoVenta = $this->determinarEstadoVenta($nombreMetodo);
-        $venta->idCliente =  $ClienteId; // Asigna ClienteId solo si es crédito
-
-        $venta->idUsuario = $idUsuario;
-        $venta->idMetodo = $nombreMetodo;
-        $venta->idPedidoWeb = $idPedidWeb;
-        $venta->igv = $igv;
-        $venta->subtotal = $subtotal;
-        $venta->descuento = 0;
-        $venta->total = $total;
-        $venta->fechaVenta = now();
-        $venta->documento = $tipoComprobante;
-        $venta->estado = $estadoVenta; // Se puede asignar el estado calculado aquí
-        $venta->save();
-
-        return $venta;
-    }
-
     private function registrarVenta($idPedido, $idUsuario, $nombreMetodo, $tipoComprobante, $igv, $subtotal, $total, $ClienteId) // Cambiamos aquí
     {
         // Verificar si ya existe una venta registrada para este pedido
@@ -837,6 +850,56 @@ class VenderController extends Controller
 
         return $venta;
     }
+    private function crearNuevoPedido($tipoVenta)
+    {
+        $nuevoPedido = new Pedido();
+        $nuevoPedido->fechaPedido = now();
+        $nuevoPedido->estado = 1;
+        $nuevoPedido->tipoVenta = $tipoVenta;
+        $nuevoPedido->save();
+        return $nuevoPedido;
+    }
+
+    private function crearDetallePedido($idPedido, $idPlato, $cantidad, $precioUnitario)
+    {
+        $detallePedido = new DetallePedido();
+        $detallePedido->idPedido = $idPedido;
+        $detallePedido->idPlato = $idPlato;
+        $detallePedido->cantidad = $cantidad;
+        $detallePedido->precio_unitario = $precioUnitario;
+        $detallePedido->estado = 1;
+        $detallePedido->save();
+    }
+
+    private function obtenerPrecioUnitario($idPlato)
+    {
+        $productoInventario = Plato::findOrFail($idPlato);
+        return $productoInventario->precio;
+    }
+    private function registrarVentaWeb($idPedidWeb, $idUsuario, $nombreMetodo, $tipoComprobante, $igv, $subtotal, $total, $ClienteId) // Cambiamos aquí
+    {
+        $venta = new Venta();
+
+        // Determinar el estado de la venta y asignar el ClienteId según sea necesario
+        $estadoVenta = $this->determinarEstadoVenta($nombreMetodo);
+        $venta->idCliente =  $ClienteId; // Asigna ClienteId solo si es crédito
+
+        $venta->idUsuario = $idUsuario;
+        $venta->idMetodo = $nombreMetodo;
+        $venta->idPedidoWeb = $idPedidWeb;
+        $venta->igv = $igv;
+        $venta->subtotal = $subtotal;
+        $venta->descuento = 0;
+        $venta->total = $total;
+        $venta->fechaVenta = now();
+        $venta->documento = $tipoComprobante;
+        $venta->estado = $estadoVenta; // Se puede asignar el estado calculado aquí
+        $venta->save();
+
+        return $venta;
+    }
+
+
 
     private function determinarEstadoVenta($nombreMetodo)
     {
@@ -858,95 +921,36 @@ class VenderController extends Controller
      * Registra el comprobante (Factura o Boleta) obteniendo la serie y 
      * el correlativo de forma segura desde la base de datos.
      */
-    private function registrarComprobante($venta, $tipoComprobante, $estado = 1, $observaciones = null, $rutaXml = null, $rutaCdr = null)
+    // Agregamos $serieReal y $correlativoReal como parámetros obligatorios al final
+    private function registrarComprobante($venta, $tipoComprobante, $estado = 1, $observaciones = null, $rutaXml = null, $rutaCdr = null, $serieReal = null, $correlativoReal = null)
     {
-
-        $usuario = Auth::user();
-
-        // --- CÓDIGO ACTUALIZADO ---
-        // Si hay usuario logueado con idEmpresa lo usa, sino, lo saca de la Venta (Ideal para Delivery Web)
-        $idEmpresa = ($usuario && isset($usuario->idEmpresa)) ? $usuario->idEmpresa : $venta->idEmpresa;
-        $idSede = ($usuario && isset($usuario->idSede)) ? $usuario->idSede : $venta->idSede;
-
-        if (!$idEmpresa || !$idSede) {
-            throw new Exception("No se pudo determinar la Empresa o Sede para el comprobante.");
-        }
-
-
-        $tipoSunat = ($tipoComprobante == 'F') ? '01' : '03';
+        // Si es ticket (S), no guardamos en las tablas electrónicas
+        if ($tipoComprobante === 'S') return;
 
         try {
-
-            // Iniciamos la transacción SEGURA para obtener el número
-            $datosSerie = DB::transaction(function () use ($idEmpresa, $idSede, $tipoSunat) {
-
-                // Buscamos la serie por defecto Y LA BLOQUEAMOS 🔒
-                $serie = SerieCorrelativo::where('idEmpresa', $idEmpresa)
-                    ->where('idSede', $idSede)
-                    ->where('tipo_documento_sunat', $tipoSunat)
-                    ->where('is_default', 1) // <- ¡Buscando la columna 'is_default' = 1!
-                    ->lockForUpdate()
-                    ->first();
-
-                if (!$serie) {
-                    throw new Exception("No se encontró una serie configurada (default) para tipo $tipoSunat, Sede $idSede.");
-                }
-
-                // ¡Éxito! Incrementamos el contador
-                $serie->correlativo_actual += 1;
-                $serie->usado = 1;
-                $serie->save(); // Guardamos el nuevo valor (ej. 182)
-
-                // Retornamos los datos que necesitamos
-                return [
-                    'serie' => $serie->serie, // Ej: 'F001'
-                    'correlativo' => $serie->correlativo_actual // Ej: 182
-                ];
-            });
-
-            // 4. PREPARAMOS EL NÚMERO DE COMPROBANTE
-            // El estándar SUNAT usa 8 dígitos para el correlativo.
-            // Tu código anterior usaba 3 ('str_pad(..., 3,...)'), lo cual es muy poco.
-            // Lo cambiamos a 8 para cumplir el estándar.
-            $numeroComprobante = str_pad($datosSerie['correlativo'], 8, '0', STR_PAD_LEFT); // Ej: '00000182'
-            $serieComprobante = $datosSerie['serie']; // Ej: 'F001'
-
-
-            // 5. GUARDAR EL COMPROBANTE (FACTURA O BOLETA)
-            // Esta lógica es la misma que tenías, pero usando las nuevas variables.
-
             if ($tipoComprobante == 'F') {
                 $factura = Factura::where('idVenta', $venta->id)->first() ?? new Factura();
                 $factura->idVenta = $venta->id;
-
-                // ---- ¡LÓGICA ACTUALIZADA! ----
-                $factura->numSerie = $serieComprobante; // Viene de la BD
-                $factura->numero = $numeroComprobante;  // Viene de la BD (formateado)
-                // -----------------------------
-
+                $factura->numSerie = $serieReal;
+                $factura->numero = $correlativoReal;
                 $factura->estado = $estado;
                 $factura->observaciones = $observaciones;
                 $factura->rutaXml = $rutaXml;
                 $factura->rutaCdr = $rutaCdr;
                 $factura->save();
-            } else { // Es Boleta
+            } else {
                 $boleta = Boleta::where('idVenta', $venta->id)->first() ?? new Boleta();
                 $boleta->idVenta = $venta->id;
-
-                // ---- ¡LÓGICA ACTUALIZADA! ----
-                $boleta->numSerie = $serieComprobante; // Viene de la BD
-                $boleta->numero = $numeroComprobante;  // Viene de la BD (formateado)
-                // -----------------------------
-
+                $boleta->numSerie = $serieReal;
+                $boleta->numero = $correlativoReal;
                 $boleta->estado = $estado;
                 $boleta->observaciones = $observaciones;
                 $boleta->rutaXml = $rutaXml;
                 $boleta->rutaCdr = $rutaCdr;
                 $boleta->save();
             }
-        } catch (Exception $e) {
-
-            throw new Exception("Error al generar el correlativo: " . $e->getMessage());
+        } catch (\Exception $e) {
+            throw new \Exception("Error al registrar el comprobante en BD: " . $e->getMessage());
         }
     }
 

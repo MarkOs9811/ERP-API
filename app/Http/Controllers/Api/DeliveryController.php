@@ -225,11 +225,12 @@ class DeliveryController extends Controller
                     'costo_prioridad' => $request->costo_prioridad,
                     'tiempo_min' => $request->tiempo_min,
                     'tiempo_max' => $request->tiempo_max,
-                    'propinas_sugeridas' => $request->propinas_sugeridas ? json_decode($request->propinas_sugeridas, true) : null,
-                    // NUEVOS CAMPOS
+                    // 🔥 CORRECCIÓN: Guardar directamente el string JSON que manda React
+                    'propinas_sugeridas' => $request->propinas_sugeridas,
                     'hora_apertura' => $request->hora_apertura,
                     'hora_cierre' => $request->hora_cierre,
-                    'dias_atencion' => $request->dias_atencion ? json_decode($request->dias_atencion, true) : null,
+                    // 🔥 CORRECCIÓN: Guardar directamente el string JSON que manda React
+                    'dias_atencion' => $request->dias_atencion,
                     'estado' => '1',
                 ]
             );

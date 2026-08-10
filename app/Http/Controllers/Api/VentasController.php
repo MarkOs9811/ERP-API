@@ -23,7 +23,7 @@ class VentasController extends Controller
     {
         try {
             // Obtener las ventas ordenadas por fecha de la más reciente a la más antigua
-            $ventas = Venta::with('metodoPago', 'cliente', 'pedido.detallePedidos.producto', 'pedidoWeb.detallesPedido.plato', 'usuario.empleado.persona', 'detallePedidos', 'boleta', 'factura')
+            $ventas = Venta::with('cliente', 'pedido.detallePedidos.producto', 'pedidoWeb.detallesPedido.plato', 'usuario.empleado.persona', 'detallePedidos', 'boleta', 'factura')
                 ->orderBy('id', 'desc') // Ordenar por fechaVenta en orden descendente
                 ->get();
 

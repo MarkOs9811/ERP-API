@@ -8,6 +8,7 @@ return [
 
     // Orígenes permitidos
     'allowed_origins' => [
+        '*',
         'http://localhost:3000',
         'http://localhost:4000',
         'https://firewok-admin.vercel.app',

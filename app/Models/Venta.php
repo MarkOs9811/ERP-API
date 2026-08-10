@@ -25,10 +25,7 @@ class Venta extends Model
         'fechaVenta',
         'documento',
     ];
-    public function metodoPago()
-    {
-        return $this->belongsTo(MetodoPago::class, 'idMetodo');
-    }
+
 
     public function pedido()
     {
