@@ -30,6 +30,7 @@ use App\Http\Controllers\Api\UnidadController;
 use App\Http\Controllers\Api\VenderController;
 use App\Http\Controllers\Api\VentasController;
 use App\Http\Controllers\Api\ComprasController;
+use App\Http\Controllers\Api\ConsultasGenericas;
 use App\Http\Controllers\Api\DeliveryController;
 use App\Http\Controllers\Api\EmpresasAdminController;
 use App\Http\Controllers\Api\EventosController;
@@ -318,7 +319,8 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     // IMPRESION NORMAL
     Route::post('/vender/imprimirGenerico', [VenderController::class, 'imprimirGenerico']);
-
+    // CONSULTA USUARIO PARA VENDER
+    Route::get('/consultar-documento/{tipo}/{numero}', [ConsultasGenericas::class, 'ConsultaDatosUsuario']);
     // RUTAS PARA VISTA DE COCINA
     Route::get('/getPedidoCocina', [CocinaController::class, 'getPedidoCocina']);
     Route::put('/pedidoCocina/{id}', [CocinaController::class, 'cambiarEstadoCocina']);

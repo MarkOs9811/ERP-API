@@ -399,7 +399,23 @@ class VenderController extends Controller
             $nombreMetodo = $request->input('metodoPago');
             $tipoComprobante = $request->input('comprobante');
             $idUsuario = $request->input('idUsuario');
+
+            // 🔥 NUEVO: NORMALIZACIÓN DE LOS DATOS DEL CLIENTE Y EXTRACCIÓN DEL FRONTEND 🔥
             $datosCliente = $request->input('datosCliente');
+            $imprimirTicket = true; // Por defecto imprimimos
+            $observacionAdicional = null;
+
+            if (isset($datosCliente['nombre']) && is_array($datosCliente['nombre'])) {
+                // Capturamos las preferencias del frontend
+                $imprimirTicket = $datosCliente['nombre']['imprimirTicket'] ?? true;
+
+                if (!empty($datosCliente['nombre']['notas'])) {
+                    $observacionAdicional = "Notas Caja: " . $datosCliente['nombre']['notas'];
+                }
+
+                // Extraemos el texto real del nombre para evitar el error de strtoupper()
+                $datosCliente['nombre'] = $datosCliente['nombre']['nombreReferencia'] ?? 'CLIENTE GENERICO';
+            }
 
             // Datos de LLEVAR / WEB
             $pedidoToLlevar = $request->input('pedidoToLlevar');
@@ -407,7 +423,12 @@ class VenderController extends Controller
 
             $tipoVenta = $request->input('tipoVenta'); // 'mesa', 'llevar', 'web'
             $numeroCuotas = $request->input('cuotas');
+
+            // Unimos observaciones si enviaron desde la caja
             $observacion = $request->input('observacion');
+            if ($observacionAdicional) {
+                $observacion = $observacion ? $observacion . ' | ' . $observacionAdicional : $observacionAdicional;
+            }
 
             // === NUEVOS DATOS PARA CUENTA SEPARADA ===
             $esCuentaSeparada = $request->input('esCuentaSeparada', false); // Default false
@@ -424,6 +445,7 @@ class VenderController extends Controller
 
             // Mostrar el metodo de pago
             Log::info('metodo pago' . $nombreMetodo);
+
             // Validaciones básicas
             if ($idUsuarioAuth != $idUsuario) {
                 return response()->json(['success' => false, 'message' => 'Su código no pertenece a esta cuenta.']);
@@ -433,7 +455,6 @@ class VenderController extends Controller
             if (!$metodoPago) {
                 return response()->json(['success' => false, 'message' => 'Método de pago no encontrado.']);
             }
-
 
             $caja = Caja::findOrFail($idCaja);
             $pedidosToVender = collect([]);
@@ -485,21 +506,13 @@ class VenderController extends Controller
 
                 if ($esCuentaSeparada && !empty($pedidosSeleccionados)) {
                     // [A] VENTA PARCIAL (CUENTA SEPARADA)
-                    // Mapeamos lo que envió el Frontend (Redux itemsSeleccionados)
                     $pedidosToVender = collect($pedidosSeleccionados)->map(function ($item) use ($factorDivisor) {
-
-                        // Aseguramos obtener el ID real del PLATO
-                        // Si viene como item.plato.id o item.id (depende de cómo guardaste en Redux)
-                        // En tu frontend FilaPlatoUnificado mandas { id: pedidoId, plato: nombre, ... } 
-                        // Necesitamos buscar el registro original para sacar el ID del plato real o confiar en que el frontend lo mande.
-                        // Lo más seguro: Buscar en PreventaMesa por el ID de la fila ($item['id'])
 
                         $registroOriginal = PreventaMesa::find($item['id']);
 
                         if (!$registroOriginal) {
-                            // Fallback si no encuentra registro (raro), intentamos datos del frontend
                             $nombrePlato = $item['plato']['nombre'] ?? ($item['plato'] ?? 'Item');
-                            $idPlato = $item['plato']['id'] ?? 0; // Cuidado aqui
+                            $idPlato = $item['plato']['id'] ?? 0;
                             $precioUnit = (float)$item['precio'];
                         } else {
                             $plato = Plato::find($registroOriginal->idPlato);
@@ -508,12 +521,11 @@ class VenderController extends Controller
                             $precioUnit = (float)$registroOriginal->precio;
                         }
 
-                        // Usamos la cantidad que el usuario ELIGIÓ pagar (no el total de la fila si es parcial)
                         $cantidadAPagar = $item['cantidad'];
                         $precioTotal = $precioUnit * $cantidadAPagar;
 
                         return (object)[
-                            "id_preventa" => $item['id'], // ID único de la fila en preventa_mesa (IMPORTANTE PARA BORRAR LUEGO)
+                            "id_preventa" => $item['id'],
                             "idPlato" => $idPlato,
                             "idInventario" => null,
                             "cantidad" => $cantidadAPagar,
@@ -536,7 +548,7 @@ class VenderController extends Controller
                         $platoNombre = Plato::find($preventa->idPlato)->nombre ?? 'Plato desconocido';
                         $precioTotal = (float)$preventa->precio * $preventa->cantidad;
                         return (object)[
-                            "id_preventa" => $preventa->id, // ID para borrar luego
+                            "id_preventa" => $preventa->id,
                             "idPlato" => $preventa->idPlato,
                             "cantidad" => $preventa->cantidad,
                             "descripcion" => $platoNombre,
@@ -569,14 +581,12 @@ class VenderController extends Controller
                 ];
 
                 if ($tipoVenta !== 'web') {
-                    // En lugar de llamar a un método dudoso, armamos el array para insertar en masa
-                    // o llamamos a un método refactorizado.
                     $detallesParaInsertar[] = [
-                        'idEmpresa' => Auth::user()->idEmpresa, // Asumiendo que necesitas idEmpresa
+                        'idEmpresa' => Auth::user()->idEmpresa,
                         'idPedido' => $nuevoPedido->id,
-                        'idPlato' => $itemVenta->idPlato, // Puede ser null
-                        'idInventario' => $itemVenta->idInventario ?? null, // Puede ser null
-                        'producto' => $itemVenta->descripcion, // ✅ GUARDAMOS EL TEXTO SIEMPRE COMO BACKUP
+                        'idPlato' => $itemVenta->idPlato,
+                        'idInventario' => $itemVenta->idInventario ?? null,
+                        'producto' => $itemVenta->descripcion,
                         'cantidad' => $itemVenta->cantidad,
                         'precio_unitario' => $itemVenta->precio_unitario,
                         'estado' => 1,
@@ -585,7 +595,7 @@ class VenderController extends Controller
                     ];
                 }
             }
-            // Inserción en masa (Bulk Insert) - Más rápido y seguro
+            // Inserción en masa (Bulk Insert)
             if (!empty($detallesParaInsertar)) {
                 DetallePedido::insert($detallesParaInsertar);
             }
@@ -605,7 +615,7 @@ class VenderController extends Controller
             $igv = $totalPrecio - $subtotal;
             $total = $totalPrecio;
 
-            // Procesar Cliente (Factura/Boleta) - Lógica sin cambios
+            // Procesar Cliente (Factura/Boleta)
             if ($tipoComprobante === 'F') {
                 $dniCliente = $datosCliente['ruc'] ?? null;
                 if (!$dniCliente || empty($datosCliente['razonSocial']) || empty($datosCliente['direccion'])) {
@@ -627,32 +637,25 @@ class VenderController extends Controller
 
             if ($tipoVenta === 'mesa') {
                 if ($esCuentaSeparada) {
-                    // A) MODO PARCIAL: Recorremos lo que se vendió
                     foreach ($pedidosToVender as $itemVendido) {
                         $preventaRow = PreventaMesa::find($itemVendido->id_preventa);
 
                         if ($preventaRow) {
-                            // Si pagó TODO lo que había en esa fila (ej: había 2 cervezas, pagó 2)
                             if ($itemVendido->cantidad >= $preventaRow->cantidad) {
                                 $preventaRow->delete();
                             } else {
-                                // Si pagó PARCIALMENTE esa fila (ej: había 5, pagó 2)
-                                // Restamos la cantidad y actualizamos
                                 $preventaRow->cantidad = $preventaRow->cantidad - $itemVendido->cantidad;
                                 $preventaRow->save();
                             }
                         }
                     }
                 } else {
-                    // B) MODO TOTAL: Borramos todo de un golpe
                     PreventaMesa::where('idCaja', $idCaja)->where('idMesa', $idMesa)->delete();
                 }
 
                 // --- VERIFICACIÓN DE ESTADO DE MESA ---
-                // Consultamos si QUEDA ALGO pendiente en la mesa
                 $itemsRestantes = PreventaMesa::where('idMesa', $idMesa)->count();
 
-                // Solo si NO queda nada (0), liberamos la mesa
                 if ($itemsRestantes == 0) {
                     $mesaEncontrar = Mesa::find($idMesa);
                     if ($mesaEncontrar) {
@@ -660,14 +663,12 @@ class VenderController extends Controller
                         $mesaEncontrar->save();
                     }
                 } else {
-                    // Si itemsRestantes > 0, la mesa sigue OCUPADA (estado 0 o 2), no hacemos nada
                     Log::info("La mesa $idMesa aun tiene $itemsRestantes items pendientes. No se libera.");
                 }
             }
 
             // Registrar Venta Final en tabla `ventas`
             if ($tipoVenta === 'web') {
-                // ... logica web ...
                 $venta = $this->registrarVentaWeb($idPedidoWeb, $idUsuario, $nombreMetodo, $tipoComprobante, $igv, $subtotal, $total, $ClienteId);
                 $pedidoWeb = PedidosWebRegistro::find($idPedidoWeb);
                 if ($pedidoWeb) {
@@ -678,28 +679,20 @@ class VenderController extends Controller
             } else {
                 $venta = $this->registrarVenta($nuevoPedido->id, $idUsuario, $nombreMetodo, $tipoComprobante, $igv, $subtotal, $total, $ClienteId);
             }
+
             // =================================================================
             // =========== 4. DESCUENTO DE STOCK INVENTARIO  ============
             // =================================================================
             foreach ($pedidosToVender as $itemVendido) {
-
-                // Verificamos si el item tiene un idInventario válido (no es un plato)
                 if (isset($itemVendido->idInventario) && !is_null($itemVendido->idInventario)) {
-
-                    // Asegúrate de importar el modelo arriba: use App\Models\Inventario;
                     $productoInventario = Inventario::find($itemVendido->idInventario);
 
                     if ($productoInventario) {
-                        // 1. Opcional pero recomendado: Validar si hay stock suficiente
                         if ($productoInventario->stock < $itemVendido->cantidad) {
-                            // Esto lanzará un error, activará el DB::rollBack() y cancelará toda la venta
                             throw new \Exception("Stock insuficiente para el producto: " . $itemVendido->descripcion . ". Stock actual: " . $productoInventario->stock);
                         }
-
-                        // 2. Reducir el stock
                         $productoInventario->stock = $productoInventario->stock - $itemVendido->cantidad;
                         $productoInventario->save();
-
                         Log::info("Stock descontado para: {$itemVendido->descripcion}. Nuevo stock: {$productoInventario->stock}");
                     }
                 }
@@ -721,20 +714,17 @@ class VenderController extends Controller
                 $sunatActivo = ($sunatConfig && $sunatConfig->estado == 1);
 
                 $serieReal = 'T001';
-                $correlativoReal = str_pad($venta->id, 8, '0', STR_PAD_LEFT); // Fallback para Ticket
+                $correlativoReal = str_pad($venta->id, 8, '0', STR_PAD_LEFT);
 
-                // 1. SOLO calculamos correlativos oficiales si es Factura o Boleta
                 if ($tipoComprobante === 'F' || $tipoComprobante === 'B') {
                     $serieReal = $tipoComprobante === 'F' ? 'F001' : 'B001';
                     $modeloClase = $tipoComprobante === 'F' ? Factura::class : Boleta::class;
 
-                    // Buscamos el último número registrado de esta empresa
                     $ultimoNumero = $modeloClase::where('idEmpresa', Auth::user()->idEmpresa)->max('numero') ?? 0;
                     $correlativoReal = str_pad((int)$ultimoNumero + 1, 8, '0', STR_PAD_LEFT);
                 }
 
-                // 2. Lógica de Envío y Registro
-                if ($tipoComprobante !== 'S') { // Si ES Boleta o Factura
+                if ($tipoComprobante !== 'S') {
                     if ($sunatActivo) {
                         Log::info("🟡 Generando {$tipoComprobante} electrónico: {$serieReal}-{$correlativoReal}");
 
@@ -753,7 +743,6 @@ class VenderController extends Controller
                         $facturacionSunatController = new FacturacionSunatController();
                         $respuesta = $facturacionSunatController->generarFactura($datosFactura);
 
-                        // Aseguramos enviar un ENTERO al estado (0 si falla, sino el que devuelve)
                         $estadoFinal = isset($respuesta['estado']) ? (int)$respuesta['estado'] : 0;
 
                         $this->registrarComprobante(
@@ -763,16 +752,14 @@ class VenderController extends Controller
                             !empty($respuesta['observaciones']) ? implode(', ', $respuesta['observaciones']) : null,
                             $respuesta['rutaXml'] ?? null,
                             $respuesta['rutaCdr'] ?? null,
-                            $serieReal,        // 🔥 NUEVO: Pasamos la serie
-                            $correlativoReal   // 🔥 NUEVO: Pasamos el correlativo exacto
+                            $serieReal,
+                            $correlativoReal
                         );
                     } else {
-                        // SUNAT está inactivo, pero ES una Boleta/Factura. Guardamos como Pendiente (Estado 0)
                         Log::info("⚠️ Módulo SUNAT inactivo. Guardando comprobante como Pendiente.");
                         $this->registrarComprobante($venta, $tipoComprobante, 0, 'SUNAT Inactivo - Pendiente', null, null, $serieReal, $correlativoReal);
                     }
                 } else {
-                    // Es un TICKET SIMPLE ('S'). No hacemos nada con Greenter ni tablas de boletas.
                     Log::info("✅ Comprobante Simple (S) procesado internamente. No requiere SUNAT.");
                 }
             } catch (\Exception $eSunat) {
@@ -781,10 +768,10 @@ class VenderController extends Controller
 
             DB::commit();
 
-            // Respuesta Final (Corregida para que el Ticket muestre el número real)
+            // Respuesta Final
             $ticketData = [
                 'id' => $venta->id,
-                'serie_correlativo' => $serieReal . '-' . $correlativoReal, // <-- AHORA SÍ MOSTRARÁ B001-00000002
+                'serie_correlativo' => $serieReal . '-' . $correlativoReal,
                 'tipo_comprobante' => $tipoComprobante == 'F' ? 'FACTURA ELECTRÓNICA' : ($tipoComprobante == 'B' ? 'BOLETA DE VENTA' : 'TICKET'),
                 'metodo_pago' => $nombreMetodo,
                 'fecha' => date('d/m/Y H:i:s'),
@@ -797,19 +784,22 @@ class VenderController extends Controller
                 'subtotal' => round($subtotal, 2),
                 'igv' => round($igv, 2),
                 'total' => round($total, 2),
-                'observacion' => $observacion,
+                'observacion' => $observacion, // Ahora incluye las notas ingresadas en caja
                 'cajero' => Auth::user()->empleado->persona->nombre . " " . Auth::user()->empleado->persona->apellidos ?? 'Cajero'
             ];
 
-
+            // 🔥 INTEGRAMOS LA OPCIÓN DEL FRONTEND PARA IMPRIMIR
             try {
-                // Llamamos a nuestro servicio de impresión
-                $impresionService = new ImpresionService();
-                $impresionService->imprimirTicketVenta($ticketData);
+                if ($imprimirTicket) {
+                    $impresionService = new ImpresionService();
+                    $impresionService->imprimirTicketVenta($ticketData);
+                } else {
+                    Log::info("🖨️ Impresión de ticket omitida desde caja.");
+                }
             } catch (\Exception $eImpresion) {
-                // Solo logueamos el error, la venta ya se guardó correctamente
                 Log::error("⚠️ Error al intentar imprimir el ticket: " . $eImpresion->getMessage());
             }
+
             return response()->json([
                 'success' => true,
                 'message' => 'Venta realizada correctamente.',

@@ -17,6 +17,7 @@
         "barryvdh/laravel-dompdf": "^3.1",
         "endroid/qr-code": "^6.0",
         "fpdf/fpdf": "^1.86",
+        "giansalex/peru-consult": "^4.5",
         "google/apiclient": "^2.18",
         "google/apiclient-services": "^0.396.0",
         "greenter/lite": "5.1",
