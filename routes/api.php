@@ -47,6 +47,7 @@ use App\Http\Controllers\Api\PedidosAppController;
 use App\Http\Controllers\Api\PedidosWebController;
 use App\Http\Controllers\Api\PeriodoNominaController;
 use App\Http\Controllers\Api\PlanillaController;
+use App\Http\Controllers\Api\PreventaController;
 use App\Http\Controllers\Api\ReportesController;
 use App\Http\Controllers\Api\SedesController;
 use App\Http\Controllers\Api\VenderAppCliente;
@@ -54,6 +55,7 @@ use App\Http\Controllers\Api\WhatsAppController;
 use App\Http\Controllers\Auth\GoogleController;
 use Google\Service\AdSenseHost\Report;
 use App\Http\Controllers\Api\PromocionesClienteController;
+use App\Http\Controllers\Api\ReservaMesasController;
 use App\Http\Controllers\Auth\PasswordResetController;
 
 Route::options('/{any}', function () {
@@ -301,13 +303,17 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::get('/cajas/verificarActiva', [CajaController::class, 'verificarCajaAbierta']);
 
 
-    // RUTAS PARA AGREGAR A PREVENTA UNA MESA
+    // RUTAS PARA AGREGAR A PREVENTA UNA MESA o RESERVAR
     Route::get('/vender/getMesas', [VenderController::class, 'getMesas']);
+    Route::get('/vender/reservas', [ReservaMesasController::class, 'index']);
+    Route::post('/vender/reservas', [ReservaMesasController::class, 'store']);
+    Route::put('/vender/reservas/{id}', [ReservaMesasController::class, 'update']);
+    Route::delete('/vender/reservas/{id}', [ReservaMesasController::class, 'destroy']);
     // ---
 
     // RUTAS PARA REALIZAR VENTAS O VENDER
     Route::get('/vender/getPlatos', [VenderController::class, 'getPlatos']);
-    Route::post('/vender/addPlatosPreVentaMesa', [VenderController::class, 'addPlatosPreVentaMesa']);
+    Route::post('/vender/addPlatosPreVentaMesa', [PreventaController::class, 'addPlatosPreVentaMesa']);
     Route::get('/vender/getPreventaMesa/{idMesa}/{idCaja}', [VenderController::class, 'getPreventaMesa']);
     Route::delete('/vender/eliminarPreventaMesa/{idMesa}', [VenderController::class, 'eliminarPreventaMesa']);
     Route::get('/vender/mesasDisponibles', [VenderController::class, 'getMesasFree']);

@@ -19,6 +19,7 @@ use App\Models\EstadoPedido;
 use App\Models\Factura;
 use App\Models\Inventario;
 use App\Models\Mesa;
+use App\Models\MesaReserva;
 use App\Models\MetodoPago;
 use App\Models\Pedido;
 use App\Models\PedidoMesaRegistro;
@@ -27,9 +28,11 @@ use App\Models\Persona;
 use App\Models\Plato;
 use App\Models\PreventaMesa;
 use App\Models\SerieCorrelativo;
+use App\Models\User;
 use App\Models\Venta;
 use App\Services\EstadoPedidoController;
 use App\Services\ImpresionService;
+use Carbon\Carbon;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -41,23 +44,81 @@ class VenderController extends Controller
     public function getMesas()
     {
         try {
-
+            // Traemos las mesas con sus detalles (preventas) y los datos del plato
             $mesasQuery = Mesa::with('preventas.plato')->get();
 
+            // 1. Traemos las reservas PENDIENTES (estado 1) de HOY
+            $hoy = now()->toDateString();
+            $reservasHoy = MesaReserva::where('fecha_reserva', $hoy)
+                ->where('estado', 1)
+                ->get()
+                ->groupBy('idMesa'); // Agrupamos por Mesa para buscar rapidísimo
 
-            $mesas = $mesasQuery->map(function ($mesa) {
+            $ahora = now(); // Hora actual del servidor (Ej: 14:45)
+
+            $mesas = $mesasQuery->map(function ($mesa) use ($reservasHoy, $ahora) {
                 // 2. Calculamos el total
                 $mesa->total = $mesa->preventas->sum(function ($preventa) {
-                    return $preventa->cantidad * $preventa->precio;
+                    $precio = $preventa->precio_unitario ?? $preventa->precio ?? 0;
+                    return $preventa->cantidad * $precio;
                 });
 
-                // 3. YA NO USAMOS unset($mesa->preventas); lo dejamos para que React lo use
+                // 3. Lógica para el Mesero y el Tiempo (Mesa Ocupada: Estado 0)
+                if ($mesa->estado == 0 && $mesa->preventas->isNotEmpty()) {
+                    $idPedido = $mesa->preventas->first()->idPedido;
+                    if ($idPedido) {
+                        $pedidoRegistro = DB::table('pedido_mesa_registros')->where('id', $idPedido)->first();
+
+                        if ($pedidoRegistro) {
+                            $usuario = User::with('empleado.persona')->find($pedidoRegistro->idUsuario);
+                            $nombreMesero = "Usuario Desconocido";
+                            $fotoMesero = null;
+
+                            if ($usuario) {
+                                $fotoMesero = $usuario->foto_url;
+                                if ($usuario->empleado && $usuario->empleado->persona) {
+                                    $nombreMesero = $usuario->empleado->persona->nombre . ' ' . $usuario->empleado->persona->apellidos;
+                                }
+                            }
+                            $mesa->mesero = trim($nombreMesero);
+                            $mesa->foto_mesero = $fotoMesero;
+                            $mesa->tiempo_apertura = Carbon::parse($pedidoRegistro->created_at)->toIso8601String();
+                        }
+                    }
+                }
+
+                // 🚀 4. LÓGICA DE RESERVAS (Mesa Libre: Estado 1)
+                if ($mesa->estado == 1 && isset($reservasHoy[$mesa->id])) {
+
+                    // Filtramos si alguna de sus reservas choca con la hora actual
+                    $reservaProxima = $reservasHoy[$mesa->id]->filter(function ($reserva) use ($ahora) {
+                        // Unimos la fecha y hora de la reserva en formato Carbon
+                        $fechaHoraReserva = Carbon::parse($reserva->fecha_reserva . ' ' . $reserva->hora_reserva);
+
+                        // Calculamos cuántos minutos de diferencia hay (false permite ver si ya pasó y es negativo)
+                        $minutosDiferencia = $ahora->diffInMinutes($fechaHoraReserva, false);
+
+                        // Bloqueo: Falta 60 min o menos para la reserva, o el cliente llegó hasta 30 min tarde.
+                        // Ej: Si reserva es 15:00 y son 14:15 -> Faltan 45 min (Bloqueada)
+                        // Ej: Si reserva es 15:00 y son 15:20 -> Faltan -20 min (Aún bloqueada por tolerancia)
+                        // Ej: Si reserva es 15:00 y son 15:40 -> Faltan -40 min (Se libera automáticamente)
+                        return $minutosDiferencia >= -30 && $minutosDiferencia <= 60;
+                    })->sortBy('hora_reserva')->first();
+
+                    if ($reservaProxima) {
+                        // Le mentimos a React temporalmente diciéndole que el estado es 2 (Reservado)
+                        $mesa->estado = 2;
+                        $mesa->reserva_cliente = $reservaProxima->nombre_cliente;
+                        $mesa->reserva_hora = Carbon::parse($reservaProxima->hora_reserva)->format('h:i A');
+                    }
+                }
+
                 return $mesa;
             });
 
             return response()->json(['success' => true, 'data' => $mesas], 200);
         } catch (\Exception $e) {
-            Log::error('Error al obtener las mesas: ' . $e->getMessage());
+            \Illuminate\Support\Facades\Log::error('Error al obtener las mesas: ' . $e->getMessage());
             return response()->json(['success' => false, 'message' => 'Error al obtener las mesas'], 500);
         }
     }
@@ -73,226 +134,6 @@ class VenderController extends Controller
         }
     }
 
-    public function addPlatosPreVentaMesa(Request $request)
-    {
-        $data = $request->input('pedidos');
-
-        // Si el array viene vacío, salir sin registrar nada
-        if (empty($data)) {
-            return response()->json([
-                'success' => true,
-                'message' => 'No se enviaron platos para registrar.'
-            ], 200);
-        }
-
-        Log::info($data);
-
-        $request->validate([
-            'pedidos' => 'required|array',
-            'pedidos.*.idCaja' => 'required|integer|exists:cajas,id',
-            'pedidos.*.idPlato' => 'required|integer|exists:platos,id',
-            'pedidos.*.idMesa' => 'required|integer|exists:mesas,id',
-            'pedidos.*.cantidad' => 'required|integer|min:1',
-            'pedidos.*.precio' => 'required|numeric|min:0',
-            'pedidos.*.nota' => 'nullable|string|max:100',
-        ]);
-
-        try {
-            DB::beginTransaction();
-
-            $user = auth()->user();
-
-            // Asumimos que todos los pedidos del array van a la misma mesa (usamos el primero como referencia)
-            $idMesa = $data[0]['idMesa'];
-            $idCaja = $data[0]['idCaja'];
-
-            // 1. Validar la Mesa (UNA SOLA VEZ fuera del bucle para optimizar)
-            $mesa = Mesa::find($idMesa);
-            if (!$mesa) {
-                // Usamos Exception para que vaya al catch y haga rollback
-                throw new \Exception('Mesa no encontrada.');
-            }
-
-            // 2. Buscar si ya existe un pedido abierto para la mesa y usuario
-            $pedidoExistente = PedidoMesaRegistro::where('idUsuario', $user->id)
-                ->where('estado', 0)
-                ->whereHas('preVentas', function ($q) use ($idMesa) {
-                    $q->where('idMesa', $idMesa);
-                })
-                ->first();
-
-            if ($pedidoExistente) {
-                $idPedido = $pedidoExistente->id;
-            } else {
-                // Registrar nuevo pedido en PedidoMesaRegistro
-                $registroPedido = new PedidoMesaRegistro();
-                $registroPedido->idUsuario = $user->id;
-                $registroPedido->fechaPedido = now();
-                $registroPedido->estado = 0;
-                $registroPedido->save();
-
-                $idPedido = $registroPedido->id;
-            }
-
-            $detallePlatosArray = [];
-
-            // 3. Procesar cada plato
-            foreach ($data as $pedido) {
-                // Seguridad: verificar que no mezclen mesas en un mismo envío
-                if ($pedido['idMesa'] != $idMesa) {
-                    throw new \Exception('Error de integridad: Se detectaron IDs de mesa diferentes en una sola petición.');
-                }
-
-                $preventaExistente = PreventaMesa::where('idCaja', $pedido['idCaja'])
-                    ->where('idPlato', $pedido['idPlato'])
-                    ->where('idMesa', $pedido['idMesa'])
-                    ->where('idUsuario', $user->id)
-                    ->where('idPedido', $idPedido) // Asegurar que pertenece al mismo pedido padre
-                    ->first();
-
-                if ($preventaExistente) {
-                    // Si ya existe el plato en preventa, sumamos la cantidad
-                    $preventaExistente->cantidad += $pedido['cantidad'];
-                    $preventaExistente->precio = $pedido['precio'];
-                    $preventaExistente->save();
-                } else {
-                    // Si no existe, creamos un nuevo registro
-                    $preventaMesa = new PreventaMesa();
-                    $preventaMesa->idUsuario = $user->id;
-                    $preventaMesa->idCaja = $pedido['idCaja'];
-                    $preventaMesa->idPlato = $pedido['idPlato'];
-                    $preventaMesa->idMesa = $pedido['idMesa'];
-                    $preventaMesa->cantidad = $pedido['cantidad'];
-                    $preventaMesa->precio = $pedido['precio'];
-                    $preventaMesa->idPedido = $idPedido;
-                    $preventaMesa->save();
-                }
-
-                // Buscar nombre del plato
-                $plato = Plato::find($pedido['idPlato']);
-                if (!$plato) {
-                    throw new \Exception('Plato con ID ' . $pedido['idPlato'] . ' no encontrado.');
-                }
-
-                $detallePlatosArray[] = [
-                    'nombre' => $plato->nombre,
-                    'cantidad' => $pedido['cantidad']
-                ];
-            }
-
-            // 4. Cambiar el estado de la mesa a ocupado (Si no lo está ya)
-            if ($mesa->estado !== 0) {
-                $mesa->estado = 0;
-                $mesa->save();
-            }
-
-            // Convertir todos los platos en un solo JSON para el ticket
-            $detallePlatos = json_encode($detallePlatosArray);
-
-            // 5. Lógica del Ticket de Cocina (EstadoPedido)
-            $estadoPedido = EstadoPedido::where('idPedidoMesa', $idPedido)
-                ->where('estado', 0)
-                ->first();
-
-            if ($estadoPedido) {
-                // === ACTUALIZAR TICKET EXISTENTE ===
-
-                // Decodificar el JSON actual
-                $detalleActual = json_decode($estadoPedido->detalle_platos, true) ?? [];
-
-                // Indexar por nombre para sumar cantidades
-                $platosIndexados = [];
-                foreach ($detalleActual as $item) {
-                    $platosIndexados[$item['nombre']] = $item['cantidad'];
-                }
-
-                // Sumar o agregar los nuevos platos
-                foreach ($detallePlatosArray as $nuevo) {
-                    if (isset($platosIndexados[$nuevo['nombre']])) {
-                        $platosIndexados[$nuevo['nombre']] += $nuevo['cantidad'];
-                    } else {
-                        $platosIndexados[$nuevo['nombre']] = $nuevo['cantidad'];
-                    }
-                }
-
-                // Reconstruir el array
-                $nuevoDetalle = [];
-                foreach ($platosIndexados as $nombre => $cantidad) {
-                    $nuevoDetalle[] = [
-                        'nombre' => $nombre,
-                        'cantidad' => $cantidad
-                    ];
-                }
-
-                $estadoPedido->detalle_platos = json_encode($nuevoDetalle);
-                $estadoPedido->save();
-
-                // Evento
-                event(new PedidoCocinaEvent(
-                    $estadoPedido->id,
-                    $nuevoDetalle,
-                    'mesa',
-                    $estadoPedido->estado
-                ));
-            } else {
-                // === CREAR NUEVO TICKET USANDO TU SERVICIO ===
-
-                // Instanciamos tu servicio (que llamaste Controller) manualmente como pediste.
-                // Asegúrate de importar la clase arriba: use App\Services\EstadoPedidoController;
-                $estadoService = new EstadoPedidoController(
-                    'mesa',             // Tipo
-                    $idCaja,            // ID Caja
-                    $detallePlatos,     // JSON de platos
-                    $idPedido,          // ID Pedido Mesa
-                    $request->nota,                // detalle_cliente (null para mesas)
-                    $mesa->numero,      // Referencia (Número de mesa)
-                );
-
-                $estadoService->registrar();
-            }
-
-            DB::commit();
-
-            // =================================================================
-            // =========== IMPRESIÓN DE COMANDA DE COCINA ======================
-            // =================================================================
-            $datosComanda = [
-                'mesa' => $mesa->numero,
-                'fecha' => date('d/m/Y H:i:s'),
-                'usuario' => $user->nombre ?? 'Mozo', // Puedes ajustarlo al campo real de tu tabla users
-                'productos' => $detallePlatosArray,   // Esto contiene solo lo que se acaba de pedir
-                'nota' => $request->nota
-            ];
-
-            try {
-                // Llamamos a la clase que creamos
-                $impresionService = new \App\Services\ImpresionService();
-                $impresionService->imprimirComandaCocina($datosComanda);
-            } catch (\Exception $eImpresion) {
-                Log::error("Error al imprimir comanda de mesa: " . $eImpresion->getMessage());
-            }
-            // =================================================================
-
-            $pedidoCompleto = PedidoMesaRegistro::with(['preVentas.plato'])
-                ->find($idPedido);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Pedidos registrados exitosamente.',
-                'data' => [
-                    'pedidoRegistro' => $pedidoCompleto->preVentas
-                ]
-            ], 200);
-        } catch (\Exception $e) {
-            DB::rollBack(); // Fundamental para revertir cambios si algo falló
-            Log::error('Error al registrar los pedidos: ' . $e->getMessage());
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Error: ' . $e->getMessage(),
-            ], 500);
-        }
-    }
 
 
     public function getPreventaMesa($idMesa, $idCaja)
@@ -357,10 +198,10 @@ class VenderController extends Controller
 
             // 3. Actualizar la referencia (número de mesa) en los tickets de cocina
             // Asumiendo que tu modelo es EstadoPedido y usa el campo 'referencia' o similar
-            if (class_exists('\App\Models\EstadoPedido')) {
-                \App\Models\EstadoPedido::whereIn('idPedidoMesa', $idsPedidos)
-                    ->where('tipo', 'mesa')
-                    ->update(['referencia' => $mesaDestino->numero]);
+            if (class_exists('EstadoPedido')) {
+                EstadoPedido::whereIn('idPedidoMesa', $idsPedidos)
+                    ->where('tipo_pedido', 'mesa')
+                    ->update(['numeroMesa' => $mesaDestino->numero]);
             }
 
             // 4. Actualizar estados de las mesas
