@@ -241,22 +241,16 @@ class VenderController extends Controller
             $tipoComprobante = $request->input('comprobante');
             $idUsuario = $request->input('idUsuario');
 
-            // 🔥 NUEVO: NORMALIZACIÓN DE LOS DATOS DEL CLIENTE Y EXTRACCIÓN DEL FRONTEND 🔥
+            //  NUEVO: NORMALIZACIÓN DE LOS DATOS DEL CLIENTE Y EXTRACCIÓN DEL FRONTEND 
+            // --- 1. RECEPCIÓN DE DATOS ---
             $datosCliente = $request->input('datosCliente');
-            $imprimirTicket = true; // Por defecto imprimimos
-            $observacionAdicional = null;
 
-            if (isset($datosCliente['nombre']) && is_array($datosCliente['nombre'])) {
-                // Capturamos las preferencias del frontend
-                $imprimirTicket = $datosCliente['nombre']['imprimirTicket'] ?? true;
+            // SOLUCIÓN: Leer 'imprimirTicket' y convertirlo a booleano real desde la raíz del Request
+            $imprimirTicketInput = $request->input('imprimirTicket', true);
+            $imprimirTicket = filter_var($imprimirTicketInput, FILTER_VALIDATE_BOOLEAN);
 
-                if (!empty($datosCliente['nombre']['notas'])) {
-                    $observacionAdicional = "Notas Caja: " . $datosCliente['nombre']['notas'];
-                }
-
-                // Extraemos el texto real del nombre para evitar el error de strtoupper()
-                $datosCliente['nombre'] = $datosCliente['nombre']['nombreReferencia'] ?? 'CLIENTE GENERICO';
-            }
+            // React ya envía las observaciones combinadas, solo las recibimos
+            $observacion = $request->input('observacion');
 
             // Datos de LLEVAR / WEB
             $pedidoToLlevar = $request->input('pedidoToLlevar');
@@ -264,12 +258,6 @@ class VenderController extends Controller
 
             $tipoVenta = $request->input('tipoVenta'); // 'mesa', 'llevar', 'web'
             $numeroCuotas = $request->input('cuotas');
-
-            // Unimos observaciones si enviaron desde la caja
-            $observacion = $request->input('observacion');
-            if ($observacionAdicional) {
-                $observacion = $observacion ? $observacion . ' | ' . $observacionAdicional : $observacionAdicional;
-            }
 
             // === NUEVOS DATOS PARA CUENTA SEPARADA ===
             $esCuentaSeparada = $request->input('esCuentaSeparada', false); // Default false
@@ -629,7 +617,7 @@ class VenderController extends Controller
                 'cajero' => Auth::user()->empleado->persona->nombre . " " . Auth::user()->empleado->persona->apellidos ?? 'Cajero'
             ];
 
-            // 🔥 INTEGRAMOS LA OPCIÓN DEL FRONTEND PARA IMPRIMIR
+            //  INTEGRAMOS LA OPCIÓN DEL FRONTEND PARA IMPRIMIR
             try {
                 if ($imprimirTicket) {
                     $impresionService = new ImpresionService();

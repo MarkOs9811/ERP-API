@@ -505,7 +505,7 @@ class ReportesController extends Controller
                     'Documento' => $venta->cliente->persona->documento_identidad ?? 'N/A',
                     'Empresa' => $venta->cliente->empresa->ruc ?? '-',
                     'N° Pedido' => $venta->idPedido ?? '-',
-                    'Método Pago' => $venta->metodoPago->nombre ?? '-',
+                    'Método Pago' => $venta->idMetodo ?? '-',
                     'Moneda' => "Soles",
                     'Total' => (float) $venta->total, // ✅ Convertir a número
                     'Tipo Documento' => $venta->documento === 'B' ? 'Boleta' : 'Factura',
