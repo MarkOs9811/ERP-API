@@ -325,6 +325,8 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
     // IMPRESION NORMAL
     Route::post('/vender/imprimirGenerico', [VenderController::class, 'imprimirGenerico']);
+    Route::post('/vender/imprimirCocina', [VenderController::class, 'imprimirCocina']);
+
     // CONSULTA USUARIO PARA VENDER
     Route::get('/consultar-documento/{tipo}/{numero}', [ConsultasGenericas::class, 'ConsultaDatosUsuario']);
     // RUTAS PARA VISTA DE COCINA

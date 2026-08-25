@@ -36,10 +36,7 @@ class Venta extends Model
         return $this->belongsTo(PedidosWebRegistro::class, 'idPedidoWeb');
     }
 
-    public function metodoPago()
-    {
-        return $this->belongsTo(MetodoPago::class, 'idMetodo');
-    }
+
 
     public function cliente()
     {

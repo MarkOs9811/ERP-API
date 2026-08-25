@@ -1264,4 +1264,39 @@ class VenderController extends Controller
             return response()->json(['success' => false, 'message' => 'Error al imprimir: ' . $e->getMessage()], 500);
         }
     }
+
+    public function imprimirCocina(Request $request)
+    {
+        try {
+            $data = $request->all();
+
+            // 🔥 Validamos lo que realmente necesitamos para la cocina
+            if (!isset($data['mesa']) || !isset($data['productos'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Faltan campos requeridos: mesa o productos'
+                ], 400);
+            }
+
+            // Si por alguna razón el frontend no envía fecha o usuario, les damos un valor por defecto
+            $data['fecha'] = $data['fecha'] ?? now()->format('Y-m-d H:i:s');
+            $data['usuario'] = $data['usuario'] ?? 'Sistema';
+            $data['nota'] = $data['nota'] ?? '';
+
+            // Llamamos a nuestro servicio de impresión
+            $impresionService = new ImpresionService();
+            $impresionService->imprimirComandaCocina($data);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Comanda de cocina enviada correctamente'
+            ]);
+        } catch (\Exception $e) {
+            Log::error("Error al imprimir comanda de cocina: " . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al imprimir: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }
