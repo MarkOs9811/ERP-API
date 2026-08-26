@@ -183,44 +183,50 @@ class CajaController extends Controller
     public function getCajaClose(Request $request, $id)
     {
         try {
-
-            // Buscar el registro de caja
-            $registroCaja = RegistrosCajas::with('usuario.empleado.persona')->where('idCaja', $id)
+            // 1. Buscar el registro de caja abierta
+            $registroCaja = RegistrosCajas::with('usuario.empleado.persona')
+                ->where('idCaja', $id)
                 ->whereNull('fechaCierre')
                 ->whereNull('horaCierre')
                 ->orderBy('created_at', 'desc')
                 ->first();
 
             if (!$registroCaja) {
-
                 return response()->json([
                     'success' => false,
                     'message' => 'No se encontró un registro de caja abierto para este ID.'
                 ]);
             }
-            // Obtener usuario y fechas
-            $idUsuario = Auth::user();
+
+            // 2. Definir el rango de tiempo exacto del arqueo
             $fechaHoraApertura = Carbon::createFromFormat(
                 'Y-m-d H:i:s',
                 $registroCaja->fechaApertura . ' ' . $registroCaja->horaApertura,
                 'America/Lima'
             );
+            $fechaHoraActual = now('America/Lima'); // El momento exacto del cierre
 
-            Log::info('Buscando ventas para usuario: ' . $idUsuario->id . ' después de: ' . $fechaHoraApertura);
+            Log::info("Buscando ventas para la caja ID: {$id} entre {$fechaHoraApertura} y {$fechaHoraActual}");
 
-            // Obtener ventas
-            $ventas = Venta::with('pedido', 'pedidoWeb')
-                ->where('idUsuario', $idUsuario->id)
-                ->where('created_at', '>', $fechaHoraApertura)
+            // 3. Buscar todas las ventas de la CAJA, sin importar el usuario
+            $ventas = Venta::with(
+                'pedido',
+                'pedidoWeb',
+                'usuario.empleado.persona',
+                'pedido.detallePedidos.producto',
+                'pedidoWeb.detallesPedido.plato',
+            )
+                ->where('idCaja', $id)
+                ->whereBetween('created_at', [$fechaHoraApertura, $fechaHoraActual]) // Evitamos descuadres por latencia
                 ->get();
 
-            // Log de ventas encontradas
             Log::info('Total de ventas encontradas: ' . $ventas->count());
+
             if ($ventas->count() > 0) {
                 Log::debug('Primeras 5 ventas:', $ventas->take(5)->toArray());
             }
 
-            // Procesar datos de respuesta
+            // 4. Procesar datos de respuesta
             $detallesVenta = $ventas->map(function ($venta) {
                 $pedido = '';
                 if ($venta->idPedido) {
@@ -229,40 +235,62 @@ class CajaController extends Controller
                 if ($venta->idPedidoWeb) {
                     $pedido .=  $venta->idPedidoWeb;
                 }
+                $nombreVendedor = $venta->usuario->empleado->persona->nombre . " " . $venta->usuario->empleado->persona->apellidos  ?? 'Usuario Desconocido';
                 return [
                     'pedido' => $pedido ?: 'N/A',
                     'total' => $venta->total,
                     'metodoPago' => $venta->idMetodo ?? 'Desconocido',
                     'documento' => $venta->documento,
                     'fechaVenta' => optional($venta->created_at)->format('d-m-Y H:i:s') ?? 'N/A',
+                    'vendedor' => $nombreVendedor,
+                    'ventaOriginal' => $venta,
                 ];
             });
-
-
 
             $montoInicial = $registroCaja->montoInicial;
             $totalVentas = $ventas->sum('total');
 
-            // Log de datos a devolver
+            // 1. Agrupar totales por método de pago
+            $totalesPorMetodo = [];
+            $totalEfectivo = 0;
+
+            foreach ($ventas as $venta) {
+                // Estandarizamos el nombre (ej. "Yape", "Efectivo")
+                $metodo = ucfirst(strtolower($venta->idMetodo ?? 'Desconocido'));
+
+                if (!isset($totalesPorMetodo[$metodo])) {
+                    $totalesPorMetodo[$metodo] = 0;
+                }
+                $totalesPorMetodo[$metodo] += (float) $venta->total;
+
+                // Separamos el efectivo para saber cuánto dinero físico debe haber
+                if (strtolower($metodo) === 'efectivo') {
+                    $totalEfectivo += (float) $venta->total;
+                }
+            }
+
+            // El dinero real que el cajero debería tener en sus manos
+            $fisicoEsperado = $montoInicial + $totalEfectivo;
+
             Log::info('Datos preparados para respuesta:', [
                 'total_ventas' => $totalVentas,
                 'monto_inicial' => $montoInicial,
-                'cantidad_detalles' => count($detallesVenta)
+                'cantidad_detalles' => count($detallesVenta),
+                'totales_por_metodo' => $totalesPorMetodo
             ]);
-
-            // Respuesta
+            // 5. Respuesta Final
             $response = [
                 'success' => true,
                 'detallesVenta' => $detallesVenta,
                 'totalVenta' => $totalVentas,
                 'montoInicial' => $montoInicial,
+                'totalesPorMetodo' => $totalesPorMetodo, // <--- NUEVO
+                'fisicoEsperado' => $fisicoEsperado,     // <--- NUEVO
                 'datosRegistroCaja' => $registroCaja,
                 'message' => 'Datos obtenidos correctamente'
             ];
 
             Log::info('=== FIN LLAMADA A getCajaClose ===');
-            Log::info('Respuesta enviada:', $response);
-
             return response()->json($response, 200);
         } catch (\Exception $e) {
             Log::error('Error en getCajaClose: ' . $e->getMessage());

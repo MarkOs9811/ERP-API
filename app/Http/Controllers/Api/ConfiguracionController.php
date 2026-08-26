@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Traits\SedeValidation;
 use Exception;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -269,7 +270,6 @@ class ConfiguracionController extends Controller
                 'certificado' => ['nullable', 'file', 'mimetypes:text/plain', 'mimes:pem'],
             ]);
 
-
             // Buscar la configuración
             $configuracion = Configuraciones::find($id);
 
@@ -301,6 +301,11 @@ class ConfiguracionController extends Controller
             $configuracion->valor4 = $validated['claveSol'];
             $configuracion->valor2 = $validated['endpoint'];
             $configuracion->save();
+
+            // MAGIA PARA PRODUCCIÓN: Limpiar caché automáticamente
+            // Esto obliga a Laravel a leer la base de datos en la próxima venta
+            Artisan::call('cache:clear');
+            Artisan::call('config:clear');
 
             return response()->json([
                 'success' => true,

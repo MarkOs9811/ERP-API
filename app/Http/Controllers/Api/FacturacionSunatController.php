@@ -256,11 +256,12 @@ class FacturacionSunatController extends Controller
             }
         } catch (\Exception $e) {
             Log::error('Excepción en la generación: ' . $e->getMessage());
-            return response()->json([
+            return [
                 'success' => false,
-                'message' => 'Ocurrió un error al generar el documento',
-                'error' => $e->getMessage()
-            ]);
+                'message' => 'Ocurrió un error al generar el documento: ' . $e->getMessage(),
+                'estado' => 0, // 0 = Pendiente / Error
+                'observaciones' => [],
+            ];
         }
     }
 

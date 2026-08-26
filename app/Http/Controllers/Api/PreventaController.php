@@ -100,19 +100,21 @@ class PreventaController extends Controller
 
     private function obtenerOCrearPedido($userId, $idMesa)
     {
-        $pedidoExistente = PedidoMesaRegistro::where('idUsuario', $userId)
-            ->where('estado', 0)
+        // Buscamos un pedido ABIERTO para esta mesa, ignorando quién lo creó
+        $pedidoExistente = PedidoMesaRegistro::where('estado', 0)
             ->whereHas('preVentas', function ($q) use ($idMesa) {
                 $q->where('idMesa', $idMesa);
             })
             ->first();
 
+        // Si ya existe una cabecera para esta mesa, reutilizamos su ID
         if ($pedidoExistente) {
             return $pedidoExistente->id;
         }
 
+        // Si la mesa estaba libre, creamos el registro base
         $registroPedido = new PedidoMesaRegistro();
-        $registroPedido->idUsuario = $userId;
+        $registroPedido->idUsuario = $userId; // Queda registrado quién aperturó la mesa
         $registroPedido->fechaPedido = now();
         $registroPedido->estado = 0;
         $registroPedido->save();

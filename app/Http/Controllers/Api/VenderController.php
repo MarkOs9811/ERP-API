@@ -143,7 +143,6 @@ class VenderController extends Controller
             log::info($user->id); // Ahora correctamente accedemos al ID del usuario
             $preVenta = PreventaMesa::with('pedido', 'usuario', 'mesa', 'caja', 'plato')->where('idCaja', $idCaja)
                 ->where('idMesa', $idMesa)
-                ->where('idUsuario', $user->id)
                 ->get()
                 ->map(function ($item) {
                     $estadoPedido = EstadoPedido::where('idPedidoMesa', $item->idPedido)->first();
@@ -225,8 +224,6 @@ class VenderController extends Controller
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
-
-    // TODO PARA PODER REALIZAR LA VENTA TANTO PARA CREDITO O AL CONTADO
     public function venderTodo(Request $request)
     {
         // [LOG] Inicio del proceso
@@ -506,7 +503,7 @@ class VenderController extends Controller
                     $pedidoWeb->save();
                 }
             } else {
-                $venta = $this->registrarVenta($nuevoPedido->id, $idUsuario, $nombreMetodo, $tipoComprobante, $igv, $subtotal, $total, $ClienteId);
+                $venta = $this->registrarVenta($nuevoPedido->id, $idUsuario, $nombreMetodo, $tipoComprobante, $igv, $subtotal, $total, $ClienteId, $idCaja);
             }
 
             // =================================================================
@@ -641,7 +638,7 @@ class VenderController extends Controller
             return response()->json(['error' => true, 'message' => 'Error del servidor: ' . $e->getMessage()], 500);
         }
     }
-    private function registrarVenta($idPedido, $idUsuario, $nombreMetodo, $tipoComprobante, $igv, $subtotal, $total, $ClienteId) // Cambiamos aquí
+    private function registrarVenta($idPedido, $idUsuario, $nombreMetodo, $tipoComprobante, $igv, $subtotal, $total, $ClienteId, $idCaja = null) // Cambiamos aquí
     {
         // Verificar si ya existe una venta registrada para este pedido
         $ventaExistente = Venta::where('idPedido', $idPedido)->first();
@@ -658,6 +655,7 @@ class VenderController extends Controller
         $venta->idUsuario = $idUsuario;
         $venta->idMetodo = $nombreMetodo;
         $venta->idPedido = $idPedido;
+        $venta->idCaja = $idCaja;
         $venta->igv = $igv;
         $venta->subtotal = $subtotal;
         $venta->descuento = 0;

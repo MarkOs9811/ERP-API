@@ -23,6 +23,7 @@ class Venta extends Model
         'descuento',
         'total',
         'fechaVenta',
+        'idCaja',
         'documento',
     ];
 
