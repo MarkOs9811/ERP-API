@@ -84,6 +84,12 @@ class VenderController extends Controller
                             $mesa->foto_mesero = $fotoMesero;
                             $mesa->tiempo_apertura = Carbon::parse($pedidoRegistro->created_at)->toIso8601String();
                         }
+
+                        // Consultar el estado en cocina
+                        $estadoCocina = DB::table('estado_pedidos')->where('idPedidoMesa', $idPedido)->first();
+
+                        // Asignamos el estado (0: En espera, 1: Listo, 2: Preparación) o null si no existe
+                        $mesa->estado_cocina = $estadoCocina ? $estadoCocina->estado : null;
                     }
                 }
 
@@ -118,7 +124,7 @@ class VenderController extends Controller
 
             return response()->json(['success' => true, 'data' => $mesas], 200);
         } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error('Error al obtener las mesas: ' . $e->getMessage());
+            Log::error('Error al obtener las mesas: ' . $e->getMessage());
             return response()->json(['success' => false, 'message' => 'Error al obtener las mesas'], 500);
         }
     }
@@ -154,6 +160,7 @@ class VenderController extends Controller
             return response()->json(['success' => false, 'message' => 'Error: ' . $e->getMessage()], 200);
         }
     }
+
     public function getMesasFree()
     {
         try {
@@ -899,7 +906,6 @@ class VenderController extends Controller
         try {
             Log::info("Actualizando cantidad preventa mesa", ['idMesa' => $idMesa, 'idPlato' => $idPlato, 'body' => $request->all()]);
 
-            // Recibimos la cantidad exacta que nos mandó React
             $nuevaCantidad = $request->input('cantidad');
 
             if (!$nuevaCantidad || $nuevaCantidad < 1) {
@@ -909,32 +915,63 @@ class VenderController extends Controller
                 ], 400);
             }
 
-            $preventa = PreventaMesa::where('idMesa', $idMesa)
+            // 1. Añadimos with('plato') para poder obtener el nombre del plato y buscarlo en el JSON
+            $preventa = PreventaMesa::with('plato')->where('idMesa', $idMesa)
                 ->where('idPlato', $idPlato)
                 ->first();
 
             if ($preventa) {
-                // --- VALIDACIÓN DE ESTADO (Mantenemos tu lógica intacta) ---
+                // --- VALIDACIÓN Y ACTUALIZACIÓN PARA LA COCINA ---
                 if ($preventa->idPedido) {
                     $estadoPedido = EstadoPedido::where('idPedidoMesa', $preventa->idPedido)->first();
 
-                    // Si existe el estado y es 1 (Ya servido/despachado), bloqueamos
-                    if ($estadoPedido && $estadoPedido->estado == 1) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'No se puede modificar la cantidad. El pedido ya fue preparado o despachado.'
-                        ], 422);
+                    if ($estadoPedido) {
+                        // Bloqueamos si el pedido ya fue servido (estado 1)
+                        if ($estadoPedido->estado == 1) {
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'No se puede modificar la cantidad. El pedido ya fue preparado o despachado.'
+                            ], 422);
+                        }
+
+                        // Extraemos y decodificamos el JSON
+                        $nombrePlato = $preventa->plato->nombre;
+                        $detalles = is_string($estadoPedido->detalle_platos)
+                            ? json_decode($estadoPedido->detalle_platos, true)
+                            : $estadoPedido->detalle_platos;
+
+                        $jsonModificado = false;
+
+                        // Buscamos el plato y cambiamos su cantidad
+                        if (is_array($detalles)) {
+                            foreach ($detalles as &$item) {
+                                if (isset($item['nombre']) && $item['nombre'] === $nombrePlato) {
+                                    $item['cantidad'] = $nuevaCantidad;
+                                    $jsonModificado = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Si hubo cambios, guardamos el JSON y emitimos el evento
+                        if ($jsonModificado) {
+                            $estadoPedido->detalle_platos = json_encode($detalles);
+                            $estadoPedido->save();
+
+                            // 🔥 Disparamos el evento para que el frontend de cocina reaccione al instante
+                            event(new PedidoCocinaEvent($estadoPedido->id, $detalles, 'mesa', $estadoPedido->estado));
+                        }
                     }
                 }
-                // ------------------------------------------------------------
+                // --------------------------------------------------
 
-                // Actualizamos directamente con la nueva cantidad
+                // 2. ACTUALIZAMOS LA PREVENTA PARA LA CAJA
                 $preventa->cantidad = $nuevaCantidad;
                 $preventa->save();
 
                 return response()->json([
                     'success' => true,
-                    'message' => 'Cantidad actualizada correctamente',
+                    'message' => 'Cantidad sincronizada correctamente en Caja y Cocina',
                     'nuevaCantidad' => $preventa->cantidad
                 ]);
             } else {
@@ -955,159 +992,67 @@ class VenderController extends Controller
                 'idMesa' => $idMesa,
             ]);
 
-            // 1. Verificar si existen registros
-            $cantidadPreventas = PreventaMesa::where('idMesa', $idMesa)->count();
+            // 1. Obtener la primera preventa para saber a qué Pedido pertenece
+            $primerPreventa = PreventaMesa::where('idMesa', $idMesa)->first();
 
-            Log::info('Preventas encontradas para la mesa', [
-                'idMesa' => $idMesa,
-                'cantidad' => $cantidadPreventas,
-            ]);
-
-            if ($cantidadPreventas === 0) {
-                Log::warning('No se encontraron preventas para la mesa', [
-                    'idMesa' => $idMesa,
-                ]);
-
+            if (!$primerPreventa) {
+                Log::warning('No se encontraron preventas para la mesa', ['idMesa' => $idMesa]);
                 return response()->json([
                     'success' => false,
                     'message' => 'No se encontraron preventas para la mesa especificada.'
-                ], 404);
+                ], 200); // 200 para que tu frontend lea el mensaje en el bloque else
             }
 
-            // 2. Obtener la primera preventa para obtener el idPedido
-            $primerPreventa = PreventaMesa::where('idMesa', $idMesa)->first();
+            $idPedido = $primerPreventa->idPedido;
 
-            Log::info('Primera preventa encontrada', [
-                'idMesa' => $idMesa,
-                'preventa' => $primerPreventa ? $primerPreventa->toArray() : null,
-            ]);
+            // 2.  VALIDACIÓN CRUCIAL: Verificamos la cocina ANTES de borrar nada
+            if ($idPedido) {
+                $estadoPedido = EstadoPedido::where('idPedidoMesa', $idPedido)->first();
 
-            $idPedido = $primerPreventa ? $primerPreventa->idPedido : null;
+                // Si existe en cocina y el estado NO es 0 (En espera), bloqueamos la anulación
+                if ($estadoPedido && $estadoPedido->estado != 0) {
+                    Log::warning('Intento de anular pedido bloqueado', [
+                        'idMesa' => $idMesa,
+                        'idPedido' => $idPedido,
+                        'estadoActual' => $estadoPedido->estado
+                    ]);
 
-            Log::info('ID de pedido obtenido', [
-                'idMesa' => $idMesa,
-                'idPedido' => $idPedido,
-            ]);
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'No se puede anular la mesa. El pedido ya está en preparación o listo.'
+                    ], 200); // Retornamos 200 con success false para que React muestre el ToastAlert correcto
+                }
+            }
 
-            // 3. Buscar la mesa
+            // 3. INICIO DE TRANSACCIÓN: Si llegamos aquí, el estado es 0 y es seguro borrar todo
+            DB::beginTransaction();
+
+            // A. Cambiar estado de la mesa a disponible (1)
             $mesa = Mesa::find($idMesa);
-
             if ($mesa) {
-                Log::info('Mesa encontrada', [
-                    'idMesa' => $idMesa,
-                    'estadoActual' => $mesa->estado,
-                ]);
-
-                // Cambiar estado de la mesa a disponible
                 $mesa->estado = 1;
                 $mesa->save();
-
-                Log::info('Mesa actualizada a disponible', [
-                    'idMesa' => $idMesa,
-                    'nuevoEstado' => $mesa->estado,
-                ]);
-            } else {
-                Log::warning('No se encontró la mesa', [
-                    'idMesa' => $idMesa,
-                ]);
             }
 
-            // 4. Eliminar todas las preventas
-            $eliminadas = PreventaMesa::where('idMesa', $idMesa)->delete();
+            // B. Eliminar las preventas
+            PreventaMesa::where('idMesa', $idMesa)->delete();
 
-            Log::info('Preventas eliminadas', [
-                'idMesa' => $idMesa,
-                'cantidadEliminada' => $eliminadas,
-            ]);
+            // C. Eliminar EstadoPedido y disparar evento de limpieza
+            if ($idPedido && isset($estadoPedido) && $estadoPedido) {
+                $idEstadoPedido = $estadoPedido->id;
+                $estadoPedido->delete();
 
-            // 5. Procesar EstadoPedido y PedidoMesaRegistro
+                // Lanzamos evento con arreglo vacío para que el Frontend de Cocina borre el ticket
+                event(new PedidoCocinaEvent($idEstadoPedido, [], 'mesa', 0));
+            }
+
+            // D. Eliminar la cabecera PedidoMesaRegistro
             if ($idPedido) {
-
-                Log::info('Buscando EstadoPedido', [
-                    'idMesa' => $idMesa,
-                    'idPedidoMesa' => $idPedido,
-                    'estadoBuscado' => 0,
-                ]);
-
-                $estadoPedido = EstadoPedido::where('idPedidoMesa', $idPedido)
-                    ->where('estado', 0)
-                    ->first();
-
-                if ($estadoPedido) {
-
-                    Log::info('EstadoPedido encontrado', [
-                        'idEstadoPedido' => $estadoPedido->id,
-                        'idPedidoMesa' => $estadoPedido->idPedidoMesa,
-                        'estado' => $estadoPedido->estado,
-                    ]);
-
-                    $idEstadoPedido = $estadoPedido->id;
-
-                    // Eliminar EstadoPedido
-                    $estadoPedido->delete();
-
-                    Log::info('EstadoPedido eliminado', [
-                        'idEstadoPedido' => $idEstadoPedido,
-                        'idPedidoMesa' => $idPedido,
-                    ]);
-
-                    // Lanzar evento para cocina
-                    Log::info('Lanzando PedidoCocinaEvent', [
-                        'idEstadoPedido' => $idEstadoPedido,
-                        'idMesa' => $idMesa,
-                        'tipo' => 'mesa',
-                        'estado' => 0,
-                        'platos' => [],
-                    ]);
-
-                    event(new PedidoCocinaEvent(
-                        $idEstadoPedido,
-                        [],
-                        'mesa',
-                        0
-                    ));
-
-                    Log::info('PedidoCocinaEvent lanzado correctamente', [
-                        'idEstadoPedido' => $idEstadoPedido,
-                        'idMesa' => $idMesa,
-                    ]);
-                } else {
-
-                    Log::warning('No se encontró EstadoPedido para eliminar', [
-                        'idPedidoMesa' => $idPedido,
-                        'estadoBuscado' => 0,
-                    ]);
-                }
-
-                // 6. Eliminar PedidoMesaRegistro
-                $pedidoMesaRegistro = PedidoMesaRegistro::find($idPedido);
-
-                if ($pedidoMesaRegistro) {
-
-                    Log::info('PedidoMesaRegistro encontrado', [
-                        'idPedido' => $idPedido,
-                        'registro' => $pedidoMesaRegistro->toArray(),
-                    ]);
-
-                    $pedidoMesaRegistro->delete();
-
-                    Log::info('PedidoMesaRegistro eliminado correctamente', [
-                        'idPedido' => $idPedido,
-                        'idMesa' => $idMesa,
-                    ]);
-                } else {
-
-                    Log::warning('No se encontró PedidoMesaRegistro', [
-                        'idPedido' => $idPedido,
-                        'idMesa' => $idMesa,
-                    ]);
-                }
-            } else {
-
-                Log::warning('No existe idPedido asociado a las preventas', [
-                    'idMesa' => $idMesa,
-                ]);
+                PedidoMesaRegistro::where('id', $idPedido)->delete();
             }
+
+            // Confirmamos todos los borrados en la BD
+            DB::commit();
 
             Log::info('========== FIN eliminarPreventaMesa - ÉXITO ==========', [
                 'idMesa' => $idMesa,
@@ -1116,21 +1061,21 @@ class VenderController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Preventas y estado de cocina eliminados correctamente.'
-            ]);
+                'message' => 'Mesa anulada y ticket de cocina eliminado correctamente.'
+            ], 200);
         } catch (\Exception $e) {
+            // Si algo falla, revertimos todos los cambios
+            DB::rollBack();
 
             Log::error('========== ERROR eliminarPreventaMesa ==========', [
                 'idMesa' => $idMesa,
                 'error' => $e->getMessage(),
-                'archivo' => $e->getFile(),
                 'linea' => $e->getLine(),
-                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Error al eliminar las preventas: ' . $e->getMessage()
+                'message' => 'Error crítico al anular el pedido.'
             ], 500);
         }
     }
@@ -1139,13 +1084,34 @@ class VenderController extends Controller
         try {
             DB::beginTransaction();
 
-            $platoToDelete = PreventaMesa::where('id', $idProducto)->where('idMesa', $idMesa)->lockForUpdate()->first();
+            $platoToDelete = PreventaMesa::where('id', $idProducto)
+                ->where('idMesa', $idMesa)
+                ->lockForUpdate()
+                ->first();
 
             if (!$platoToDelete) {
-                return response()->json(['success' => false, 'message' => 'Plato no encontrado'], 404);
+                DB::rollBack();
+                return response()->json(['success' => false, 'message' => 'Plato no encontrado'], 200);
             }
 
             $idPedido = $platoToDelete->idPedido;
+
+            // --- 🚨 VALIDACIÓN CRUCIAL DE COCINA ---
+            if ($idPedido) {
+                $estadoPedido = EstadoPedido::where('idPedidoMesa', $idPedido)->first();
+
+                // Si existe el ticket de cocina y ya no está "En espera" (0), bloqueamos
+                if ($estadoPedido && $estadoPedido->estado != 0) {
+                    DB::rollBack(); // Revertimos la transacción
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'No se puede eliminar el plato. El pedido ya está en preparación o listo.'
+                    ], 200); // 200 para que tu frontend muestre el ToastAlert de error
+                }
+            }
+            // --------------------------------------
+
+            // Si pasa la validación, procedemos a borrar
             $platoToDelete->delete();
 
             // Verificar si el pedido se quedó vacío
@@ -1171,7 +1137,7 @@ class VenderController extends Controller
             }
 
             DB::commit();
-            return response()->json(['success' => true, 'message' => 'Plato eliminado y stock actualizado'], 200);
+            return response()->json(['success' => true, 'message' => 'Plato eliminado y ticket actualizado'], 200);
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('Error al eliminar plato: ' . $e->getMessage());
