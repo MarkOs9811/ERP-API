@@ -900,6 +900,7 @@ class VenderController extends Controller
     }
 
 
+
     // CASOS PARA LA PREVENTEA DE MESAS
     public function actualizarCantidad(Request $request, $idPlato, $idMesa)
     {
@@ -912,11 +913,12 @@ class VenderController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'La cantidad enviada no es válida (mínimo 1)'
-                ], 400);
+                ], 200); // Cambiado a 200 para que React lo maneje en el Toast
             }
 
             // 1. Añadimos with('plato') para poder obtener el nombre del plato y buscarlo en el JSON
-            $preventa = PreventaMesa::with('plato')->where('idMesa', $idMesa)
+            $preventa = PreventaMesa::with('plato')
+                ->where('idMesa', $idMesa)
                 ->where('idPlato', $idPlato)
                 ->first();
 
@@ -926,12 +928,14 @@ class VenderController extends Controller
                     $estadoPedido = EstadoPedido::where('idPedidoMesa', $preventa->idPedido)->first();
 
                     if ($estadoPedido) {
-                        // Bloqueamos si el pedido ya fue servido (estado 1)
-                        if ($estadoPedido->estado == 1) {
+                        // 🚀 CAMBIO CLAVE: Bloqueamos si el estado YA NO ES 0 (En espera)
+                        if ($estadoPedido->estado != 0) {
                             return response()->json([
                                 'success' => false,
-                                'message' => 'No se puede modificar la cantidad. El pedido ya fue preparado o despachado.'
+                                'message' => 'No se puede modificar la cantidad. El pedido ya está en preparación o listo.'
                             ], 422);
+                            // Nota: Dejamos 422 para que la mutación de React Query falle a propósito,
+                            // ejecute su 'onError', revierta el '+1' visual de la pantalla y muestre el Toast.
                         }
 
                         // Extraemos y decodificamos el JSON
@@ -959,7 +963,7 @@ class VenderController extends Controller
                             $estadoPedido->save();
 
                             // 🔥 Disparamos el evento para que el frontend de cocina reaccione al instante
-                            event(new PedidoCocinaEvent($estadoPedido->id, $detalles, 'mesa', $estadoPedido->estado));
+                            event(new PedidoCocinaEvent($estadoPedido->id, $detalles, 'mesa', (string)$estadoPedido->estado));
                         }
                     }
                 }
