@@ -103,7 +103,8 @@ Route::get('/cajas2', [CajaController::class, 'getCajas']);
 // RUTA DE PRUEBA SIN AUTH
 Route::get('/comprasAll', [ComprasController::class, 'getCompras']);
 
-Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
+// 🔥 LIMITE AUMENTADO A 500 PETICIONES POR MINUTO
+Route::middleware('auth:sanctum', 'throttle:500,1')->group(function () {
     // RUTAS PARA REGISTRAR ASISTENCIA ENTRADA / SALIDA
     Route::post('/asistencia/ingreso', [AsistenciasController::class, 'ingreso']);
     Route::post('/asistencia/salida', [AsistenciasController::class, 'salida']);
@@ -331,7 +332,7 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
     Route::get('/consultar-documento/{tipo}/{numero}', [ConsultasGenericas::class, 'ConsultaDatosUsuario']);
     // RUTAS PARA VISTA DE COCINA
     Route::get('/getPedidoCocina', [CocinaController::class, 'getPedidoCocina']);
-    Route::put('/pedidoCocina/{id}', [CocinaController::class, 'cambiarEstadoCocina']);
+    Route::put('/pedidoCocina/{id}', [CocinaController::class, 'cambiarEstadoCocina'])->middleware('throttle:150,1');
 
 
     // RUTAS PARA MODULO PLANILLA - RECURSOS HUMANOS
@@ -575,7 +576,9 @@ Route::middleware('auth:sanctum', 'throttle:api')->group(function () {
 
 
 Route::post('/login/superadmin', [AuthController::class, 'loginSuperAdmin']);
-Route::middleware('auth:sanctum', 'throttle:api')->group(
+
+// 🔥 LIMITE AUMENTADO A 500 PETICIONES POR MINUTO
+Route::middleware('auth:sanctum', 'throttle:500,1')->group(
     function () {
         Route::get('/superadmin/empresas', [EmpresasAdminController::class, 'getEmpresas']);
         Route::get('/superadmin/empresas/{id}', [EmpresasAdminController::class, 'getEmpresasId']);

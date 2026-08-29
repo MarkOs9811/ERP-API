@@ -44,33 +44,63 @@ class VenderController extends Controller
     public function getMesas()
     {
         try {
-            // Traemos las mesas con sus detalles (preventas) y los datos del plato
             $mesasQuery = Mesa::with('preventas.plato')->get();
-
-            // 1. Traemos las reservas PENDIENTES (estado 1) de HOY
             $hoy = now()->toDateString();
+            $ahora = now();
+
             $reservasHoy = MesaReserva::where('fecha_reserva', $hoy)
                 ->where('estado', 1)
                 ->get()
-                ->groupBy('idMesa'); // Agrupamos por Mesa para buscar rapidísimo
+                ->groupBy('idMesa');
 
-            $ahora = now(); // Hora actual del servidor (Ej: 14:45)
+            // =========================================================
+            // 🔥 OPTIMIZACIÓN: Cargar todos los datos anexos de golpe
+            // =========================================================
 
-            $mesas = $mesasQuery->map(function ($mesa) use ($reservasHoy, $ahora) {
-                // 2. Calculamos el total
+            // 1. Extraemos todos los IDs de los pedidos actuales
+            $idsPedidos = $mesasQuery->flatMap(function ($mesa) {
+                return $mesa->preventas->pluck('idPedido');
+            })->filter()->unique();
+
+            // 2. Traemos todos los registros de esos pedidos a la vez
+            $pedidosRegistros = DB::table('pedido_mesa_registros')
+                ->whereIn('id', $idsPedidos)
+                ->get()
+                ->keyBy('id'); // Facilita la búsqueda por ID luego
+
+            // 3. Traemos todos los usuarios (meseros) implicados a la vez
+            $idsUsuarios = $pedidosRegistros->pluck('idUsuario')->filter()->unique();
+            $usuarios = User::with('empleado.persona')
+                ->whereIn('id', $idsUsuarios)
+                ->get()
+                ->keyBy('id');
+
+            // 4. Traemos todos los estados de cocina a la vez
+            $estadosCocina = DB::table('estado_pedidos')
+                ->whereIn('idPedidoMesa', $idsPedidos)
+                ->get()
+                ->keyBy('idPedidoMesa');
+
+            // =========================================================
+
+            $mesas = $mesasQuery->map(function ($mesa) use ($reservasHoy, $ahora, $pedidosRegistros, $usuarios, $estadosCocina) {
+
+                // Calculamos el total
                 $mesa->total = $mesa->preventas->sum(function ($preventa) {
                     $precio = $preventa->precio_unitario ?? $preventa->precio ?? 0;
                     return $preventa->cantidad * $precio;
                 });
 
-                // 3. Lógica para el Mesero y el Tiempo (Mesa Ocupada: Estado 0)
+                // Lógica para el Mesero y el Tiempo (Mesa Ocupada)
                 if ($mesa->estado == 0 && $mesa->preventas->isNotEmpty()) {
                     $idPedido = $mesa->preventas->first()->idPedido;
+
                     if ($idPedido) {
-                        $pedidoRegistro = DB::table('pedido_mesa_registros')->where('id', $idPedido)->first();
+                        // 🔥 Buscamos en la colección en memoria, no en la DB
+                        $pedidoRegistro = $pedidosRegistros->get($idPedido);
 
                         if ($pedidoRegistro) {
-                            $usuario = User::with('empleado.persona')->find($pedidoRegistro->idUsuario);
+                            $usuario = $usuarios->get($pedidoRegistro->idUsuario);
                             $nombreMesero = "Usuario Desconocido";
                             $fotoMesero = null;
 
@@ -85,34 +115,20 @@ class VenderController extends Controller
                             $mesa->tiempo_apertura = Carbon::parse($pedidoRegistro->created_at)->toIso8601String();
                         }
 
-                        // Consultar el estado en cocina
-                        $estadoCocina = DB::table('estado_pedidos')->where('idPedidoMesa', $idPedido)->first();
-
-                        // Asignamos el estado (0: En espera, 1: Listo, 2: Preparación) o null si no existe
+                        $estadoCocina = $estadosCocina->get($idPedido);
                         $mesa->estado_cocina = $estadoCocina ? $estadoCocina->estado : null;
                     }
                 }
 
-                // 🚀 4. LÓGICA DE RESERVAS (Mesa Libre: Estado 1)
+                // Lógica de Reservas (Mesa Libre)
                 if ($mesa->estado == 1 && isset($reservasHoy[$mesa->id])) {
-
-                    // Filtramos si alguna de sus reservas choca con la hora actual
                     $reservaProxima = $reservasHoy[$mesa->id]->filter(function ($reserva) use ($ahora) {
-                        // Unimos la fecha y hora de la reserva en formato Carbon
                         $fechaHoraReserva = Carbon::parse($reserva->fecha_reserva . ' ' . $reserva->hora_reserva);
-
-                        // Calculamos cuántos minutos de diferencia hay (false permite ver si ya pasó y es negativo)
                         $minutosDiferencia = $ahora->diffInMinutes($fechaHoraReserva, false);
-
-                        // Bloqueo: Falta 60 min o menos para la reserva, o el cliente llegó hasta 30 min tarde.
-                        // Ej: Si reserva es 15:00 y son 14:15 -> Faltan 45 min (Bloqueada)
-                        // Ej: Si reserva es 15:00 y son 15:20 -> Faltan -20 min (Aún bloqueada por tolerancia)
-                        // Ej: Si reserva es 15:00 y son 15:40 -> Faltan -40 min (Se libera automáticamente)
                         return $minutosDiferencia >= -30 && $minutosDiferencia <= 60;
                     })->sortBy('hora_reserva')->first();
 
                     if ($reservaProxima) {
-                        // Le mentimos a React temporalmente diciéndole que el estado es 2 (Reservado)
                         $mesa->estado = 2;
                         $mesa->reserva_cliente = $reservaProxima->nombre_cliente;
                         $mesa->reserva_hora = Carbon::parse($reservaProxima->hora_reserva)->format('h:i A');
@@ -125,7 +141,10 @@ class VenderController extends Controller
             return response()->json(['success' => true, 'data' => $mesas], 200);
         } catch (\Exception $e) {
             Log::error('Error al obtener las mesas: ' . $e->getMessage());
-            return response()->json(['success' => false, 'message' => 'Error al obtener las mesas'], 500);
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener las mesas: ' . $e->getMessage() // Devuelve el error real para depurar si falla
+            ], 500);
         }
     }
 
@@ -1100,48 +1119,41 @@ class VenderController extends Controller
 
             $idPedido = $platoToDelete->idPedido;
 
-            // --- 🚨 VALIDACIÓN CRUCIAL DE COCINA ---
+            // Validación de cocina...
             if ($idPedido) {
                 $estadoPedido = EstadoPedido::where('idPedidoMesa', $idPedido)->first();
-
-                // Si existe el ticket de cocina y ya no está "En espera" (0), bloqueamos
                 if ($estadoPedido && $estadoPedido->estado != 0) {
-                    DB::rollBack(); // Revertimos la transacción
+                    DB::rollBack();
                     return response()->json([
                         'success' => false,
                         'message' => 'No se puede eliminar el plato. El pedido ya está en preparación o listo.'
-                    ], 200); // 200 para que tu frontend muestre el ToastAlert de error
+                    ], 200);
                 }
             }
-            // --------------------------------------
 
-            // Si pasa la validación, procedemos a borrar
+            // Eliminamos el plato
             $platoToDelete->delete();
 
-            // Verificar si el pedido se quedó vacío
             $platosRestantesCount = PreventaMesa::where('idPedido', $idPedido)->count();
+            $mesaLiberada = false; // 🔥 Bandera inicializada en falso
 
             if ($platosRestantesCount === 0) {
-                // El pedido quedó vacío, eliminamos todo en cascada
+                // El pedido quedó vacío
                 $this->eliminarPedidoCompleto($idPedido);
+                Mesa::where('id', $idMesa)->update(['estado' => 1]);
+
+                $mesaLiberada = true; // 🔥 Activamos la bandera
             } else {
-                // Aún quedan platos, actualizamos el ticket de cocina
                 $this->actualizarEstadoPedido($idPedido);
             }
 
-            // Verificar si la MESA completa se quedó vacía
-            $existenOtrosPlatosEnMesa = PreventaMesa::where('idMesa', $idMesa)->exists();
-
-            if (!$existenOtrosPlatosEnMesa) {
-                $mesa = Mesa::find($idMesa);
-                if ($mesa) {
-                    $mesa->estado = 1; // 1 = Disponible
-                    $mesa->save();
-                }
-            }
-
             DB::commit();
-            return response()->json(['success' => true, 'message' => 'Plato eliminado y ticket actualizado'], 200);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Plato eliminado',
+                'mesaLiberada' => $mesaLiberada // 🔥 Enviamos la bandera al Frontend
+            ], 200);
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('Error al eliminar plato: ' . $e->getMessage());
