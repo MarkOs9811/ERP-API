@@ -56,7 +56,7 @@ class ImpresionService
             if (!empty($telefonoEmpresa)) {
                 $this->printer->text("TELF: " . $telefonoEmpresa . "\n");
             }
-            // 🔥 Ajustado a 48 guiones
+            // Ajustado a 48 guiones
             $this->printer->text("------------------------------------------------\n");
 
             // 2. TIPO DE COMPROBANTE
@@ -163,6 +163,9 @@ class ImpresionService
             $this->printer->setJustification(Printer::JUSTIFY_LEFT);
             $this->printer->text("Fecha: " . $data['fecha'] . "\n");
             $this->printer->text("Mozo : " . strtoupper($data['usuario']) . "\n");
+            if (!empty($data['cliente'])) {
+                $this->printer->text("Cliente: " . strtoupper($data['cliente']) . "\n");
+            }
             $this->printer->text("------------------------------------------------\n");
 
             $this->printer->setEmphasis(true);
@@ -265,7 +268,102 @@ class ImpresionService
             Log::error("Error imprimiendo ticket generico/pre-cuenta: " . $e->getMessage());
         }
     }
+public function imprimirCierreCaja($data)
+    {
+        if (!$this->printer) return;
 
+        try {
+            $empresa = $this->getDatosEmpresa();
+            $nombreEmpresa = $empresa ? strtoupper($empresa->nombre) : "MI EMPRESA S.A.C.";
+
+            // 1. CABECERA
+            $this->printer->setJustification(Printer::JUSTIFY_CENTER);
+            $this->printer->setEmphasis(true);
+            $this->printer->text($nombreEmpresa . "\n");
+            $this->printer->setTextSize(2, 2);
+            $this->printer->text("REPORTE DE CAJA\n");
+            $this->printer->setTextSize(1, 1);
+            $this->printer->setEmphasis(false);
+            $this->printer->text("------------------------------------------------\n");
+
+            // 2. DATOS DEL TURNO
+            $this->printer->setJustification(Printer::JUSTIFY_LEFT);
+            $this->printer->text("Caja     : " . strtoupper($data['nombreCaja']) . "\n");
+            $this->printer->text("Cajero   : " . strtoupper($data['cajero']) . "\n");
+            $this->printer->text("Apertura : " . $data['fechaApertura'] . " " . $data['horaApertura'] . "\n");
+            $this->printer->text("Impresion: " . date('d/m/Y H:i:s') . "\n");
+            $this->printer->text("------------------------------------------------\n");
+
+            // 3. RESUMEN GENERAL
+            $this->printer->setEmphasis(true);
+            $this->printer->text("RESUMEN DE INGRESOS\n");
+            $this->printer->setEmphasis(false);
+            $this->printer->text($this->formatearTotal("Fondo Inicial:", "S/ " . number_format((float)$data['montoInicial'], 2)));
+            $this->printer->text($this->formatearTotal("Total Vendido:", "S/ " . number_format((float)$data['totalVenta'], 2)));
+            $this->printer->text("------------------------------------------------\n");
+
+            // 4. DESGLOSE POR METODOS DE PAGO
+            $this->printer->setEmphasis(true);
+            $this->printer->text("DESGLOSE POR METODO DE PAGO\n");
+            $this->printer->setEmphasis(false);
+            
+            if (!empty($data['totalesPorMetodo'])) {
+                foreach ($data['totalesPorMetodo'] as $metodo => $monto) {
+                    $this->printer->text($this->formatearTotal(strtoupper($metodo) . ":", "S/ " . number_format((float)$monto, 2)));
+                }
+            } else {
+                $this->printer->text("No hay ventas registradas en este turno.\n");
+            }
+            $this->printer->text("------------------------------------------------\n");
+
+           // 5. CAJON (Lo que debe haber físicamente)
+            $this->printer->setEmphasis(true);
+            $this->printer->text($this->formatearTotal("EFECTIVO EN CAJON:", "S/ " . number_format((float)$data['fisicoEsperado'], 2)));
+            $this->printer->setEmphasis(false);
+            $this->printer->text("------------------------------------------------\n");
+
+            // 🔥 NUEVO: 6. HISTORIAL DE TRANSACCIONES
+            if (!empty($data['detallesVenta'])) {
+                $this->printer->text("\n");
+                $this->printer->setEmphasis(true);
+                $this->printer->text("HISTORIAL DE TRANSACCIONES\n");
+                $this->printer->text("------------------------------------------------\n");
+                $this->printer->setEmphasis(false);
+
+                foreach ($data['detallesVenta'] as $venta) {
+                    // Datos de la línea 1
+                    $pedidoId = "PED: " . ($venta['pedido'] ?? '-');
+                    $metodo = strtoupper($venta['metodoPago'] ?? '-');
+                    $total = "S/ " . number_format((float)($venta['total'] ?? 0), 2);
+                    
+                    // Datos de la línea 2
+                    // Acortamos la fecha para que se vea como "29-08-2026 12:01"
+                    $fecha = substr($venta['fechaVenta'] ?? '-', 0, 16); 
+                    // Acortamos el nombre del vendedor si es muy largo
+                    $vendedor = strtoupper(substr($venta['vendedor'] ?? 'CAJERO', 0, 16));
+                    
+                    // Determinamos el tipo de documento
+                    $docOriginal = $venta['documento'] ?? 'S';
+                    $docStr = $docOriginal === 'S' ? 'BOL. SIMPLE' : ($docOriginal === 'F' ? 'FACTURA' : 'BOLETA');
+                    
+                    // Imprimimos la transacción en 2 líneas
+                    $this->printer->text($this->formatearHistorialL1($pedidoId, $metodo, $total));
+                    $this->printer->text($this->formatearHistorialL2($fecha, $vendedor, $docStr));
+                    
+                    // Separador sutil entre ventas
+                    $this->printer->text("................................................\n");
+                }
+                $this->printer->text("------------------------------------------------\n");
+            }
+
+            $this->printer->text("\n\n\n");
+            $this->printer->cut();
+            $this->printer->close();
+            
+        } catch (\Exception $e) {
+            Log::error("Error imprimiendo cierre de caja: " . $e->getMessage());
+        }
+    }
     /**
      * 🔥 Helper corregido para 48 caracteres (80mm)
      */
@@ -292,5 +390,31 @@ class ImpresionService
         $montoPad = str_pad(substr($monto, 0, 24), 24, " ", STR_PAD_LEFT);
 
         return "$etiqPad$montoPad\n";
+    }
+
+    /**
+     * 🔥 Helper para Historial Línea 1 (Pedido | Metodo | Total)
+     */
+    private function formatearHistorialL1($col1, $col2, $col3)
+    {
+        // 12 chars + 22 chars + 14 chars = 48 exactos
+        $c1 = str_pad(substr($col1, 0, 12), 12, " ", STR_PAD_RIGHT);
+        $c2 = str_pad(substr($col2, 0, 22), 22, " ", STR_PAD_RIGHT);
+        $c3 = str_pad(substr($col3, 0, 14), 14, " ", STR_PAD_LEFT);
+
+        return "$c1$c2$c3\n";
+    }
+
+    /**
+     * 🔥 Helper para Historial Línea 2 (Fecha | Vendedor | Documento)
+     */
+    private function formatearHistorialL2($col1, $col2, $col3)
+    {
+        // 16 chars + 17 chars + 15 chars = 48 exactos
+        $c1 = str_pad(substr($col1, 0, 16), 16, " ", STR_PAD_RIGHT);
+        $c2 = str_pad(substr($col2, 0, 17), 17, " ", STR_PAD_RIGHT);
+        $c3 = str_pad(substr($col3, 0, 15), 15, " ", STR_PAD_LEFT);
+
+        return "$c1$c2$c3\n";
     }
 }

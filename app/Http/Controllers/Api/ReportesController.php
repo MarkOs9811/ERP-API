@@ -487,10 +487,66 @@ class ReportesController extends Controller
             ], 500);
         }
     }
-    public function reporteVentasExcel()
+    public function reporteVentasExcel(Request $request)
     {
         try {
-            $ventas = Venta::with('usuario', 'cliente.persona', 'cliente.empresa', 'metodoPago')->get();
+            // Empezamos armando la consulta
+            $query = Venta::with('usuario', 'cliente.persona', 'cliente.empresa');
+
+            // 🔥 NUEVO: Si nos envían una fecha, filtramos la consulta
+            if ($request->filled('fecha')) {
+                $query->whereDate('fechaVenta', $request->fecha); 
+            }
+
+            // Ejecutamos la consulta
+            $ventas = $query->get();
+
+            // ✅ TRANSFORMAR a array SIMPLE y PLANO
+            $data = $ventas->map(function ($venta) {
+                return [
+                    'ID Venta' => $venta->id,
+                    'Sede' => $venta->usuario->sede->nombre ?? '-',
+                    'Fecha' => $venta->fechaVenta,
+                    'Hora' => $venta->created_at->format('H:i:s'),
+                    'Cliente' => $venta->cliente->persona->nombre ?? '-',
+                    'Documento' => $venta->cliente->persona->documento_identidad ?? 'N/A',
+                    'Empresa' => $venta->cliente->empresa->ruc ?? '-',
+                    'N° Pedido' => $venta->idPedido ?? '-',
+                    'Método Pago' => $venta->idMetodo ?? '-',
+                    'Moneda' => "Soles",
+                    'Total' => (float) $venta->total, 
+                    'Tipo Documento' => match($venta->documento) {
+                        'B' => 'Boleta',
+                        'F' => 'Factura',
+                        default => 'Boleta Simple',
+                    },
+                    'Estado' => $venta->estado,
+                    'Vendedor' => ($venta->usuario->empleado->persona->nombre ?? '') . ' ' . ($venta->usuario->empleado->persona->apellidos ?? '-')
+                ];
+            });
+
+            $filename = 'reporte_ventas_' . now()->format('Ymd_His') . '.xlsx';
+
+            // ✅ Exportar el ARRAY transformado
+            (new FastExcel($data))->export($filename);
+
+            return response()->download($filename)->deleteFileAfterSend(true);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error al generar reporte: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al generar el reporte: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function reporteVentasHOY()
+    {
+        try {
+            $hoy = now()->format('Y-m-d');
+            $ventas = Venta::with('usuario', 'cliente.persona', 'cliente.empresa')
+                ->whereDate('fechaVenta', $hoy)
+                ->get();
 
             // ✅ TRANSFORMAR a array SIMPLE y PLANO
             $data = $ventas->map(function ($venta) {
@@ -508,52 +564,11 @@ class ReportesController extends Controller
                     'Método Pago' => $venta->idMetodo ?? '-',
                     'Moneda' => "Soles",
                     'Total' => (float) $venta->total, // ✅ Convertir a número
-                    'Tipo Documento' => $venta->documento === 'B' ? 'Boleta' : 'Factura',
-                    'Estado' => $venta->estado,
-                    'Vendedor' => $venta->usuario->empleado->persona->nombre . $venta->usuario->empleado->persona->apellidos ?? '-'
-                ];
-            });
-
-            $filename = 'reporte_ventas_' . now()->format('Ymd_His') . '.xlsx';
-
-            // ✅ Exportar el ARRAY transformado, no los modelos
-            (new FastExcel($data))->export($filename);
-
-            return response()->download($filename)->deleteFileAfterSend(true);
-        } catch (\Exception $e) {
-            Log::error('Error al generar reporte: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Error al generar el reporte: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    public function reporteVentasHOY()
-    {
-        try {
-            $hoy = now()->format('Y-m-d');
-            $ventas = Venta::with('usuario', 'cliente.persona', 'cliente.empresa', 'metodoPago')
-                ->whereDate('fechaVenta', $hoy)
-                ->get();
-
-            // ✅ TRANSFORMAR a array SIMPLE y PLANO
-            $data = $ventas->map(function ($venta) {
-                return [
-                    // Solo datos PRIMITIVOS: strings, numbers, dates
-
-                    'ID Venta' => $venta->id,
-                    'Sede' => $venta->usuario->sede->nombre ?? '-',
-                    'Fecha' => $venta->fechaVenta,
-                    'Hora' => $venta->created_at->format('H:i:s'),
-                    'Cliente' => $venta->cliente->persona->nombre ?? '-',
-                    'Documento' => $venta->cliente->persona->documento_identidad ?? 'N/A',
-                    'Empresa' => $venta->cliente->empresa->ruc ?? '-',
-                    'N° Pedido' => $venta->idPedido ?? '-',
-                    'Método Pago' => $venta->metodoPago->nombre ?? '-',
-                    'Moneda' => "Soles",
-                    'Total' => (float) $venta->total, // ✅ Convertir a número
-                    'Tipo Documento' => $venta->documento === 'B' ? 'Boleta' : 'Factura',
+                    'Tipo Documento' => match($venta->documento) {
+                    'B' => 'Boleta',
+                    'F' => 'Factura',
+                    default => 'Boleta Simple',
+                },
                     'Estado' => $venta->estado,
                     'Vendedor' => $venta->usuario->empleado->persona->nombre . $venta->usuario->empleado->persona->apellidos ?? '-'
                 ];

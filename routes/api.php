@@ -327,6 +327,7 @@ Route::middleware('auth:sanctum', 'throttle:500,1')->group(function () {
     // IMPRESION NORMAL
     Route::post('/vender/imprimirGenerico', [VenderController::class, 'imprimirGenerico']);
     Route::post('/vender/imprimirCocina', [VenderController::class, 'imprimirCocina']);
+    Route::post('/cajas/imprimirCierre', [CajaController::class, 'imprimirCierre']);
 
     // CONSULTA USUARIO PARA VENDER
     Route::get('/consultar-documento/{tipo}/{numero}', [ConsultasGenericas::class, 'ConsultaDatosUsuario']);

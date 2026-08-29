@@ -641,16 +641,43 @@ class VenderController extends Controller
             ];
 
             //  INTEGRAMOS LA OPCIÓN DEL FRONTEND PARA IMPRIMIR
-            try {
+           try {
                 if ($imprimirTicket) {
                     $impresionService = new ImpresionService();
+                    
+                    // 1. Imprime el comprobante o ticket del cliente
                     $impresionService->imprimirTicketVenta($ticketData);
+                    
+                    // 2. Imprime la comanda para cocina/despacho si es para llevar
+                    if ($tipoVenta === 'llevar') {
+                        $productosComanda = collect($pedidosToVender)->map(function ($item) {
+                            return [
+                                'cantidad' => $item->cantidad,
+                                'nombre' => $item->descripcion
+                            ];
+                        })->toArray();
+
+                        // Obtenemos el nombre del cliente o ponemos uno genérico
+                        $nombreCliente = $datosCliente['nombre'] ?? ($datosCliente['razonSocial'] ?? 'PÚBLICO EN GENERAL');
+
+                        $comandaData = [
+                            'mesa' => 'PARA LLEVAR',
+                            'fecha' => date('d/m/Y H:i:s'),
+                            'usuario' => Auth::user()->empleado->persona->nombre ?? 'Cajero',
+                            'cliente' => $nombreCliente, // 🔥 AQUÍ PASAMOS EL CLIENTE
+                            'productos' => $productosComanda,
+                            'nota' => $observacion
+                        ];
+                        
+                        $impresionService->imprimirComandaCocina($comandaData);
+                        Log::info("🖨️ Ticket de despacho/cocina para LLEVAR impreso correctamente.");
+                    }
                 } else {
                     Log::info("🖨️ Impresión de ticket omitida desde caja.");
                 }
             } catch (\Exception $eImpresion) {
                 Log::error("⚠️ Error al intentar imprimir el ticket: " . $eImpresion->getMessage());
-            }
+            }   
 
             return response()->json([
                 'success' => true,

@@ -408,34 +408,81 @@ class CajaController extends Controller
         }
     }
 
-    public function verificarCajaAbierta()
+   public function verificarCajaAbierta()
     {
         try {
+            $user = Auth::user();
 
-            $cajaActiva = Caja::where('estadoCaja', 1)->first();
-            Log::info('Verificando caja abierta:', ['cajaActiva' => $cajaActiva]);
+            // 1. Verificamos si ESTE usuario específico tiene una sesión de caja abierta
+            $miCaja = $user->cajaAbierta();
 
-            if ($cajaActiva) {
+            if ($miCaja && $miCaja->caja) {
                 return response()->json([
                     'success' => true,
                     'data' => [
-                        'id' => $cajaActiva->id, // El ID de la caja
-                        'nombreCaja' => $cajaActiva->nombreCaja, // Ajusta al campo real de tu tabla (ej. "nombre" o "nombre_caja")
-                        'estadoCaja' => $cajaActiva->estadoCaja,
+                        'id' => $miCaja->caja->id, 
+                        'nombreCaja' => $miCaja->caja->nombreCaja,
+                        'estadoCaja' => $miCaja->caja->estadoCaja,
                     ]
                 ], 200);
             }
 
-            // 3. Si no hay nada abierto, devolvemos success false
+            // 2. Si no tiene caja propia, evaluamos si es un rol compartido (Mozo, Delivery, Cocina)
+            $nombreCargo = strtolower($user->empleado->cargo->nombre ?? '');
+            $rolesCompartidos = ['mozo', 'moso', 'meser', 'delivery', 'cocin'];
+            $esRolCompartido = false;
+            
+            foreach ($rolesCompartidos as $rol) {
+                if (str_contains($nombreCargo, $rol)) {
+                    $esRolCompartido = true;
+                    break;
+                }
+            }
+
+            // Los roles compartidos solo necesitan saber si hay ALGUNA caja abierta en la sede
+            if ($esRolCompartido) {
+                $cajaSede = \App\Models\Caja::where('estadoCaja', 1)
+                    ->where('idSede', $user->idSede ?? 1)
+                    ->first();
+
+                if ($cajaSede) {
+                    return response()->json([
+                        'success' => true,
+                        'data' => [
+                            'id' => $cajaSede->id,
+                            'nombreCaja' => $cajaSede->nombreCaja,
+                            'estadoCaja' => $cajaSede->estadoCaja,
+                        ]
+                    ], 200);
+                }
+            }
+
+            // 3. Si es Cajero/Atención sin caja propia, o Mozo sin cajas abiertas en todo el local
             return response()->json([
                 'success' => false,
-                'message' => 'No hay ninguna caja abierta en este momento.'
+                'message' => 'No tienes ninguna caja abierta asignada a tu usuario.'
             ], 200);
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Error del servidor al verificar la caja: ' . $e->getMessage()
             ], 500);
+        }
+    }
+
+    public function imprimirCierre(Request $request)
+    {
+        try {
+            $data = $request->all();
+            
+            $impresionService = new \App\Services\ImpresionService();
+            $impresionService->imprimirCierreCaja($data);
+
+            return response()->json(['success' => true, 'message' => 'Reporte enviado a la tiquetera']);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error("Error al imprimir cierre de caja: " . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'Error al imprimir: ' . $e->getMessage()], 500);
         }
     }
 }

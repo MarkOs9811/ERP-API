@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 
 
@@ -19,6 +20,9 @@ class AuthController extends Controller
     public function login(Request $request)
     {
         try {
+            // RASTREADOR 1: Inicio
+            Log::info('--- 1. INICIO DE PETICION LOGIN ---', ['email' => $request->email]);
+
             $credentials = $request->validate([
                 'email' => 'required',
                 'password' => 'required',
@@ -26,66 +30,63 @@ class AuthController extends Controller
 
             $throttleKey = Str::lower($request->email) . '|' . $request->ip();
 
-            // NUEVO: 2. Verificar si ya excedió los 3 intentos permitidos
             if (RateLimiter::tooManyAttempts($throttleKey, 3)) {
                 $seconds = RateLimiter::availableIn($throttleKey);
-                Log::warning('Bloqueo temporal por múltiples intentos fallidos.', ['email' => $request->email]);
-
+                Log::warning('--- ALERTA: Bloqueo por intentos ---', ['email' => $request->email]);
                 return response()->json([
                     'success' => false,
                     'message' => "Demasiados intentos fallidos. Tu cuenta ha sido bloqueada temporalmente. Intenta de nuevo en {$seconds} segundos."
-                ], 429); // Código HTTP 429: Too Many Requests
+                ], 429);
             }
 
-            // 1. Buscar usuario
             $user = User::where('email', $credentials['email'])->first();
 
             if (!$user) {
-                // NUEVO: Sumar un intento fallido si el correo no existe
-                RateLimiter::hit($throttleKey, 60); // 60 segundos de bloqueo cuando llegue a 3
-
-
+                Log::info('--- 2. FALLO: Usuario no encontrado ---');
+                RateLimiter::hit($throttleKey, 60);
                 return response()->json(['success' => false, 'message' => 'Usuario no encontrado'], 404);
             }
+            
+            Log::info('--- 2. EXITO: Usuario encontrado ---', ['id' => $user->id]);
 
-
-            // 2. Validar tipo de autenticación
             if ($user->auth_type !== 'manual') {
-                RateLimiter::hit($throttleKey, 60); // Sumar intento
+                Log::info('--- 3. FALLO: auth_type no es manual ---', ['auth_type' => $user->auth_type]);
+                RateLimiter::hit($throttleKey, 60);
                 return response()->json(['success' => false, 'message' => 'Este usuario debe iniciar sesión con Google'], 403);
             }
 
-            // 3. Validar contraseña
-            if (!Auth::attempt($credentials)) {
-                // NUEVO: Sumar un intento fallido si la contraseña es incorrecta
+            Log::info('--- 4. Comprobando Hash de la contraseña... ---');
+            
+            if (!Hash::check($credentials['password'], $user->password)) {
+                Log::info('--- 4. FALLO: La contraseña NO coincide con el Hash de la DB ---');
                 RateLimiter::hit($throttleKey, 60);
                 $intentosRestantes = RateLimiter::retriesLeft($throttleKey, 3);
-
                 return response()->json([
                     'success' => false,
                     'message' => "Credenciales inválidas. Te quedan {$intentosRestantes} intento(s)."
                 ], 401);
             }
-            // NUEVO: 3. Limpiar el contador si el inicio de sesión es exitoso
+            
+            Log::info('--- 4. EXITO: Hash::check aprobo la contraseña ---');
+            
             RateLimiter::clear($throttleKey);
 
+            $user->load('empleado.persona', 'empleado.cargo', 'roles', 'sede');
+            Log::info('--- 5. Relaciones del usuario cargadas ---');
 
-            // 4. Cargar usuario con relaciones
-            $user = User::with('empleado.persona', 'empleado.cargo', 'roles', 'sede')->find(Auth::id());
-
-            // 5. Lógica de Empresa y Roles Efectivos
             $empresa = null;
             $rolesEfectivos = collect([]);
-            $confiEmpresa = null; // Inicializamos aquí para evitar errores si cae en el 'else'
+            $confiEmpresa = null;
 
             if ($user->idEmpresa) {
-
                 $empresa = MiEmpresa::find($user->idEmpresa);
                 if (!$empresa) {
+                    Log::info('--- 6. FALLO: Empresa no encontrada ---');
                     return response()->json(['success' => false, 'message' => 'Empresa no válida o desactivada'], 403);
                 }
 
                 if ($empresa->estado == 0) {
+                    Log::info('--- 6. FALLO: Empresa inactiva ---');
                     return response()->json(['success' => false, 'message' => 'Su empresa se encuentra inactiva. Contacte soporte.'], 403);
                 }
 
@@ -93,42 +94,42 @@ class AuthController extends Controller
                     ->where('tipo', 'estilos')
                     ->get();
 
-                // A. Obtener IDs de roles que la empresa REALMENTE tiene activos
                 $rolesEmpresaIds = DB::table('empresa_roles')
                     ->where('idEmpresa', $empresa->id)
                     ->where('estado', 1)
                     ->pluck('idRole')
                     ->toArray();
 
-                // B. FILTRADO MÁGICO: Cruzar roles del usuario con los de la empresa
                 $rolesEfectivos = $user->roles->filter(function ($role) use ($rolesEmpresaIds) {
                     return in_array($role->id, $rolesEmpresaIds);
-                })->values(); // values() reordena los índices del array
+                })->values();
+                Log::info('--- 6. EXITO: Empresa validada y roles cruzados ---');
             } else {
                 if ($user->isAdmin == 1) {
                     $rolesEfectivos = $user->roles;
+                    Log::info('--- 6. EXITO: Es SuperAdmin (isAdmin = 1) ---');
                 }
             }
 
-            // 6. SOBRESCRIBIR LA RELACIÓN EN EL OBJETO USER
             $user->setRelation('roles', $rolesEfectivos);
 
+            Log::info('--- 7. Generando Token... ---');
             $token = $user->createToken('accessToken')->plainTextToken;
             $caja = $user->cajaAbierta();
 
-
+            Log::info('--- 8. LOGIN COMPLETADO. Enviando 200 OK ---');
             return response()->json([
                 'success' => true,
                 'message' => 'Login exitoso',
-                'user' => $user, // Ahora este user lleva los roles limpios dentro
+                'user' => $user,
                 'roles' => $rolesEfectivos,
                 'token' => $token,
                 'caja' => $caja,
                 'empresa' => $empresa,
-                'estiloEmpresa' => $confiEmpresa ?? [], // Protegido contra null
+                'estiloEmpresa' => $confiEmpresa ?? [],
             ], 200);
+            
         } catch (\Throwable $e) {
-            // Log::error completo para capturar exactamente en qué línea explotó
             Log::error('!!! ERROR CRITICO EN LOGIN !!!', [
                 'mensaje' => $e->getMessage(),
                 'linea' => $e->getLine(),
