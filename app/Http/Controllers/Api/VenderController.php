@@ -454,7 +454,11 @@ class VenderController extends Controller
             // Registrar estado y observación para llevar
             if ($tipoVenta === 'llevar') {
                 $detallePlatos = json_encode($detallePlatosArray);
-                $estadoService = new EstadoPedidoController('llevar', $idCaja, $detallePlatos, $nuevoPedido->id, null);
+                $nombreCliente = is_array($datosCliente) && isset($datosCliente['nombre'])
+                    ? $datosCliente['nombre']
+                    : (is_string($datosCliente) ? $datosCliente : null);
+
+                $estadoService = new EstadoPedidoController('llevar', $idCaja, $detallePlatos, $nuevoPedido->id, $nombreCliente);
                 $estadoService->registrar();
 
                 if (!empty($observacion)) {
@@ -641,13 +645,13 @@ class VenderController extends Controller
             ];
 
             //  INTEGRAMOS LA OPCIÓN DEL FRONTEND PARA IMPRIMIR
-           try {
+            try {
                 if ($imprimirTicket) {
                     $impresionService = new ImpresionService();
-                    
+
                     // 1. Imprime el comprobante o ticket del cliente
                     $impresionService->imprimirTicketVenta($ticketData);
-                    
+
                     // 2. Imprime la comanda para cocina/despacho si es para llevar
                     if ($tipoVenta === 'llevar') {
                         $productosComanda = collect($pedidosToVender)->map(function ($item) {
@@ -668,7 +672,7 @@ class VenderController extends Controller
                             'productos' => $productosComanda,
                             'nota' => $observacion
                         ];
-                        
+
                         $impresionService->imprimirComandaCocina($comandaData);
                         Log::info("🖨️ Ticket de despacho/cocina para LLEVAR impreso correctamente.");
                     }
@@ -677,7 +681,7 @@ class VenderController extends Controller
                 }
             } catch (\Exception $eImpresion) {
                 Log::error("⚠️ Error al intentar imprimir el ticket: " . $eImpresion->getMessage());
-            }   
+            }
 
             return response()->json([
                 'success' => true,

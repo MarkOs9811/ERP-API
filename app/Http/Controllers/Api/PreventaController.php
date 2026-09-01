@@ -24,6 +24,8 @@ class PreventaController extends Controller
         Log::info('Datos recibidos desde React:', $request->all());
 
         $data = $request->input('pedidos');
+        Log::info('Array de pedidos recibido:', $data);
+
 
         if (empty($data)) {
             Log::warning('Petición rechazada: El array de pedidos vino vacío.');
@@ -37,7 +39,8 @@ class PreventaController extends Controller
             'pedidos.*.idMesa' => 'required|integer|exists:mesas,id',
             'pedidos.*.cantidad' => 'required|integer|min:1',
             'pedidos.*.precio' => 'required|numeric|min:0',
-            'pedidos.*.nota' => 'nullable|string|max:100',
+            'nota' => 'nullable|string|max:100',
+            'imprimirTicket' => 'required|boolean',
         ]);
 
         try {
@@ -63,7 +66,7 @@ class PreventaController extends Controller
                 $mesa->save();
             }
 
-            // 5. Procesar Ticket de Cocina (Método Privado)
+            // 5. Procesar Ticket de Cocina (Método Privado) - ESTO NO IMPRIME
             $this->procesarTicketCocina($idPedido, $idCaja, $detallePlatosArray, $request->nota, $mesa->numero);
 
             DB::commit();
@@ -71,20 +74,24 @@ class PreventaController extends Controller
 
             // 6. Imprimir Comanda
             // La solución definitiva será usar Laravel Queues -> dispatch(new ImprimirComandaJob(...))
-            $this->imprimirComandaRapida($mesa->numero, $user->name ?? 'Mozo', $detallePlatosArray, $request->nota);
+            if ($request->boolean('imprimirTicket')) {
+                Log::info('Se ha solicitado imprimir la comanda de cocina.');
+                $this->imprimirComandaRapida($mesa->numero, $user->name ?? 'Mozo', $detallePlatosArray, $request->nota);
+            } else {
+                Log::info('No se solicitó imprimir la comanda de cocina.');
+            }
 
-            $pedidoCompleto = PedidoMesaRegistro::with(['preVentas.plato'])->find($idPedido);
+            $pedidoCompleto = PedidoMesaRegistro::with(['preVentas.plato', 'preVentas.mesa'])->find($idPedido);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Pedidos registrados exitosamente.',
-                'data' => [
-                    'pedidoRegistro' => $pedidoCompleto->preVentas
-                ]
+                'data' => $pedidoCompleto->preVentas,
             ], 200);
         } catch (\Exception $e) {
             DB::rollBack();
-            // 🔥 LOG 2: Capturamos el error exacto con línea y archivo
+
+            // LOG 2: Capturamos el error exacto con línea y archivo
             Log::error('Error CRÍTICO al registrar los pedidos: ' . $e->getMessage() . ' en la línea ' . $e->getLine() . ' del archivo ' . $e->getFile());
 
             return response()->json([

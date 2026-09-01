@@ -29,11 +29,10 @@ class EstadoPedido extends Model
     {
         return $this->belongsTo(PedidoMesaRegistro::class, 'idPedidoMesa');
     }
-
     // Relación con pedidos (para llevar)
     public function pedidoLlevar()
     {
-        return $this->belongsTo(Pedido::class, 'idPedidoLlevar');
+        return $this->belongsTo(Pedido::class, 'idPedidoLLevar');
     }
     public function caja()
     {

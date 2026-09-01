@@ -28,16 +28,16 @@ class EstadoPedidoController
         $pedido = new EstadoPedido();
         $pedido->tipo_pedido = $this->tipoPedido;
         $pedido->idCaja = $this->idCaja;
-        $pedido->detalle_platos = $this->detallePlatos;
-        $pedido->detalles_extras = $this->detalleCliente;
+        $pedido->detalle_platos = $this->detallePlatos; // Entra como JSON
+        $pedido->detalles_extras = null;
         $pedido->numeroMesa = $this->numMesa;
-        // Asignación según tipo
+
         switch ($this->tipoPedido) {
             case 'mesa':
                 $pedido->idPedidoMesa = $this->idRelacion;
                 break;
             case 'llevar':
-                $pedido->idPedidoLlevar = $this->idRelacion;
+                $pedido->idPedidoLLevar = $this->idRelacion; // ✅ LL Mayúscula
                 break;
             case 'web':
                 $pedido->idPedidoWsp = $this->idRelacion;
@@ -45,14 +45,16 @@ class EstadoPedidoController
         }
 
         $pedido->estado = 0;
+        $pedido->detalle_cliente = $this->detalleCliente; // ✅ Entra como String simple (el nombre)
         $pedido->save();
-        // Aquí disparas el evento para enviar en tiempo real a cocina
+
         event(new PedidoCocinaEvent(
             $pedido->id,
-            json_decode($this->detallePlatos, true), // convertir JSON a array si está en JSON
+            json_decode($this->detallePlatos, true), // ✅ Decodificamos solo para el WebSocket
             $this->tipoPedido,
             $pedido->estado
         ));
+
         return $pedido;
     }
 }

@@ -14,7 +14,7 @@ class CocinaController extends Controller
         try {
             $hoy = now()->toDateString();
 
-            $pedidos = EstadoPedido::with('preventaMesa.preVentas.mesa', 'caja')
+            $pedidos = EstadoPedido::with('preventaMesa.preVentas.mesa', 'pedidoLlevar.detallePedidos.producto', 'caja')
                 ->whereHas('caja', function ($query) {
                     $query->where('estadoCaja', 1);
                 })
