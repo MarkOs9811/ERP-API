@@ -1280,8 +1280,8 @@ class VenderController extends Controller
     {
         try {
             $data = $request->all();
-
-            // 🔥 Validamos lo que realmente necesitamos para la cocina
+            Log::info("Datos recibidos para imprimir comanda de cocina: ", $data);
+            // Validamos lo que realmente necesitamos para la cocina
             if (!isset($data['mesa']) || !isset($data['productos'])) {
                 return response()->json([
                     'success' => false,
@@ -1297,6 +1297,7 @@ class VenderController extends Controller
             // Llamamos a nuestro servicio de impresión
             $impresionService = new ImpresionService();
             $impresionService->imprimirComandaCocina($data);
+
 
             return response()->json([
                 'success' => true,
