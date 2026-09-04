@@ -55,6 +55,7 @@ use App\Http\Controllers\Api\WhatsAppController;
 use App\Http\Controllers\Auth\GoogleController;
 use Google\Service\AdSenseHost\Report;
 use App\Http\Controllers\Api\PromocionesClienteController;
+use App\Http\Controllers\Api\ReiniciarSistemaController;
 use App\Http\Controllers\Api\ReservaMesasController;
 use App\Http\Controllers\Auth\PasswordResetController;
 
@@ -578,7 +579,7 @@ Route::middleware('auth:sanctum', 'throttle:500,1')->group(function () {
 
 Route::post('/login/superadmin', [AuthController::class, 'loginSuperAdmin']);
 
-// 🔥 LIMITE AUMENTADO A 500 PETICIONES POR MINUTO
+//  LIMITE AUMENTADO A 500 PETICIONES POR MINUTO
 Route::middleware('auth:sanctum', 'throttle:500,1')->group(
     function () {
         Route::get('/superadmin/empresas', [EmpresasAdminController::class, 'getEmpresas']);
@@ -588,6 +589,7 @@ Route::middleware('auth:sanctum', 'throttle:500,1')->group(
         Route::put('/superadmin/empresas/{id}', [EmpresasAdminController::class, 'updateEmpresa']);
         Route::post('/superadmin/empresas/{id}/modulos', [EmpresasAdminController::class, 'updateEmpresaModulos']);
 
+        Route::post('/superadmin/reiniciarSistema', [ReiniciarSistemaController::class, 'reiniciarSistema']);
 
         // TERMINAR TUTORIAL
         Route::put('/superadmin/empresasSteps/complete-setup', [EmpresasAdminController::class, 'completeSetup']);

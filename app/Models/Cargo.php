@@ -40,7 +40,6 @@ class Cargo extends Model
     {
         static::addGlobalScope(new EmpresaScope);
 
-
         static::creating(function ($cargo) {
             $user = auth()->user();
 

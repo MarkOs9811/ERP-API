@@ -20,22 +20,28 @@ class AuthController extends Controller
     public function login(Request $request)
     {
         try {
-            // RASTREADOR 1: Inicio
-            Log::info('--- 1. INICIO DE PETICION LOGIN ---', ['email' => $request->email]);
+            Log::info('--- 1. INICIO DE PETICION LOGIN ---', [
+                'email' => $request->email,
+            ]);
 
             $credentials = $request->validate([
                 'email' => 'required',
                 'password' => 'required',
             ]);
 
-            $throttleKey = Str::lower($request->email) . '|' . $request->ip();
+            $throttleKey =
+                Str::lower($request->email) . '|' . $request->ip();
 
             if (RateLimiter::tooManyAttempts($throttleKey, 3)) {
                 $seconds = RateLimiter::availableIn($throttleKey);
-                Log::warning('--- ALERTA: Bloqueo por intentos ---', ['email' => $request->email]);
+
+                Log::warning('--- ALERTA: Bloqueo por intentos ---', [
+                    'email' => $request->email,
+                ]);
+
                 return response()->json([
                     'success' => false,
-                    'message' => "Demasiados intentos fallidos. Tu cuenta ha sido bloqueada temporalmente. Intenta de nuevo en {$seconds} segundos."
+                    'message' => "Demasiados intentos fallidos. Tu cuenta ha sido bloqueada temporalmente. Intenta de nuevo en {$seconds} segundos.",
                 ], 429);
             }
 
@@ -43,81 +49,162 @@ class AuthController extends Controller
 
             if (!$user) {
                 Log::info('--- 2. FALLO: Usuario no encontrado ---');
-                RateLimiter::hit($throttleKey, 60);
-                return response()->json(['success' => false, 'message' => 'Usuario no encontrado'], 404);
-            }
-            
-            Log::info('--- 2. EXITO: Usuario encontrado ---', ['id' => $user->id]);
 
-            if ($user->auth_type !== 'manual') {
-                Log::info('--- 3. FALLO: auth_type no es manual ---', ['auth_type' => $user->auth_type]);
                 RateLimiter::hit($throttleKey, 60);
-                return response()->json(['success' => false, 'message' => 'Este usuario debe iniciar sesión con Google'], 403);
-            }
 
-            Log::info('--- 4. Comprobando Hash de la contraseña... ---');
-            
-            if (!Hash::check($credentials['password'], $user->password)) {
-                Log::info('--- 4. FALLO: La contraseña NO coincide con el Hash de la DB ---');
-                RateLimiter::hit($throttleKey, 60);
-                $intentosRestantes = RateLimiter::retriesLeft($throttleKey, 3);
                 return response()->json([
                     'success' => false,
-                    'message' => "Credenciales inválidas. Te quedan {$intentosRestantes} intento(s)."
+                    'message' => 'Usuario no encontrado',
+                ], 404);
+            }
+
+            Log::info('--- 2. EXITO: Usuario encontrado ---', [
+                'id' => $user->id,
+            ]);
+
+            if ($user->auth_type !== 'manual') {
+                Log::info('--- 3. FALLO: auth_type no es manual ---', [
+                    'auth_type' => $user->auth_type,
+                ]);
+
+                RateLimiter::hit($throttleKey, 60);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Este usuario debe iniciar sesión con Google',
+                ], 403);
+            }
+
+            Log::info('--- 4. Comprobando Hash de la contraseña ---');
+
+            if (!Hash::check($credentials['password'], $user->password)) {
+                Log::info('--- 4. FALLO: La contraseña no coincide ---');
+
+                RateLimiter::hit($throttleKey, 60);
+
+                $intentosRestantes = RateLimiter::retriesLeft(
+                    $throttleKey,
+                    3
+                );
+
+                return response()->json([
+                    'success' => false,
+                    'message' => "Credenciales inválidas. Te quedan {$intentosRestantes} intento(s).",
                 ], 401);
             }
-            
-            Log::info('--- 4. EXITO: Hash::check aprobo la contraseña ---');
-            
+
+            Log::info('--- 4. EXITO: Hash aprobado ---');
+
             RateLimiter::clear($throttleKey);
 
-            $user->load('empleado.persona', 'empleado.cargo', 'roles', 'sede');
-            Log::info('--- 5. Relaciones del usuario cargadas ---');
+            /*
+         * Se cargan únicamente las relaciones necesarias.
+         * No se carga user.roles porque los permisos vienen del cargo.
+         */
+            $user->load(
+                'empleado.persona',
+                'empleado.cargo.roles',
+                'sede'
+            );
+
+            Log::info('--- 5. Relaciones del cargo cargadas ---');
 
             $empresa = null;
-            $rolesEfectivos = collect([]);
             $confiEmpresa = null;
+            $rolesEfectivos = collect();
+
+            /*
+         * Roles asignados al cargo del empleado.
+         */
+            $rolesDelCargo = $user->empleado?->cargo?->roles
+                ?? collect();
 
             if ($user->idEmpresa) {
                 $empresa = MiEmpresa::find($user->idEmpresa);
+
                 if (!$empresa) {
                     Log::info('--- 6. FALLO: Empresa no encontrada ---');
-                    return response()->json(['success' => false, 'message' => 'Empresa no válida o desactivada'], 403);
+
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Empresa no válida o desactivada',
+                    ], 403);
                 }
 
                 if ($empresa->estado == 0) {
                     Log::info('--- 6. FALLO: Empresa inactiva ---');
-                    return response()->json(['success' => false, 'message' => 'Su empresa se encuentra inactiva. Contacte soporte.'], 403);
+
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Su empresa se encuentra inactiva. Contacte soporte.',
+                    ], 403);
                 }
 
-                $confiEmpresa = Configuraciones::where('idEmpresa', $user->idEmpresa)
+                $confiEmpresa = Configuraciones::where(
+                    'idEmpresa',
+                    $user->idEmpresa
+                )
                     ->where('tipo', 'estilos')
                     ->get();
 
+                /*
+             * Roles habilitados para la empresa.
+             */
                 $rolesEmpresaIds = DB::table('empresa_roles')
                     ->where('idEmpresa', $empresa->id)
                     ->where('estado', 1)
                     ->pluck('idRole')
                     ->toArray();
 
-                $rolesEfectivos = $user->roles->filter(function ($role) use ($rolesEmpresaIds) {
-                    return in_array($role->id, $rolesEmpresaIds);
-                })->values();
-                Log::info('--- 6. EXITO: Empresa validada y roles cruzados ---');
-            } else {
-                if ($user->isAdmin == 1) {
-                    $rolesEfectivos = $user->roles;
-                    Log::info('--- 6. EXITO: Es SuperAdmin (isAdmin = 1) ---');
-                }
+                /*
+             * Se toman únicamente los roles del cargo que:
+             * 1. Están asignados al cargo.
+             * 2. Están habilitados para la empresa.
+             */
+                $rolesEfectivos = $rolesDelCargo
+                    ->filter(function ($role) use ($rolesEmpresaIds) {
+                        return in_array($role->id, $rolesEmpresaIds);
+                    })
+                    ->values();
+
+                Log::info('--- 6. Roles del cargo filtrados ---', [
+                    'cargo' => $user->empleado?->cargo?->nombre,
+                    'roles' => $rolesEfectivos
+                        ->pluck('nombre')
+                        ->values()
+                        ->toArray(),
+                ]);
+            } elseif ($user->isAdmin == 1) {
+                /*
+             * Superadministrador sin empresa:
+             * usa todos los roles de su cargo.
+             */
+                $rolesEfectivos = $rolesDelCargo->values();
+
+                Log::info('--- 6. SuperAdmin: roles del cargo cargados ---', [
+                    'roles' => $rolesEfectivos
+                        ->pluck('nombre')
+                        ->values()
+                        ->toArray(),
+                ]);
             }
 
+            /*
+         * Se reemplaza la relación roles del usuario para que
+         * PrivateRoute y el frontend reciban los roles del cargo.
+         */
             $user->setRelation('roles', $rolesEfectivos);
 
-            Log::info('--- 7. Generando Token... ---');
-            $token = $user->createToken('accessToken')->plainTextToken;
+            Log::info('--- 7. Generando Token ---');
+
+            $token = $user
+                ->createToken('accessToken')
+                ->plainTextToken;
+
             $caja = $user->cajaAbierta();
 
-            Log::info('--- 8. LOGIN COMPLETADO. Enviando 200 OK ---');
+            Log::info('--- 8. LOGIN COMPLETADO ---');
+
             return response()->json([
                 'success' => true,
                 'message' => 'Login exitoso',
@@ -128,14 +215,17 @@ class AuthController extends Controller
                 'empresa' => $empresa,
                 'estiloEmpresa' => $confiEmpresa ?? [],
             ], 200);
-            
         } catch (\Throwable $e) {
             Log::error('!!! ERROR CRITICO EN LOGIN !!!', [
                 'mensaje' => $e->getMessage(),
                 'linea' => $e->getLine(),
-                'archivo' => $e->getFile()
+                'archivo' => $e->getFile(),
             ]);
-            return response()->json(['success' => false, 'message' => 'Ocurrió un error en el login'], 500);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ocurrió un error en el login',
+            ], 500);
         }
     }
     public function logout(Request $request)
