@@ -114,6 +114,11 @@ class ReiniciarSistema extends Command
                         '--force' => true,
                     ]);
 
+                    Artisan::call('db:seed', [
+                        '--class' => 'UbigeoSeeder',
+                        '--force' => true,
+                    ]);
+
                     // Si el seeder terminó correctamente, continuamos.
 
                 } finally {
