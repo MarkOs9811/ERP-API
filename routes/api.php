@@ -132,6 +132,12 @@ Route::middleware('auth:sanctum', 'throttle:500,1')->group(function () {
 
     // CRUD PARA MI PERFIL ACTUALIZACION
     Route::post('/miPerfilUpdate', [MiPerfilController::class, 'actualizarPerfil']);
+    Route::post('/miPerfilUpdate/cambiar-password', [MiPerfilController::class, 'cambiarPassword']);
+
+    // CRUD CONFIGURACIONES GENERALES
+    Route::post('/configMoneda', [ConfiguracionController::class, 'actualizarMoneda']);
+    Route::post('/configZona', [ConfiguracionController::class, 'actualizarZonaHoraria']);
+
 
     // CRUD PARA LA SERIE Y CORRELATIVOS
     Route::get('/configuraciones/serieCorrelativo', [ConfiguracionController::class, 'getConfiSerieCorrelativo']);
@@ -573,10 +579,9 @@ Route::middleware('auth:sanctum', 'throttle:500,1')->group(function () {
     Route::get('/moodle/consultar-curso', [MoodleController::class, 'generarAcciónConsultarCurso']);
 });
 
-
+// ======================================
 // LOGIN Y CRUD PARA EL SUPERADMIN
-
-
+// ======================================
 Route::post('/login/superadmin', [AuthController::class, 'loginSuperAdmin']);
 
 //  LIMITE AUMENTADO A 500 PETICIONES POR MINUTO

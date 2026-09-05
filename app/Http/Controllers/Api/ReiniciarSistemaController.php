@@ -18,17 +18,18 @@ class ReiniciarSistemaController extends Controller
         // 1. Validar que sea el SuperAdmin usando el .env
         if ($user->email !== $correoMaestro) {
             Log::warning("Intento fallido de reinicio de sistema por usuario no autorizado: {$user->email}");
+            // Usar 403 Forbidden es correcto aquí: el token es válido, pero no tiene permisos para esta acción
             return response()->json(['message' => 'No autorizado'], 403);
         }
 
         // 2. Validar la contraseña enviada desde el modal de React
         if (!Hash::check($request->password, $user->password)) {
             Log::warning("Intento de reinicio con contraseña incorrecta para el usuario: {$user->email}");
-            return response()->json(['message' => 'Contraseña incorrecta'], 401);
+            // CAMBIO CLAVE: Usar 422 en lugar de 401 para evitar que el interceptor global de Axios cierre la sesión
+            return response()->json(['message' => 'Contraseña incorrecta'], 422);
         }
 
         try {
-            // Ejecutamos tu comando Artisan pasando --force para evitar bloqueos por consola
             Artisan::call('sistema:reinicio-limpio', ['--force' => true]);
 
             Log::info("El sistema fue reiniciado exitosamente por el SuperAdmin: {$user->email}");
@@ -38,7 +39,6 @@ class ReiniciarSistemaController extends Controller
                 'message' => 'Sistema reiniciado exitosamente de fábrica.'
             ], 200);
         } catch (\Exception $e) {
-            // Registramos el error completo en el archivo laravel.log con su traza (stack trace)
             Log::error("Error crítico al ejecutar el reinicio de sistema: " . $e->getMessage(), [
                 'exception' => $e
             ]);

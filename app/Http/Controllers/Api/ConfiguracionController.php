@@ -747,4 +747,77 @@ class ConfiguracionController extends Controller
             ], 500);
         }
     }
+
+    public function actualizarMoneda(Request $request)
+    {
+
+        $request->validate([
+            'simbolo' => 'required|string|max:10'
+        ]);
+
+        try {
+            $user = auth()->user();
+            $configuracion = Configuraciones::where('idEmpresa', $user->idEmpresa)
+                ->where('tipo', 'moneda')
+                ->first();
+
+            if (!$configuracion) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se encontró la configuración de moneda para esta empresa.'
+                ], 404);
+            }
+
+            // 2. Ahora es 100% seguro que $request->simbolo existe
+            $configuracion->clave = $request->simbolo;
+            $configuracion->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Moneda actualizada con éxito',
+                'data' => $configuracion
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al actualizar la moneda: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function actualizarZonaHoraria(Request $request)
+    {
+        $request->validate([
+            'zona' => 'required|string|max:255'
+        ]);
+
+        try {
+            $user = auth()->user();
+            $configuracion = Configuraciones::where('idEmpresa', $user->idEmpresa)
+                ->where('tipo', 'zona_horaria')
+                ->first();
+
+            if (!$configuracion) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se encontró la configuración de zona horaria para esta empresa.'
+                ], 404);
+            }
+
+            // 2. Ahora es 100% seguro que $request->zona existe
+            $configuracion->clave = $request->zona;
+            $configuracion->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Zona horaria actualizada con éxito',
+                'data' => $configuracion
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al actualizar la zona horaria: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

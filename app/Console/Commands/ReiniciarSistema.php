@@ -93,6 +93,7 @@ class ReiniciarSistema extends Command
                         'proveedores',
                         'registros_cajas',
                         'registros_ejercicios',
+                        'roles',
                         'role_users',
                         'sedes',
                         'serie_correlativos',
