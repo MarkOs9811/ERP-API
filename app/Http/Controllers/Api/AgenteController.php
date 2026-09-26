@@ -107,33 +107,69 @@ class AgenteController extends Controller
             : 'PLATOS: ' . $platos->toJson(JSON_UNESCAPED_UNICODE);
     }
 
+    // --- NUEVO: GESTIÓN INTELIGENTE DE CATEGORÍAS (CON DETECCIÓN DE PLURALES) ---
+    private function buscarOCrearCategoria($nombreCategoria)
+    {
+        $catNombre = trim((string) $nombreCategoria);
+        if ($catNombre === '') {
+            $catNombre = 'Platos';
+        }
+
+        $catLower = mb_strtolower($catNombre);
+
+        // 1. Búsqueda exacta primero (ej: "hamburguesa" == "hamburguesa")
+        $categoria = CategoriaPlato::whereRaw('LOWER(nombre) = ?', [$catLower])->first();
+        if ($categoria) {
+            return $categoria->id;
+        }
+
+        // 2. Inteligencia para plurales/singulares: Le quitamos la "s" o "es" final al texto
+        // Ej: "Hamburguesas" -> "Hamburguesa" | "Especiales" -> "Especial"
+        $raiz = preg_replace('/(es|s)$/i', '', $catLower);
+
+        // Solo aplicamos la búsqueda por raíz si la palabra tiene un tamaño decente
+        if (strlen($raiz) >= 3) {
+            $categoriaPlural = CategoriaPlato::whereRaw('LOWER(nombre) LIKE ?', ["%{$raiz}%"])->first();
+            if ($categoriaPlural) {
+                return $categoriaPlural->id;
+            }
+        }
+
+        // 3. Si definitivamente no existe, la creamos bonita (Primera Letra Mayúscula)
+        $nuevaCat = CategoriaPlato::create([
+            'nombre' => mb_convert_case($catLower, MB_CASE_TITLE, "UTF-8")
+        ]);
+
+        return $nuevaCat->id;
+    }
+
     private function crearPlato(array $argumentos)
     {
         $datos = Validator::make($argumentos, [
             'nombrePlato' => 'required|string|max:255',
             'descripcion' => 'nullable|string|max:500',
             'precio' => 'required|numeric|min:0',
-            'idCategoria' => 'required|integer',
+            'nombreCategoria' => 'nullable|string', // AHORA ES OPCIONAL
         ])->validate();
-
-        if (!CategoriaPlato::whereKey($datos['idCategoria'])->exists()) {
-            return 'ERROR_VALIDACION: La categoría indicada no existe en tu empresa.';
-        }
 
         $nombre = trim($datos['nombrePlato']);
         if (Plato::whereRaw('LOWER(nombre) = ?', [mb_strtolower($nombre)])->exists()) {
             return "ERROR_DUPLICADO: Ya existe un plato llamado '$nombre'.";
         }
 
+        // Si no envía categoría, usamos "Platos" por defecto
+        $nombreCat = !empty($datos['nombreCategoria']) ? $datos['nombreCategoria'] : 'Platos';
+        $idCategoria = $this->buscarOCrearCategoria($nombreCat);
+
         $plato = Plato::create([
             'nombre' => mb_strtolower($nombre),
             'descripcion' => $datos['descripcion'] ?? null,
             'precio' => round((float) $datos['precio'], 2),
-            'idCategoria' => $datos['idCategoria'],
+            'idCategoria' => $idCategoria,
             'estado' => 1,
         ]);
 
-        return "ÉXITO: Se creó el plato '{$plato->nombre}' con precio S/ {$plato->precio}.";
+        return "ÉXITO: Se creó el plato '{$plato->nombre}' con precio S/ {$plato->precio} en la categoría '{$nombreCat}'.";
     }
 
     private function editarPlato(array $argumentos)
@@ -148,24 +184,22 @@ class AgenteController extends Controller
             'nuevoNombre' => 'nullable|string|max:255',
             'descripcion' => 'nullable|string|max:500',
             'nuevoPrecio' => 'nullable|numeric|min:0',
-            'idCategoria' => 'nullable|integer',
+            'nombreCategoria' => 'nullable|string', // OPCIONAL
         ])->validate();
 
-        if (isset($datos['idCategoria']) && !CategoriaPlato::whereKey($datos['idCategoria'])->exists()) {
-            return 'ERROR_VALIDACION: La categoría indicada no existe en tu empresa.';
+        if (!empty($datos['nombreCategoria'])) {
+            $plato->idCategoria = $this->buscarOCrearCategoria($datos['nombreCategoria']);
         }
-
         if (isset($datos['nuevoNombre'])) {
             $plato->nombre = mb_strtolower(trim($datos['nuevoNombre']));
         }
-        foreach (['descripcion', 'idCategoria'] as $campo) {
-            if (array_key_exists($campo, $datos)) {
-                $plato->{$campo} = $datos[$campo];
-            }
+        if (array_key_exists('descripcion', $datos)) {
+            $plato->descripcion = $datos['descripcion'];
         }
         if (isset($datos['nuevoPrecio'])) {
             $plato->precio = round((float) $datos['nuevoPrecio'], 2);
         }
+
         $plato->save();
 
         return "ÉXITO: El plato '{$plato->nombre}' fue actualizado correctamente.";
@@ -209,8 +243,6 @@ class AgenteController extends Controller
         $ocupados = [];
         $cambios = [];
 
-        // Conserva primero los nombres finales que ya existen y asigna los restantes
-        // a los registros genéricos, evitando que un registro absorba otro por LIKE.
         foreach ($platos as $plato) {
             $nombreActual = mb_strtolower(trim($plato->nombre));
             $coincide = array_search($nombreActual, $nombresFinales, true);
@@ -248,17 +280,17 @@ class AgenteController extends Controller
         return match ($nombreFuncion) {
             'actualizarPrecioPlato' => $this->actualizarPrecioPlato($argumentos['nombrePlato'] ?? '', $argumentos['nuevoPrecio'] ?? null),
             'cambiarEstadoWebPlato' => $this->cambiarEstadoWebPlato($argumentos['nombrePlato'] ?? '', $argumentos['estadoWeb'] ?? 0),
-            'listarPlatos' => $this->listarPlatos($argumentos['filtro'] ?? null),
-            'crearPlato' => $this->crearPlato($argumentos),
-            'editarPlato' => $this->editarPlato($argumentos),
-            'eliminarPlato' => $this->eliminarPlato($argumentos['nombrePlato'] ?? ''),
-            'diferenciarPlatos' => $this->diferenciarPlatos($argumentos),
-            default => 'ERROR_HERRAMIENTA: Operación no reconocida.',
+            'listarPlatos'          => $this->listarPlatos($argumentos['filtro'] ?? null),
+            'crearPlato'            => $this->crearPlato($argumentos),
+            'editarPlato'           => $this->editarPlato($argumentos),
+            'eliminarPlato'         => $this->eliminarPlato($argumentos['nombrePlato'] ?? ''),
+            'diferenciarPlatos'     => $this->diferenciarPlatos($argumentos),
+            default                 => 'ERROR_HERRAMIENTA: Operación no reconocida.',
         };
     }
 
     // --------------------------------------------------------
-    // EL ORQUESTADOR PRINCIPAL (INTENTA GEMINI PRIMERO)
+    // EL ORQUESTADOR PRINCIPAL (MULTI-STEP REASONING)
     // --------------------------------------------------------
 
     public function chatear(Request $request, $agente)
@@ -268,317 +300,19 @@ class AgenteController extends Controller
         $systemPrompt = config("agent.prompts.$agente");
 
         if (!$systemPrompt) {
-            return response()->json([
-                'respuesta' => 'El agente seleccionado aún no está implementado.'
-            ], 422);
+            return response()->json(['respuesta' => 'El agente seleccionado aún no está implementado.'], 422);
         }
 
         try {
             $user = auth()->user();
             $idEmpresa = $user->idEmpresa ?? null;
-            $apiKey = ConfiguracionHelper::clave('Gemini AI', $idEmpresa);
-
-            if (!$apiKey) {
-                throw new \Exception("La API Key de Gemini no está configurada.");
-            }
-
-            $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent";
+            $apiKey = ConfiguracionHelper::clave('Groq API', $idEmpresa) ?? 'API_KEY_GROW';
+            $url = "https://api.groq.com/openai/v1/chat/completions";
 
             if ($agente === 'platos') {
-                // Herramientas formato Gemini
-                $tools = [
-                    [
-                        'functionDeclarations' => [
-                            [
-                                'name' => 'actualizarPrecioPlato',
-                                'description' => 'Actualiza el precio de un plato en el ERP.',
-                                'parameters' => [
-                                    'type' => 'OBJECT',
-                                    'properties' => [
-                                        'nombrePlato' => ['type' => 'STRING', 'description' => 'Nombre del plato a modificar'],
-                                        'nuevoPrecio' => ['type' => 'NUMBER', 'description' => 'El nuevo valor numérico del precio']
-                                    ],
-                                    'required' => ['nombrePlato', 'nuevoPrecio']
-                                ]
-                            ],
-                            [
-                                'name' => 'cambiarEstadoWebPlato',
-                                'description' => 'Activa o desactiva la visibilidad de un plato en el menú digital.',
-                                'parameters' => [
-                                    'type' => 'OBJECT',
-                                    'properties' => [
-                                        'nombrePlato' => ['type' => 'STRING', 'description' => 'Nombre del plato a modificar'],
-                                        'estadoWeb' => ['type' => 'INTEGER', 'description' => '1 para activar, 0 para desactivar']
-                                    ],
-                                    'required' => ['nombrePlato', 'estadoWeb']
-                                ]
-                            ],
-                            [
-                                'name' => 'listarPlatos',
-                                'description' => 'Consulta los platos del menú, opcionalmente filtrados por nombre o descripción.',
-                                'parameters' => [
-                                    'type' => 'OBJECT',
-                                    'properties' => [
-                                        'filtro' => ['type' => 'STRING', 'description' => 'Texto opcional para buscar platos']
-                                    ]
-                                ]
-                            ],
-                            [
-                                'name' => 'crearPlato',
-                                'description' => 'Crea un plato nuevo en el menú.',
-                                'parameters' => [
-                                    'type' => 'OBJECT',
-                                    'properties' => [
-                                        'nombrePlato' => ['type' => 'STRING'],
-                                        'descripcion' => ['type' => 'STRING'],
-                                        'precio' => ['type' => 'NUMBER'],
-                                        'idCategoria' => ['type' => 'INTEGER', 'description' => 'ID de la categoría existente']
-                                    ],
-                                    'required' => ['nombrePlato', 'precio', 'idCategoria']
-                                ]
-                            ],
-                            [
-                                'name' => 'editarPlato',
-                                'description' => 'Edita uno o más datos de un plato existente.',
-                                'parameters' => [
-                                    'type' => 'OBJECT',
-                                    'properties' => [
-                                        'nombreActual' => ['type' => 'STRING'],
-                                        'nuevoNombre' => ['type' => 'STRING'],
-                                        'descripcion' => ['type' => 'STRING'],
-                                        'nuevoPrecio' => ['type' => 'NUMBER'],
-                                        'idCategoria' => ['type' => 'INTEGER']
-                                    ],
-                                    'required' => ['nombreActual']
-                                ]
-                            ],
-                            [
-                                'name' => 'eliminarPlato',
-                                'description' => 'Desactiva un plato sin borrar su historial.',
-                                'parameters' => [
-                                    'type' => 'OBJECT',
-                                    'properties' => [
-                                        'nombrePlato' => ['type' => 'STRING']
-                                    ],
-                                    'required' => ['nombrePlato']
-                                ]
-                            ],
-                            [
-                                'name' => 'diferenciarPlatos',
-                                'description' => 'Renombra una familia de platos para que cada registro tenga un nombre final claro y único. Úsala cuando el usuario diga diferenciar, ordenar o corregir nombres ambiguos.',
-                                'parameters' => [
-                                    'type' => 'OBJECT',
-                                    'properties' => [
-                                        'familia' => ['type' => 'STRING', 'description' => 'Familia común, por ejemplo lomo o lomo saltado'],
-                                        'nombresFinales' => [
-                                            'type' => 'ARRAY',
-                                            'items' => ['type' => 'STRING'],
-                                            'description' => 'Nombres finales exactos, por ejemplo lomo saltado de pollo y lomo saltado de res'
-                                        ]
-                                    ],
-                                    'required' => ['familia', 'nombresFinales']
-                                ]
-                            ]
-                        ]
-                    ]
-                ];
+                $tools = $this->obtenerHerramientasPlatos();
             } else {
-                return response()->json(['respuesta' => 'El agente seleccionado aún no está implementado.']);
-            }
-
-            $contents = [['role' => 'user', 'parts' => [['text' => $pregunta]]]];
-
-            $payload = [
-                'system_instruction' => ['parts' => [['text' => $systemPrompt]]],
-                'contents' => $contents,
-                'tools' => $tools,
-                'generationConfig' => ['temperature' => 0.2]
-            ];
-
-            $response = Http::withHeaders([
-                'Content-Type' => 'application/json',
-                'X-Goog-Api-Key' => $apiKey
-            ])->timeout(180)->post($url, $payload);
-
-            if ($response->failed()) {
-                throw new \Exception("Error en Gemini: " . $response->body());
-            }
-
-            $responseData = $response->json();
-
-            if (isset($responseData['candidates'][0]['content']['parts'][0]['functionCall'])) {
-                $functionCall = $responseData['candidates'][0]['content']['parts'][0]['functionCall'];
-                $nombreFuncion = $functionCall['name'];
-                $argumentos = $functionCall['args'] ?? [];
-
-                Log::info("[GEMINI] Decidió usar: " . $nombreFuncion, $argumentos);
-
-                $resultadoBackend = $this->ejecutarHerramienta($nombreFuncion, $argumentos);
-
-                $contents[] = $responseData['candidates'][0]['content'];
-                $contents[] = [
-                    'role' => 'user',
-                    'parts' => [
-                        [
-                            'functionResponse' => [
-                                'name' => $nombreFuncion,
-                                'response' => ['resultado' => $resultadoBackend]
-                            ]
-                        ]
-                    ]
-                ];
-
-                $respuestaFinal = Http::withHeaders([
-                    'Content-Type' => 'application/json',
-                    'X-Goog-Api-Key' => $apiKey
-                ])->timeout(180)->post($url, [
-                    'system_instruction' => ['parts' => [['text' => $systemPrompt]]],
-                    'contents' => $contents
-                ]);
-
-                $dataFinal = $respuestaFinal->json();
-                $textoFinal = $dataFinal['candidates'][0]['content']['parts'][0]['text'] ?? null;
-
-                if (!$textoFinal) {
-                    $textoFinal = "✅ " . $resultadoBackend;
-                }
-
-                return response()->json(['respuesta' => $textoFinal]);
-            }
-
-            $textoDirecto = $responseData['candidates'][0]['content']['parts'][0]['text'] ?? "No pude interpretar la solicitud.";
-            return response()->json(['respuesta' => $textoDirecto]);
-        } catch (\Exception $e) {
-            Log::warning("Gemini no está disponible. Iniciando Fallback a Ollama. Motivo: " . $e->getMessage());
-            return $this->fallbackOllama($pregunta, $agente, $systemPrompt);
-        }
-    }
-
-    // --------------------------------------------------------
-    // SISTEMA DE RESPALDO (OLLAMA LOCAL)
-    // --------------------------------------------------------
-
-    private function fallbackOllama($pregunta, $agente, $systemPrompt)
-    {
-        try {
-            $urlOllama = 'http://localhost:11434/api/chat';
-
-            if ($agente === 'platos') {
-                // Herramientas formato OpenAI (soportado por Ollama)
-                $toolsOllama = [
-                    [
-                        'type' => 'function',
-                        'function' => [
-                            'name' => 'actualizarPrecioPlato',
-                            'description' => 'Actualiza el precio de un plato en el ERP. Extrae el nombre y el nuevo precio.',
-                            'parameters' => [
-                                'type' => 'object',
-                                'properties' => [
-                                    'nombrePlato' => ['type' => 'string', 'description' => 'Nombre del plato a modificar'],
-                                    'nuevoPrecio' => ['type' => 'number', 'description' => 'El nuevo valor numérico del precio']
-                                ],
-                                'required' => ['nombrePlato', 'nuevoPrecio']
-                            ]
-                        ]
-                    ],
-                    [
-                        'type' => 'function',
-                        'function' => [
-                            'name' => 'cambiarEstadoWebPlato',
-                            'description' => 'Activa o desactiva la visibilidad de un plato.',
-                            'parameters' => [
-                                'type' => 'object',
-                                'properties' => [
-                                    'nombrePlato' => ['type' => 'string'],
-                                    'estadoWeb' => ['type' => 'integer', 'description' => '1 para mostrar, 0 para ocultar']
-                                ],
-                                'required' => ['nombrePlato', 'estadoWeb']
-                            ]
-                        ]
-                    ],
-                    [
-                        'type' => 'function',
-                        'function' => [
-                            'name' => 'listarPlatos',
-                            'description' => 'Consulta los platos del menú, opcionalmente filtrados.',
-                            'parameters' => [
-                                'type' => 'object',
-                                'properties' => [
-                                    'filtro' => ['type' => 'string']
-                                ]
-                            ]
-                        ]
-                    ],
-                    [
-                        'type' => 'function',
-                        'function' => [
-                            'name' => 'crearPlato',
-                            'description' => 'Crea un plato nuevo en el menú.',
-                            'parameters' => [
-                                'type' => 'object',
-                                'properties' => [
-                                    'nombrePlato' => ['type' => 'string'],
-                                    'descripcion' => ['type' => 'string'],
-                                    'precio' => ['type' => 'number'],
-                                    'idCategoria' => ['type' => 'integer']
-                                ],
-                                'required' => ['nombrePlato', 'precio', 'idCategoria']
-                            ]
-                        ]
-                    ],
-                    [
-                        'type' => 'function',
-                        'function' => [
-                            'name' => 'editarPlato',
-                            'description' => 'Edita uno o más datos de un plato existente.',
-                            'parameters' => [
-                                'type' => 'object',
-                                'properties' => [
-                                    'nombreActual' => ['type' => 'string'],
-                                    'nuevoNombre' => ['type' => 'string'],
-                                    'descripcion' => ['type' => 'string'],
-                                    'nuevoPrecio' => ['type' => 'number'],
-                                    'idCategoria' => ['type' => 'integer']
-                                ],
-                                'required' => ['nombreActual']
-                            ]
-                        ]
-                    ],
-                    [
-                        'type' => 'function',
-                        'function' => [
-                            'name' => 'eliminarPlato',
-                            'description' => 'Desactiva un plato sin borrar su historial.',
-                            'parameters' => [
-                                'type' => 'object',
-                                'properties' => [
-                                    'nombrePlato' => ['type' => 'string']
-                                ],
-                                'required' => ['nombrePlato']
-                            ]
-                        ]
-                    ],
-                    [
-                        'type' => 'function',
-                        'function' => [
-                            'name' => 'diferenciarPlatos',
-                            'description' => 'Renombra una familia de platos para que cada registro tenga un nombre final claro y único.',
-                            'parameters' => [
-                                'type' => 'object',
-                                'properties' => [
-                                    'familia' => ['type' => 'string'],
-                                    'nombresFinales' => [
-                                        'type' => 'array',
-                                        'items' => ['type' => 'string']
-                                    ]
-                                ],
-                                'required' => ['familia', 'nombresFinales']
-                            ]
-                        ]
-                    ]
-                ];
-            } else {
-                return response()->json(['respuesta' => 'El agente seleccionado aún no está implementado.'], 422);
+                return response()->json(['respuesta' => 'Agente no implementado.'], 422);
             }
 
             $mensajes = [
@@ -586,67 +320,224 @@ class AgenteController extends Controller
                 ['role' => 'user', 'content' => $pregunta]
             ];
 
-            $respuesta = Http::timeout(180)->post($urlOllama, [
-                'model' => 'llama3.1', // Tu modelo local
-                'messages' => $mensajes,
-                'tools' => $toolsOllama,
-                'stream' => false
-            ])->json();
+            $modelos_a_intentar = [
+                'openai/gpt-oss-120b',
+                'openai/gpt-oss-20b',
+                'minimaxai/minimax-m2.7',
+                'llama3-70b-8192',
+                'llama-3.1-70b-versatile'
+            ];
 
-            $mensajeIA = $respuesta['message'] ?? null;
-            $contenidoTexto = $mensajeIA['content'] ?? '';
+            $mensajeIA = null;
+            $modeloExitoso = null;
 
-            // TRAMPA PARA OLLAMA: Verificamos si escupió el JSON como texto plano
-            $jsonDecodificado = json_decode(trim($contenidoTexto), true);
-            $esJsonEnTexto = (json_last_error() === JSON_ERROR_NONE && isset($jsonDecodificado['name']));
-
-            // Verificamos si usó el canal oficial (tool_calls) o si cayó en nuestra trampa de texto
-            if (isset($mensajeIA['tool_calls']) || $esJsonEnTexto) {
-
-                if (isset($mensajeIA['tool_calls'])) {
-                    $toolCall = $mensajeIA['tool_calls'][0];
-                    $nombreFuncion = $toolCall['function']['name'];
-                    $argumentos = $toolCall['function']['arguments'];
-                } else {
-                    $nombreFuncion = $jsonDecodificado['name'];
-                    // A veces Ollama llama a la llave "parameters" y otras "arguments"
-                    $argumentos = $jsonDecodificado['parameters'] ?? $jsonDecodificado['arguments'] ?? [];
-                }
-
-                Log::info("[OLLAMA FALLBACK] Decidió usar: " . $nombreFuncion, $argumentos);
-
-                // Ejecutamos tu súper orquestador
-                $resultadoBackend = $this->ejecutarHerramienta($nombreFuncion, $argumentos);
-
-                // 2do Payload a Ollama para que nos dé un mensaje amigable y no solo el JSON
-                $mensajes[] = $mensajeIA;
-                $mensajes[] = [
-                    'role' => 'tool',
-                    'content' => $resultadoBackend,
-                    'name' => $nombreFuncion
+            // 1. PRIMER LLAMADO A LA IA
+            foreach ($modelos_a_intentar as $modelo) {
+                $payload = [
+                    'model' => $modelo,
+                    'messages' => $mensajes,
+                    'tools' => $tools,
+                    'tool_choice' => 'auto',
+                    'temperature' => 0.2,
+                    'max_tokens' => 2000
                 ];
 
-                $respuestaFinal = Http::timeout(180)->post($urlOllama, [
-                    'model' => 'llama3.1',
-                    'messages' => $mensajes,
-                    'stream' => false
-                ])->json();
+                $response = Http::withHeaders([
+                    'Authorization' => 'Bearer ' . $apiKey,
+                    'Content-Type' => 'application/json'
+                ])->timeout(60)->post($url, $payload);
 
-                $textoFinal = $respuestaFinal['message']['content'] ?? null;
+                $tempData = $response->json();
 
-                if (!$textoFinal || str_starts_with(trim($textoFinal), '{')) {
-                    $textoFinal = "✅ " . $resultadoBackend;
+                if (!$response->failed() && !isset($tempData['error'])) {
+                    $mensajeIA = $tempData['choices'][0]['message'] ?? null;
+                    $modeloExitoso = $modelo;
+                    break;
                 }
-
-                return response()->json(['respuesta' => "*(Vía Servidor Local)*\n\n" . $textoFinal]);
             }
 
-            // Si realmente era un mensaje de texto normal
-            $textoDirecto = $mensajeIA['content'] ?? "No pude interpretar la solicitud.";
-            return response()->json(['respuesta' => "*(Vía Servidor Local)*\n\n" . $textoDirecto]);
+            if (!$mensajeIA) {
+                throw new \Exception("Todos los modelos de IA fallaron al procesar la solicitud.");
+            }
+
+            // 2. BUCLE AUTÓNOMO DE HERRAMIENTAS (¡LA MAGIA DEL MULTI-STEP!)
+            $iteraciones = 0;
+            $maxIteraciones = 3; // Le damos hasta 3 turnos para investigar y actuar
+
+            while (!empty($mensajeIA['tool_calls']) && $iteraciones < $maxIteraciones) {
+
+                $mensajes[] = $mensajeIA; // Guardamos su intento de usar herramientas
+
+                foreach ($mensajeIA['tool_calls'] as $toolCall) {
+                    $nombreFuncion = $toolCall['function']['name'];
+                    $argumentos = json_decode($toolCall['function']['arguments'], true) ?? [];
+
+                    Log::info("[GROQ] Iteración {$iteraciones} - Ejecutando: {$nombreFuncion}");
+
+                    // Ejecutar nuestro backend
+                    $resultadoBackend = $this->ejecutarHerramienta($nombreFuncion, $argumentos);
+
+                    // Devolver el resultado de esa herramienta específica
+                    $mensajes[] = [
+                        'role' => 'tool',
+                        'tool_call_id' => $toolCall['id'],
+                        'name' => $nombreFuncion,
+                        'content' => (string) $resultadoBackend
+                    ];
+                }
+
+                // Volvemos a preguntar a la IA qué quiere hacer ahora con esos datos
+                $payloadFinal = [
+                    'model' => $modeloExitoso,
+                    'messages' => $mensajes,
+                    'tools' => $tools, // IMPORTANTE: Mantenemos las tools activas
+                    'temperature' => 0.2
+                ];
+
+                $respuestaFinal = Http::withHeaders([
+                    'Authorization' => 'Bearer ' . $apiKey,
+                    'Content-Type' => 'application/json'
+                ])->timeout(60)->post($url, $payloadFinal);
+
+                $dataFinal = $respuestaFinal->json();
+
+                // Actualizamos $mensajeIA para ver si quiere seguir usando herramientas o ya terminó
+                $mensajeIA = $dataFinal['choices'][0]['message'] ?? null;
+                $iteraciones++;
+            }
+
+            // 3. RESPUESTA FINAL (Ya analizó todo y construyó su respuesta en texto)
+            $textoDirecto = $mensajeIA['content'] ?? null;
+
+            // Si por alguna razón consumió sus 3 turnos pero no generó texto
+            if (!$textoDirecto) {
+                $textoDirecto = "✅ Operación completada exitosamente en el sistema.";
+            }
+
+            return response()->json(['respuesta' => $textoDirecto]);
         } catch (\Exception $e) {
-            Log::error("Error Crítico: Falló Gemini y también falló Ollama local. " . $e->getMessage());
-            return response()->json(['respuesta' => 'Todos los sistemas de IA están fuera de servicio temporalmente.'], 500);
+            Log::error("Error Crítico en Agente: " . $e->getMessage());
+            return response()->json(['respuesta' => 'El sistema está experimentando intermitencias. Revisa los logs.'], 500);
         }
+    }
+
+    // --------------------------------------------------------
+    // DEFINICIÓN DE HERRAMIENTAS (FORMATO ESTÁNDAR OPENAI/GROQ)
+    // --------------------------------------------------------
+
+    private function obtenerHerramientasPlatos()
+    {
+        return [
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'actualizarPrecioPlato',
+                    'description' => 'Actualiza el precio de un plato en el ERP. Extrae el nombre y el nuevo precio.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'nombrePlato' => ['type' => 'string', 'description' => 'Nombre del plato a modificar'],
+                            'nuevoPrecio' => ['type' => 'number', 'description' => 'El nuevo valor numérico del precio']
+                        ],
+                        'required' => ['nombrePlato', 'nuevoPrecio']
+                    ]
+                ]
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'cambiarEstadoWebPlato',
+                    'description' => 'Activa o desactiva la visibilidad de un plato.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'nombrePlato' => ['type' => 'string'],
+                            'estadoWeb' => ['type' => 'integer', 'description' => '1 para mostrar, 0 para ocultar']
+                        ],
+                        'required' => ['nombrePlato', 'estadoWeb']
+                    ]
+                ]
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'listarPlatos',
+                    'description' => 'Consulta los platos del menú, opcionalmente filtrados.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'filtro' => ['type' => 'string']
+                        ]
+                    ]
+                ]
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'crearPlato',
+                    'description' => 'Crea un plato nuevo en el menú. Si el usuario pide una descripción, puedes inventarla tú mismo si es necesario.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'nombrePlato' => ['type' => 'string'],
+                            'descripcion' => ['type' => 'string', 'description' => 'Descripción corta e inventada si el usuario no da una exacta.'],
+                            'precio' => ['type' => 'number'],
+                            'nombreCategoria' => ['type' => 'string', 'description' => 'Nombre de categoría. Opcional.']
+                        ],
+                        'required' => ['nombrePlato', 'precio']
+                    ]
+                ]
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'editarPlato',
+                    'description' => 'Edita uno o más datos de un plato existente.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'nombreActual' => ['type' => 'string'],
+                            'nuevoNombre' => ['type' => 'string'],
+                            'descripcion' => ['type' => 'string', 'description' => 'Nueva descripción (puedes inventarla si el usuario lo pide).'],
+                            'nuevoPrecio' => ['type' => 'number'],
+                            'nombreCategoria' => ['type' => 'string']
+                        ],
+                        'required' => ['nombreActual']
+                    ]
+                ]
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'eliminarPlato',
+                    'description' => 'Desactiva un plato sin borrar su historial.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'nombrePlato' => ['type' => 'string']
+                        ],
+                        'required' => ['nombrePlato']
+                    ]
+                ]
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'diferenciarPlatos',
+                    'description' => 'Renombra una familia de platos para que cada registro tenga un nombre final claro y único.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'familia' => ['type' => 'string'],
+                            'nombresFinales' => [
+                                'type' => 'array',
+                                'items' => ['type' => 'string']
+                            ]
+                        ],
+                        'required' => ['familia', 'nombresFinales']
+                    ]
+                ]
+            ]
+        ];
     }
 }
