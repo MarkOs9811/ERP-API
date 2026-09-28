@@ -1,7 +1,6 @@
 <?php
 
-use App\Http\Controllers\Api\AgenteController as ApiAgenteController;
-use App\Http\Controllers\Api○\AgenteController;
+use App\Http\Controllers\Api\AgenteController;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Api\AjustesAlmacenController;
 use App\Http\Controllers\Api\AjustesPlanillasController;
@@ -578,7 +577,7 @@ Route::middleware('auth:sanctum', 'throttle:500,1')->group(function () {
 
     // ENDPOINTS PARA LOS AGENTES
 
-    Route::post('/chatAgent/{agente}', [ApiAgenteController::class, 'chatear']);
+    Route::post('/chatAgent/{agente}', [AgenteController::class, 'chatear']);
 
     // ENDPOINT PARA PRUEBA DE MOODLE
     Route::get('/moodle/consultar-curso', [MoodleController::class, 'generarAcciónConsultarCurso']);

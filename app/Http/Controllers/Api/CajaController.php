@@ -408,7 +408,7 @@ class CajaController extends Controller
         }
     }
 
-   public function verificarCajaAbierta()
+    public function verificarCajaAbierta()
     {
         try {
             $user = Auth::user();
@@ -420,7 +420,7 @@ class CajaController extends Controller
                 return response()->json([
                     'success' => true,
                     'data' => [
-                        'id' => $miCaja->caja->id, 
+                        'id' => $miCaja->caja->id,
                         'nombreCaja' => $miCaja->caja->nombreCaja,
                         'estadoCaja' => $miCaja->caja->estadoCaja,
                     ]
@@ -431,7 +431,7 @@ class CajaController extends Controller
             $nombreCargo = strtolower($user->empleado->cargo->nombre ?? '');
             $rolesCompartidos = ['mozo', 'moso', 'meser', 'delivery', 'cocin'];
             $esRolCompartido = false;
-            
+
             foreach ($rolesCompartidos as $rol) {
                 if (str_contains($nombreCargo, $rol)) {
                     $esRolCompartido = true;
@@ -462,7 +462,6 @@ class CajaController extends Controller
                 'success' => false,
                 'message' => 'No tienes ninguna caja abierta asignada a tu usuario.'
             ], 200);
-
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -475,7 +474,7 @@ class CajaController extends Controller
     {
         try {
             $data = $request->all();
-            
+
             $impresionService = new \App\Services\ImpresionService();
             $impresionService->imprimirCierreCaja($data);
 
