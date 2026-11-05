@@ -190,79 +190,118 @@ class AlmacenController extends Controller
 
     public function acualizarProducto(Request $request, $id)
     {
+        // 1. Validar TODOS los campos recibidos
+        $validator = Validator::make($request->all(), [
+            'nombre' => [
+                'required',
+                'string',
+                'max:100', // max:100 según BD
+                $this->uniqueEmpresaSede('almacens', 'nombre', $id),
+            ],
+            'marca' => [
+                'required',
+                'string',
+                'max:100', // max:100 según BD
+                $this->uniqueEmpresaSede('almacens', 'marca', $id),
+            ],
+            'descripcion' => 'nullable|string|max:255',
+            'presentacion' => 'required|string|max:100',
+            'laboratorio' => 'required|string|max:100', // Agregado para farmacia
+            'registro_sanitario' => 'required|string|max:100',
+            'lote' => 'required|string|max:100', // Agregado para farmacia
+            'cantidad' => 'required|numeric|min:0',
+            'precioUnit' => 'required|numeric|min:0',
+            'unidad' => 'required|exists:unidad_medidas,id',
+            'categoria' => 'required|exists:categorias,id',
+            'proveedor' => 'required|exists:proveedores,id',
+            'fecha_vencimiento' => [
+                'required',
+                'date',
+                'after:today'
+            ]
+        ], [
+            'nombre.unique' => 'Ya existe un producto con el mismo nombre, marca y presentación',
+            'unidad.exists' => 'La unidad de medida seleccionada no existe',
+            'categoria.exists' => 'La categoría seleccionada no existe',
+            'proveedor.exists' => 'El proveedor seleccionado no existe',
+            'fecha_vencimiento.after' => 'La fecha de vencimiento debe ser posterior a hoy'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error de validación',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        DB::beginTransaction();
+
         try {
-            // Validar datos recibidos
-            $validator = Validator::make($request->all(), [
-                'nombre' => [
-                    'required',
-                    'string',
-                    'max:255',
-                    $this->uniqueEmpresaSede('almacens', 'nombre', $id),
-                ],
-                'marca' => [
-                    'required',
-                    'string',
-                    'max:255',
-                    $this->uniqueEmpresaSede('almacens', 'marca', $id),
-                ],
-                'cantidad' => 'required|numeric|min:0',
-                'precioUnit' => 'required|numeric|min:0',
-                'unidad' => 'required|exists:unidad_medidas,id', // Validar que exista en la tabla unidad_medidas
-                'categoria' => 'required|exists:categorias,id', // Validar que exista en la tabla categorias
-                'proveedor' => 'required|exists:proveedores,id', // Validar que exista en la tabla proveedores
-                'presentacion' => 'required|string|max:255',
-                'fecha_vencimiento' => [
-                    'required',
-                    'date',
-                    'after:today' // La fecha debe ser posterior a hoy
-                ],
-                'registro_sanitario' => 'required|string|max:50'
-            ], [
-                'nombre.unique' => 'Ya existe un producto con el mismo nombre, marca y presentación',
-                'unidad.exists' => 'La unidad de medida seleccionada no existe',
-                'categoria.exists' => 'La categoría seleccionada no existe',
-                'proveedor.exists' => 'El proveedor seleccionado no existe',
-                'fecha_vencimiento.after' => 'La fecha de vencimiento debe ser posterior a hoy'
-            ]);
-
-            if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Error de validación',
-                    'errors' => $validator->errors()
-                ], 422);
-            }
-
-            // Buscar el producto
+            // 2. Buscar el producto en Almacén
             $producto = Almacen::find($id);
             if (!$producto) {
+                DB::rollBack();
                 return response()->json([
                     'success' => false,
                     'message' => 'Producto no encontrado'
                 ], 404);
             }
 
-            // Actualizar los datos del producto
+            // 3. Actualizar los datos en la tabla `almacens`
             $producto->nombre = $request->nombre;
+            $producto->descripcion = $request->descripcion;
+            $producto->presentacion = $request->presentacion;
             $producto->marca = $request->marca;
-            $producto->cantidad = $request->cantidad;
+            $producto->laboratorio = $request->laboratorio;
+            $producto->registro_sanitario = $request->registro_sanitario;
+            $producto->lote = $request->lote;
             $producto->precioUnit = $request->precioUnit;
+            $producto->cantidad = $request->cantidad; // STOCK almacén
+            $producto->fecha_vencimiento = $request->fecha_vencimiento;
+
+            // Llaves foráneas de Almacén
             $producto->idUnidadMedida = $request->unidad;
             $producto->idCategoria = $request->categoria;
             $producto->idProveedor = $request->proveedor;
-            $producto->presentacion = $request->presentacion;
-            $producto->fecha_vencimiento = $request->fecha_vencimiento;
-            $producto->registro_sanitario = $request->registro_sanitario;
 
-            // Guardar los cambios
             $producto->save();
+
+            // 4. Buscar su par en la tabla `inventarios` por el código del producto
+            $productoInventario = Inventario::where('codigoProd', $producto->codigoProd)->first();
+
+            if ($productoInventario) {
+                // Actualizamos los datos informativos en Inventario
+                $productoInventario->nombre = $request->nombre;
+                $productoInventario->marca = $request->marca;
+                $productoInventario->presentacion = $request->presentacion;
+                $productoInventario->laboratorio = $request->laboratorio;
+                $productoInventario->lote = $request->lote;
+                $productoInventario->registro_sanitario = $request->registro_sanitario;
+                $productoInventario->descripcion = $request->descripcion;
+                $productoInventario->fecha_vencimiento = $request->fecha_vencimiento;
+
+                // Actualizamos el precio (En inventarios el campo se llama 'precio')
+                $productoInventario->precio = $request->precioUnit;
+
+                // Llaves foráneas de Inventario (Mapeo corregido)
+                $productoInventario->idCategoria = $request->categoria;
+                $productoInventario->idUnidad = $request->unidad; // Ojo: en inventarios se llama 'idUnidad'
+
+                // IMPORTANTE: NO tocamos `$productoInventario->stock`
+
+                $productoInventario->save();
+            }
+
+            DB::commit();
 
             return response()->json([
                 'success' => true,
-                'message' => 'Producto actualizado correctamente',
+                'message' => 'Producto actualizado correctamente en Almacén e Inventario',
                 'data' => $producto
             ]);
         } catch (\Exception $e) {
+            DB::rollBack();
             return response()->json([
                 'success' => false,
                 'message' => 'Error al actualizar el producto: ' . $e->getMessage()
@@ -417,7 +456,12 @@ class AlmacenController extends Controller
 
         try {
             $user = auth()->user();
-            $areaOrigen = \App\Models\Area::where('nombre', 'almacen')->firstOrFail();
+            $areaOrigen = Area::where('nombre', 'almacen')->first();
+
+            if (!$areaOrigen) {
+                DB::rollBack();
+                return response()->json(['message' => 'Área de origen no encontrada, talves quisiste elegir Almacen'], 404);
+            }
             $idAreaOrigen = $areaOrigen->id;
 
             // Manejar la subida del archivo directamente a Cloudflare R2
@@ -434,7 +478,7 @@ class AlmacenController extends Controller
 
             // Procesar cada producto
             foreach ($productos as $producto) {
-                $productoAlmacen = \App\Models\Almacen::findOrFail($producto['id']);
+                $productoAlmacen = Almacen::findOrFail($producto['id']);
                 $stockActual = $productoAlmacen->cantidad;
 
                 if ($producto['cantidad'] > $stockActual) {
@@ -448,8 +492,8 @@ class AlmacenController extends Controller
                 }
 
                 // Transferencia a área de ventas
-                if ($request->idDestino == \App\Models\Area::where('nombre', 'ventas')->value('id')) {
-                    $unidadMedida = \App\Models\UnidadMedida::findOrFail($productoAlmacen->idUnidadMedida);
+                if ($request->idDestino == Area::where('nombre', 'ventas')->value('id')) {
+                    $unidadMedida = UnidadMedida::findOrFail($productoAlmacen->idUnidadMedida);
                     $cantidadUnidades = $producto['cantidad'];
 
                     // Conversión de unidades
@@ -460,15 +504,15 @@ class AlmacenController extends Controller
                     }
 
                     // Buscar o crear en inventario
-                    $productoInventario = \App\Models\Inventario::where('codigoProd', $productoAlmacen->codigoProd)->first();
+                    $productoInventario = Inventario::where('codigoProd', $productoAlmacen->codigoProd)->first();
 
                     if ($productoInventario) {
                         $productoInventario->stock += $cantidadUnidades;
                         $productoInventario->save();
                     } else {
-                        \App\Models\Inventario::create([
+                        Inventario::create([
                             'idCategoria' => $productoAlmacen->idCategoria,
-                            'idUnidad' => \App\Models\UnidadMedida::where('nombre', 'unidad')->value('id'),
+                            'idUnidad' => UnidadMedida::where('nombre', 'unidad')->value('id'),
                             'codigoProd' => $productoAlmacen->codigoProd,
                             'nombre' => $productoAlmacen->nombre,
                             'marca' => $productoAlmacen->marca,
@@ -487,15 +531,16 @@ class AlmacenController extends Controller
                 }
 
                 // Registrar movimiento (guardando la ruta corta del documento)
-                \App\Models\Movimiento::create([
+                Movimiento::create([
                     'idProductoAlmacen' => $productoAlmacen->id,
                     'idAreaOrigen' => $idAreaOrigen,
                     'idAreaDestino' => $request->idDestino,
                     'idUsuario' => $user->id,
+                    'idEmpresa' => $user->idEmpresa,
                     'tipo_movimiento' => 'transferencia',
                     'cantidad' => $producto['cantidad'],
                     'fecha_movimiento' => now(),
-                    'documento' => $documentoPath // <--- AQUÍ VA LA RUTA CORTA
+                    'documento' => $documentoPath
                 ]);
 
                 // Actualizar stock en almacén
@@ -504,7 +549,7 @@ class AlmacenController extends Controller
                 $productoAlmacen->save();
 
                 // Registrar en kardex (guardando la ruta corta del documento)
-                \App\Models\Kardex::create([
+                Kardex::create([
                     'idProducto' => $productoAlmacen->id,
                     'idUsuario' => $user->id,
                     'cantidad' => $producto['cantidad'],

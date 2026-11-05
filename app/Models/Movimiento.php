@@ -14,6 +14,7 @@ class Movimiento extends Model
         'idAreaOrigen',
         'idAreaDestino',
         'idUsuario',
+        'idEmpresa',
         'tipoMovimiento',
         'cantidad',
         'fecha_movimiento',
