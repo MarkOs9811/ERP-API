@@ -74,11 +74,13 @@ class AlmacenController extends Controller
 
     public function saveAlmacen(Request $request)
     {
+        DB::beginTransaction();
+
         try {
-            // 1. Validar datos
+            // 1. Validar datos (Archivos ahora son nullable)
             $request->validate([
-                'pdf_file' => 'required|mimes:pdf|max:10000', // Tamaño máximo de 10MB
-                'image_file' => 'required|image|max:5000', // Tamaño máximo de 5MB
+                'pdf_file' => 'nullable|mimes:pdf|max:10000',
+                'image_file' => 'nullable|image|max:5000',
                 'nombreProducto' => 'required|string|max:255',
                 'descripcion' => 'required|string',
                 'marca' => 'required|string',
@@ -86,11 +88,12 @@ class AlmacenController extends Controller
                 'unidad' => 'required|exists:unidad_medidas,id',
                 'proveedor' => 'required|exists:proveedores,id',
                 'precioUnit' => 'required|numeric|min:0',
-                'cantidad' => 'required|integer|min:1', // Agregado para el Kardex y Almacen
+                'cantidad' => 'required|integer|min:1',
+                'transferir_inventario' => 'nullable|boolean',
             ]);
 
             // 2. Validar si ya existe el producto
-            $existingProduct = \App\Models\Almacen::where('nombre', $request->nombreProducto)
+            $existingProduct = Almacen::where('nombre', $request->nombreProducto)
                 ->where('laboratorio', $request->laboratorio ?? null)
                 ->where('presentacion', $request->presentacion ?? null)
                 ->first();
@@ -99,91 +102,154 @@ class AlmacenController extends Controller
                 return response()->json(['errors' => ['Ya existe un producto con el mismo nombre, laboratorio y presentación.']], 422);
             }
 
-            // 3. GUARDADO TEMPORAL LOCAL PARA FPDI
-            // Forzamos el disco 'local' porque FPDI necesita archivos físicos
-            $pdfFilePath = $request->file('pdf_file')->store('tmp', 'local');
-            $imageFilePath = $request->file('image_file')->store('tmp', 'local');
+            // Variables para almacenar las rutas finales en S3
+            $outputPdfPath = null;
+            $fotoProductoPath = null;
 
-            $pdfFullPath = storage_path('app/' . $pdfFilePath);
-            $imageFullPath = storage_path('app/' . $imageFilePath);
+            // 3. PROCESAR ARCHIVOS SOLO SI SE ENVIARON
+            if ($request->hasFile('pdf_file') && $request->hasFile('image_file')) {
 
-            if (!file_exists($pdfFullPath) || !file_exists($imageFullPath)) {
-                return response()->json(['errors' => ['Archivo temporal no encontrado.']], 422);
-            }
+                // Guardado temporal local para FPDI
+                $pdfFilePath = $request->file('pdf_file')->store('tmp', 'local');
+                $imageFilePath = $request->file('image_file')->store('tmp', 'local');
 
-            // 4. Procesar PDF con FPDI
-            $fpdi = new \setasign\Fpdi\Fpdi();
-            $pageCount = $fpdi->setSourceFile($pdfFullPath);
+                $pdfFullPath = storage_path('app/' . $pdfFilePath);
+                $imageFullPath = storage_path('app/' . $imageFilePath);
 
-            for ($pageNo = 1; $pageNo <= $pageCount; $pageNo++) {
-                $templateId = $fpdi->importPage($pageNo);
-                $fpdi->AddPage();
-                $fpdi->useTemplate($templateId, 0, 0);
+                // 4. Procesar PDF con FPDI
+                $fpdi = new Fpdi();
+                $pageCount = $fpdi->setSourceFile($pdfFullPath);
 
-                // Coordenadas de firma
-                $x = 20;
-                $y = 251;
-                $textY = $y + 16;
+                for ($pageNo = 1; $pageNo <= $pageCount; $pageNo++) {
+                    $templateId = $fpdi->importPage($pageNo);
+                    $fpdi->AddPage();
+                    $fpdi->useTemplate($templateId, 0, 0);
 
-                $fpdi->Image($imageFullPath, $x, $y, 50);
-                $fpdi->SetFont('Arial', 'B', 12);
-                $fpdi->SetTextColor(0, 0, 0);
-                $fpdi->SetXY($x, $textY);
-                $fpdi->Cell(0, 10, 'Firma almacen', 0, 1, 'L');
-            }
+                    // Coordenadas de firma
+                    $x = 20;
+                    $y = 251;
+                    $textY = $y + 16;
 
-            // 5. Guardar PDF firmado temporalmente en disco local
-            $tempOutputName = 'temp_signed_' . time() . '.pdf';
-            $tempOutputFullPath = storage_path('app/tmp/' . $tempOutputName);
-            $fpdi->Output($tempOutputFullPath, 'F');
+                    $fpdi->Image($imageFullPath, $x, $y, 50);
+                    $fpdi->SetFont('Arial', 'B', 12);
+                    $fpdi->SetTextColor(0, 0, 0);
+                    $fpdi->SetXY($x, $textY);
+                    $fpdi->Cell(0, 10, 'Firma almacen', 0, 1, 'L');
+                }
 
-            // 6. SUBIDA DEFINITIVA A CLOUDFLARE R2
-            $outputPdfPath = 'documentosFirmados/documentoCompleto_' . time() . '.pdf';
-            \Illuminate\Support\Facades\Storage::disk('s3')->put($outputPdfPath, file_get_contents($tempOutputFullPath));
+                // 5. Guardar PDF firmado temporalmente en disco local
+                $tempOutputName = 'temp_signed_' . time() . '.pdf';
+                $tempOutputFullPath = storage_path('app/tmp/' . $tempOutputName);
+                $fpdi->Output($tempOutputFullPath, 'F');
 
-            // 7. LIMPIEZA DE BASURA LOCAL
-            \Illuminate\Support\Facades\Storage::disk('local')->delete([$pdfFilePath, $imageFilePath]);
-            if (file_exists($tempOutputFullPath)) {
-                unlink($tempOutputFullPath);
+                // 6. SUBIDA DEFINITIVA A CLOUDFLARE R2 (S3)
+                $outputPdfPath = 'documentosFirmados/documentoCompleto_' . time() . '.pdf';
+                Storage::disk('s3')->put($outputPdfPath, file_get_contents($tempOutputFullPath));
+
+                // Guardar la firma también como foto del producto
+                $fotoProductoPath = 'fotosAlmacen/foto_' . time() . '.jpg';
+                Storage::disk('s3')->put($fotoProductoPath, file_get_contents($imageFullPath));
+
+                // 7. LIMPIEZA DE BASURA LOCAL
+                Storage::disk('local')->delete([$pdfFilePath, $imageFilePath]);
+                if (file_exists($tempOutputFullPath)) {
+                    unlink($tempOutputFullPath);
+                }
+            } elseif ($request->hasFile('image_file')) {
+                // Si solo envió la imagen (para usarla como foto del producto)
+                $imageFilePath = $request->file('image_file')->store('tmp', 'local');
+                $imageFullPath = storage_path('app/' . $imageFilePath);
+
+                $fotoProductoPath = 'fotosAlmacen/foto_' . time() . '.jpg';
+                Storage::disk('s3')->put($fotoProductoPath, file_get_contents($imageFullPath));
+
+                Storage::disk('local')->delete([$imageFilePath]);
+            } elseif ($request->hasFile('pdf_file')) {
+                // Si solo envió el PDF, lo subimos directo a S3 sin firmar
+                $outputPdfPath = 'documentosFirmados/documento_' . time() . '.pdf';
+                Storage::disk('s3')->put($outputPdfPath, file_get_contents($request->file('pdf_file')));
             }
 
             // 8. Generar código de producto único
             $codigoProd = $this->generateUniqueProductCode();
 
+            // Lógica del switch "Transferir a Inventario"
+            $transferir = $request->boolean('transferir_inventario');
+            $cantidadAlmacen = $transferir ? 0 : $request->cantidad;
+
             // 9. Guardar en la base de datos (Almacen)
-            $producto = new \App\Models\Almacen();
+            $producto = new Almacen();
             $producto->codigoProd = $codigoProd;
             $producto->idCategoria = $request->categoria;
             $producto->idUnidadMedida = $request->unidad;
             $producto->idProveedor = $request->proveedor;
             $producto->nombre = $request->nombreProducto;
             $producto->marca = $request->marca;
+            $producto->laboratorio = $request->laboratorio ?? null;
+            $producto->presentacion = $request->presentacion ?? null;
+            $producto->lote = $request->lote ?? null;
+            $producto->registro_sanitario = $request->registro_sanitario ?? null;
+            $producto->fecha_vencimiento = $request->fecha_vencimiento ?? null;
             $producto->descripcion = $request->descripcion;
-            $producto->cantidad = $request->cantidad;
+            $producto->cantidad = $cantidadAlmacen;
             $producto->precioUnit = $request->precioUnit;
             $producto->estado = 1;
+            $producto->foto = $fotoProductoPath; // Puede ser null, la BD debe permitirlo
             $producto->save();
 
-            // 10. Registro en el Kardex (CON LA RUTA CORTA DE S3)
-            $kardex = new \App\Models\Kardex();
+            // 10. Si el checkbox estaba marcado, transferir directamente al Inventario
+            if ($transferir) {
+                $productoInventario = new Inventario();
+                $productoInventario->codigoProd = $producto->codigoProd;
+                $productoInventario->nombre = $producto->nombre;
+                $productoInventario->descripcion = $producto->descripcion;
+                $productoInventario->presentacion = $producto->presentacion;
+                $productoInventario->marca = $producto->marca;
+                $productoInventario->laboratorio = $producto->laboratorio;
+                $productoInventario->lote = $producto->lote;
+                $productoInventario->registro_sanitario = $producto->registro_sanitario;
+                $productoInventario->fecha_vencimiento = $producto->fecha_vencimiento;
+                $productoInventario->precio = $producto->precioUnit;
+                $productoInventario->idCategoria = $producto->idCategoria;
+                $productoInventario->idUnidad = $producto->idUnidadMedida;
+                $productoInventario->estado = 1;
+                $productoInventario->foto = $producto->foto;
+                $productoInventario->stock = $request->cantidad;
+                $productoInventario->save();
+            }
+
+            // 11. Registro en el Kardex
+            $kardex = new Kardex();
             $kardex->idProducto = $producto->id;
             $kardex->idUsuario = auth()->user()->id;
             $kardex->cantidad = $request->cantidad;
             $kardex->tipo_movimiento = 'entrada';
-            $kardex->descripcion = 'Nuevo ingreso';
+            $kardex->descripcion = $transferir
+                ? 'Ingreso directo (Transferido a Inventario)'
+                : 'Nuevo ingreso a Almacén';
             $kardex->stock_anterior = 0;
-            $kardex->stock_actual = $request->cantidad;
+            $kardex->stock_actual = $cantidadAlmacen;
             $kardex->fecha_movimiento = now();
-            $kardex->documento = $outputPdfPath; // <--- RUTA CORTA LIMPIA
+            $kardex->documento = $outputPdfPath; // Puede ser null
             $kardex->save();
 
-            return response()->json(['success' => true, 'message' => 'Producto ingresado correctamente'], 200);
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => $transferir
+                    ? 'Producto guardado en almacén y transferido a inventario correctamente.'
+                    : 'Producto ingresado a almacén correctamente.'
+            ], 200);
         } catch (\Exception $e) {
-            // Limpieza de emergencia en caso de que algo falle en medio proceso
+            DB::rollBack();
             if (isset($tempOutputFullPath) && file_exists($tempOutputFullPath)) {
                 unlink($tempOutputFullPath);
             }
-            return response()->json(['success' => false, 'message' => 'Error al procesar la solicitud: ' . $e->getMessage()], 500);
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al procesar la solicitud: ' . $e->getMessage()
+            ], 500);
         }
     }
 
@@ -308,6 +374,7 @@ class AlmacenController extends Controller
             ], 500);
         }
     }
+
     /**
      * Método privado para generar un código de producto único.
      */
@@ -334,87 +401,103 @@ class AlmacenController extends Controller
             'idProductoEdit' => 'required|integer',
             'stockActual' => 'required|numeric',
             'cantidadIngresar' => 'required|numeric',
-            'pdf_file' => 'required|file|mimes:pdf',
-            'image_file' => 'required|file|mimes:jpeg,png,jpg,gif,svg|max:2048',
+            'pdf_file' => 'nullable|file|mimes:pdf',
+            'image_file' => 'nullable|file|mimes:jpeg,png,jpg,gif,svg|max:2048',
         ]);
+
+        DB::beginTransaction();
 
         try {
             $user = auth()->user();  // Obtiene el usuario actual desde Sanctum
             Log::info('Inicio de la operación de agregar stock.');
 
-            // 1. Almacenamiento local temporal para procesamiento con FPDI
-            $pdfFilePath = $request->file('pdf_file')->store('tmp');
-            $imageFilePath = $request->file('image_file')->store('tmp');
-            Log::info('Archivos almacenados temporalmente:', ['pdf' => $pdfFilePath, 'image' => $imageFilePath]);
+            $outputPdfPath = null;
 
-            // Verificar existencia de archivos locales temporales
-            $pdfFullPath = storage_path('app/' . $pdfFilePath);
-            $imageFullPath = storage_path('app/' . $imageFilePath);
-            if (!file_exists($pdfFullPath) || !file_exists($imageFullPath)) {
-                Log::error('Uno de los archivos temporales no existe:', ['pdf' => $pdfFullPath, 'image' => $imageFullPath]);
-                return response()->json(['errors' => ['Archivo no encontrado.']], 422);
-            }
+            // 1. Procesar archivos SOLO si fueron enviados
+            if ($request->hasFile('pdf_file') && $request->hasFile('image_file')) {
+                // Almacenamiento local temporal para procesamiento con FPDI
+                $pdfFilePath = $request->file('pdf_file')->store('tmp', 'local');
+                $imageFilePath = $request->file('image_file')->store('tmp', 'local');
+                Log::info('Archivos almacenados temporalmente:', ['pdf' => $pdfFilePath, 'image' => $imageFilePath]);
 
-            // 2. Manipular PDF con FPDI
-            $fpdi = new \setasign\Fpdi\Fpdi();
-            $pageCount = $fpdi->setSourceFile($pdfFullPath);
+                // Verificar existencia de archivos locales temporales
+                $pdfFullPath = storage_path('app/' . $pdfFilePath);
+                $imageFullPath = storage_path('app/' . $imageFilePath);
 
-            for ($pageNo = 1; $pageNo <= $pageCount; $pageNo++) {
-                $templateId = $fpdi->importPage($pageNo);
-                $fpdi->AddPage();
-                $fpdi->useTemplate($templateId, 0, 0);
+                if (!file_exists($pdfFullPath) || !file_exists($imageFullPath)) {
+                    Log::error('Uno de los archivos temporales no existe:', ['pdf' => $pdfFullPath, 'image' => $imageFullPath]);
+                    return response()->json(['errors' => ['Archivo temporal no encontrado.']], 422);
+                }
 
-                // Agregar firma y texto
-                $fpdi->Image($imageFullPath, 20, 250, 50);
-                $fpdi->SetFont('Arial', 'B', 12);
-                $fpdi->SetTextColor(0, 0, 0);
-                $fpdi->SetXY(20, 265);
-                $fpdi->Cell(0, 10, 'Firma Almacen', 0, 1, 'C'); // Ojo: Corregí el -250 por 0, el ancho negativo suele causar bugs en FPDF
-            }
+                // 2. Manipular PDF con FPDI
+                $fpdi = new Fpdi();
+                $pageCount = $fpdi->setSourceFile($pdfFullPath);
 
-            // 3. Generar y guardar el PDF firmado localmente de forma temporal
-            $tempOutputName = 'temp_signed_' . time() . '.pdf';
-            $tempOutputFullPath = storage_path('app/tmp/' . $tempOutputName);
-            $fpdi->Output($tempOutputFullPath, 'F');
+                for ($pageNo = 1; $pageNo <= $pageCount; $pageNo++) {
+                    $templateId = $fpdi->importPage($pageNo);
+                    $fpdi->AddPage();
+                    $fpdi->useTemplate($templateId, 0, 0);
 
-            // 4. SUBIDA DEFINITIVA A CLOUDFLARE R2
-            $outputPdfPath = 'documentosFirmados/documentoCompleto_' . time() . '.pdf';
-            Storage::disk('s3')->put($outputPdfPath, file_get_contents($tempOutputFullPath));
-            Log::info('PDF firmado subido a la nube correctamente.', ['path' => $outputPdfPath]);
+                    // Agregar firma y texto
+                    $fpdi->Image($imageFullPath, 20, 250, 50);
+                    $fpdi->SetFont('Arial', 'B', 12);
+                    $fpdi->SetTextColor(0, 0, 0);
+                    $fpdi->SetXY(20, 265);
+                    $fpdi->Cell(0, 10, 'Firma Almacen', 0, 1, 'C');
+                }
 
-            // 5. Limpieza de archivos temporales (Muy importante para no saturar tu servidor)
-            Storage::delete($pdfFilePath);
-            Storage::delete($imageFilePath);
-            if (file_exists($tempOutputFullPath)) {
-                unlink($tempOutputFullPath);
+                // 3. Generar y guardar el PDF firmado localmente de forma temporal
+                $tempOutputName = 'temp_signed_' . time() . '.pdf';
+                $tempOutputFullPath = storage_path('app/tmp/' . $tempOutputName);
+                $fpdi->Output($tempOutputFullPath, 'F');
+
+                // 4. SUBIDA DEFINITIVA A CLOUDFLARE R2
+                $outputPdfPath = 'documentosFirmados/documentoCompleto_' . time() . '.pdf';
+                Storage::disk('s3')->put($outputPdfPath, file_get_contents($tempOutputFullPath));
+                Log::info('PDF firmado subido a la nube correctamente.', ['path' => $outputPdfPath]);
+
+                // 5. Limpieza de archivos temporales locales
+                Storage::disk('local')->delete([$pdfFilePath, $imageFilePath]);
+                if (file_exists($tempOutputFullPath)) {
+                    unlink($tempOutputFullPath);
+                }
+            } elseif ($request->hasFile('pdf_file')) {
+                // Si solo envió el PDF, lo subimos directo sin firmar
+                $outputPdfPath = 'documentosFirmados/documento_' . time() . '.pdf';
+                Storage::disk('s3')->put($outputPdfPath, file_get_contents($request->file('pdf_file')));
+                Log::info('PDF original subido a la nube correctamente (sin firma).', ['path' => $outputPdfPath]);
             }
 
             // 6. Actualizar stock del producto
-            $producto = \App\Models\Almacen::findOrFail($validatedData['idProductoEdit']);
+            $producto = Almacen::findOrFail($validatedData['idProductoEdit']);
             $nuevoStock = $producto->cantidad + $validatedData['cantidadIngresar'];
             $producto->cantidad = $nuevoStock;
             $producto->save();
             Log::info('Stock actualizado correctamente.', ['producto_id' => $producto->id, 'nuevo_stock' => $nuevoStock]);
 
-            // 7. Guardar en el Kardex (Con la ruta corta)
-            $kardex = new \App\Models\Kardex();
+            // 7. Guardar en el Kardex
+            $kardex = new Kardex();
             $kardex->idProducto = $producto->id;
             $kardex->idUsuario = $user->id;
             $kardex->cantidad = $validatedData['cantidadIngresar'];
             $kardex->tipo_movimiento = 'entrada';
             $kardex->descripcion = 'Actualización de stock';
-            $kardex->stock_anterior = $producto->cantidad - $validatedData['cantidadIngresar'];
+            $kardex->stock_anterior = $producto->cantidad - $validatedData['cantidadIngresar']; // El stock anterior real antes del save()
             $kardex->stock_actual = $nuevoStock;
             $kardex->fecha_movimiento = now();
-            $kardex->documento = $outputPdfPath; // <--- AQUÍ VA LA RUTA CORTA
+            $kardex->documento = $outputPdfPath; // Puede ser null si no se enviaron archivos, la BD debe permitirlo
             $kardex->save();
+
             Log::info('Registro en Kardex completado.', ['kardex_id' => $kardex->id]);
 
+            DB::commit();
+
             return response()->json([
-                'status' => 'success',
+                'success' => true,
                 'message' => 'Stock actualizado correctamente',
             ], 200);
         } catch (\Exception $e) {
+            DB::rollBack();
             // Limpieza de emergencia en caso de error
             if (isset($tempOutputFullPath) && file_exists($tempOutputFullPath)) {
                 unlink($tempOutputFullPath);
@@ -422,7 +505,7 @@ class AlmacenController extends Controller
 
             Log::error('Error en la operación de agregar stock.', ['error' => $e->getMessage()]);
             return response()->json([
-                'status' => 'error',
+                'success' => false,
                 'message' => 'Hubo un error al actualizar el stock: ' . $e->getMessage(),
             ], 500);
         }
