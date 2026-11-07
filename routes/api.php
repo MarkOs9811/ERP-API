@@ -245,7 +245,7 @@ Route::middleware('auth:sanctum', 'throttle:500,1')->group(function () {
     Route::post('/almacen/eliminar/{id}', [AlmacenController::class, 'eliminarActivo']);
     Route::post('/almacen/activar/{id}', [AlmacenController::class, 'activarActivo']);
     Route::post('/almacen/transferirInventario', [AlmacenController::class, 'transferirToinventario']);
-
+    Route::post('/almacen/importar-masivo', [AlmacenController::class, 'importarMasivo']);
     // RUTAS PARA OBTENER CARGOS,SALARIOS,AREAS, UNIDAD, CATEGORIA
     Route::get('/areas', [AreaController::class, 'getAreas']);
     Route::get('/areasAll', [AreaController::class, 'getAreasAll']);

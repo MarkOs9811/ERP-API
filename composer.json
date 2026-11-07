@@ -28,6 +28,7 @@
         "laravel/socialite": "^5.20",
         "laravel/tinker": "^2.8",
         "league/flysystem-aws-s3-v3": "^3.34",
+        "maatwebsite/excel": "^3.1",
         "mercadopago/dx-php": "^3.8",
         "mike42/escpos-php": "^5.0",
         "openai-php/client": "^0.10.3",

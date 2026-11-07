@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Api;
 use setasign\Fpdi\Fpdi;
 
 use App\Http\Controllers\Controller;
-
+use App\Imports\AlmacenImport;
 use App\Models\Almacen;
 use App\Models\Area;
 use App\Models\Inventario;
@@ -21,7 +21,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule; // Agregar esta línea
-
+use Maatwebsite\Excel\Facades\Excel;
 
 class AlmacenController extends Controller
 {
@@ -71,7 +71,29 @@ class AlmacenController extends Controller
         $activo->save();
         return response()->json(['success' => true, 'message' => 'Producto activado corectamente']);
     }
+    // ESTE METODOC ARGA DE MANERA MASIVA A TRAVEZ DE UN ARCHIVO EN EXCEL
+    public function importarMasivo(Request $request)
+    {
+        $request->validate([
+            'archivo_excel' => 'required|file|mimes:xlsx,csv,xls|max:10240',
+        ]);
 
+        try {
+            $import = new AlmacenImport();
+            Excel::import($import, $request->file('archivo_excel'));
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Proceso de importación finalizado.',
+                'resultados' => $import->resultados // <--- Aquí viaja el detalle de cada producto
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al procesar el archivo: ' . $e->getMessage()
+            ], 422);
+        }
+    }
     public function saveAlmacen(Request $request)
     {
         DB::beginTransaction();
