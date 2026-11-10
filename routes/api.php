@@ -57,6 +57,7 @@ use App\Http\Controllers\Auth\GoogleController;
 use Google\Service\AdSenseHost\Report;
 use App\Http\Controllers\Api\PromocionesClienteController;
 use App\Http\Controllers\Api\ReiniciarSistemaController;
+use App\Http\Controllers\Api\ReportesPdfController;
 use App\Http\Controllers\Api\ReservaMesasController;
 use App\Http\Controllers\Auth\PasswordResetController;
 
@@ -226,6 +227,8 @@ Route::middleware('auth:sanctum', 'throttle:500,1')->group(function () {
     Route::put('/inventario/desactivar/{id}', [InventarioController::class, 'desactivarInventario']);
 
     Route::delete('/inventario/{id}', [InventarioController::class, 'deleteProduInventario']);
+
+
 
     // RUTAS PARA MODULO USUARIO
     Route::get('/usuarios', [UsuarioController::class, 'showUser']);
@@ -557,6 +560,11 @@ Route::middleware('auth:sanctum', 'throttle:500,1')->group(function () {
     Route::get('/reporteHorasExtras', [ReportesController::class, 'reporteHorasExtras']);
     Route::get('/reporteVacaciones', [ReportesController::class, 'reporteVacaciones']);
     Route::get('/reporteNomina/{periodo}', [ReportesController::class, 'reporteNomina']);
+
+
+    // RUTAS PARA TODOS LOS REPORTESA PDF
+
+    Route::get('/inventario/reporte-pdf', [ReportesPdfController::class, 'getReporteInventario']);
 
     // REPORTE DE CLIENTES
     Route::get('/reporteClientes', [ReportesController::class, 'reporteClientes']);

@@ -40,8 +40,6 @@ use Illuminate\Support\Facades\Storage;
 class PlanillaController extends Controller
 {
 
-
-
     public function registroPlanillaEmpleado(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -143,7 +141,7 @@ class PlanillaController extends Controller
                 'fecha_fin' => $request->input('fecha_fin_contrato'),
             ];
 
-            $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('contrato', $dataPdf);
+            $pdf = Pdf::loadView('contrato', $dataPdf);
             Storage::disk('s3')->put($pdfPathDB, $pdf->output());
 
             // Registrar deducciones y bonificaciones

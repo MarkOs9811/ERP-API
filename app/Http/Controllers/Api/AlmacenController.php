@@ -76,16 +76,21 @@ class AlmacenController extends Controller
     {
         $request->validate([
             'archivo_excel' => 'required|file|mimes:xlsx,csv,xls|max:10240',
+            'transferir_inventario' => 'nullable',
         ]);
 
         try {
-            $import = new AlmacenImport();
+            // Convertimos la entrada a booleano de forma limpia
+            $transferirInventario = filter_var($request->input('transferir_inventario', false), FILTER_VALIDATE_BOOLEAN);
+
+            // Pasamos la variable por el constructor de la clase import
+            $import = new AlmacenImport($transferirInventario);
             Excel::import($import, $request->file('archivo_excel'));
 
             return response()->json([
                 'success' => true,
                 'message' => 'Proceso de importación finalizado.',
-                'resultados' => $import->resultados // <--- Aquí viaja el detalle de cada producto
+                'resultados' => $import->resultados
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
@@ -548,7 +553,7 @@ class AlmacenController extends Controller
         foreach ($productos as $producto) {
             $validator = Validator::make($producto, [
                 'id' => 'required|exists:almacens,id',
-                'cantidad' => 'required|integer|min:1',
+                'cantidad' => 'required|integer|min:0', // Permitimos min:0 por si transfieren stock 0
                 'precioUnit' => 'required|numeric|min:0',
             ]);
 
@@ -565,56 +570,75 @@ class AlmacenController extends Controller
 
             if (!$areaOrigen) {
                 DB::rollBack();
-                return response()->json(['message' => 'Área de origen no encontrada, talves quisiste elegir Almacen'], 404);
+                return response()->json(['message' => 'Área de origen no encontrada, tal vez quisiste elegir Almacén'], 404);
             }
             $idAreaOrigen = $areaOrigen->id;
 
-            // Manejar la subida del archivo directamente a Cloudflare R2
+            // Manejar la subida del archivo directamente a almacenamiento
             $documentoPath = null;
             if ($request->hasFile('archivo')) {
-                // Generamos un nombre único con su extensión original
                 $extension = $request->file('archivo')->getClientOriginalExtension();
                 $nombreArchivo = 'documentoCompleto_' . time() . '.' . $extension;
-
-                // storeAs(carpeta_destino, nombre_archivo, disco)
-                // Esto devuelve la ruta corta: "documentosFirmados/documentoCompleto_123.pdf"
                 $documentoPath = $request->file('archivo')->storeAs('documentosFirmados', $nombreArchivo, 's3');
             }
 
             // Procesar cada producto
             foreach ($productos as $producto) {
                 $productoAlmacen = Almacen::findOrFail($producto['id']);
-                $stockActual = $productoAlmacen->cantidad;
+                $stockActualAlmacen = $productoAlmacen->cantidad;
+                $cantidadTransferir = (int) $producto['cantidad'];
 
-                if ($producto['cantidad'] > $stockActual) {
+                // Validar stock en almacén solo si la cantidad a transferir es mayor a 0
+                if ($cantidadTransferir > 0 && $cantidadTransferir > $stockActualAlmacen) {
                     DB::rollBack();
                     return response()->json([
                         'message' => 'Cantidad de transferencia excede la cantidad disponible en el almacén para el producto: ' . $productoAlmacen->nombre,
                         'producto' => $productoAlmacen->nombre,
-                        'cantidad_disponible' => $stockActual,
-                        'cantidad_solicitada' => $producto['cantidad']
+                        'cantidad_disponible' => $stockActualAlmacen,
+                        'cantidad_solicitada' => $cantidadTransferir
                     ], 400);
                 }
 
                 // Transferencia a área de ventas
                 if ($request->idDestino == Area::where('nombre', 'ventas')->value('id')) {
-                    $unidadMedida = UnidadMedida::findOrFail($productoAlmacen->idUnidadMedida);
-                    $cantidadUnidades = $producto['cantidad'];
+                    $unidadMedida = UnidadMedida::find($productoAlmacen->idUnidadMedida);
+                    $cantidadUnidades = $cantidadTransferir;
 
-                    // Conversión de unidades
-                    if ($unidadMedida->nombre == 'docena') {
-                        $cantidadUnidades *= 12;
-                    } elseif ($unidadMedida->nombre == 'caja') {
-                        $cantidadUnidades *= 24;
+                    // Conversión de unidades si aplica
+                    if ($unidadMedida) {
+                        if ($unidadMedida->nombre == 'docena') {
+                            $cantidadUnidades *= 12;
+                        } elseif ($unidadMedida->nombre == 'caja') {
+                            $cantidadUnidades *= 24;
+                        }
                     }
 
-                    // Buscar o crear en inventario
-                    $productoInventario = Inventario::where('codigoProd', $productoAlmacen->codigoProd)->first();
+                    // =========================================================================
+                    // VALIDACIÓN ANTIDUPLICADOS INTELIGENTE EN INVENTARIO
+                    // Buscamos por código de barras/producto O por coincidencia estricta de atributos
+                    // =========================================================================
+                    $productoInventario = Inventario::where('codigoProd', $productoAlmacen->codigoProd)
+                        ->orWhere(function ($query) use ($productoAlmacen) {
+                            $query->whereRaw('LOWER(TRIM(nombre)) = ?', [strtolower(trim($productoAlmacen->nombre))])
+                                ->whereRaw('LOWER(TRIM(COALESCE(NULLIF(laboratorio, ""), "N/A"))) = ?', [strtolower(trim($productoAlmacen->laboratorio ?? 'N/A'))])
+                                ->whereRaw('LOWER(TRIM(COALESCE(NULLIF(presentacion, ""), "N/A"))) = ?', [strtolower(trim($productoAlmacen->presentacion ?? 'N/A'))]);
+                        })
+                        ->first();
 
                     if ($productoInventario) {
-                        $productoInventario->stock += $cantidadUnidades;
+                        // Si ya existe en inventario:
+                        // Solo sumamos al stock si la cantidad transferida es mayor a 0.
+                        // Si es 0, respetamos el stock actual que ya tenía (ej: 100 unidades se quedan en 100).
+                        if ($cantidadUnidades > 0) {
+                            $productoInventario->stock += $cantidadUnidades;
+                        }
+                        // Opcional: actualizar precio si se envía uno nuevo
+                        if (isset($producto['precioUnit']) && $producto['precioUnit'] > 0) {
+                            $productoInventario->precio = $producto['precioUnit'];
+                        }
                         $productoInventario->save();
                     } else {
+                        // Si NO existe en inventario, lo creamos con las unidades transferidas (puede ser 0)
                         Inventario::create([
                             'idCategoria' => $productoAlmacen->idCategoria,
                             'idUnidad' => UnidadMedida::where('nombre', 'unidad')->value('id'),
@@ -626,7 +650,7 @@ class AlmacenController extends Controller
                             'registro_sanitario' => $productoAlmacen->registro_sanitario,
                             'laboratorio' => $productoAlmacen->laboratorio,
                             'descripcion' => $productoAlmacen->descripcion,
-                            'stock' => $cantidadUnidades,
+                            'stock' => $cantidadUnidades, // Entrará con la cantidad transferida (0 o más)
                             'fecha_vencimiento' => $productoAlmacen->fecha_vencimiento,
                             'precio' => $producto['precioUnit'],
                             'foto' => null,
@@ -635,7 +659,7 @@ class AlmacenController extends Controller
                     }
                 }
 
-                // Registrar movimiento (guardando la ruta corta del documento)
+                // Registrar movimiento
                 Movimiento::create([
                     'idProductoAlmacen' => $productoAlmacen->id,
                     'idAreaOrigen' => $idAreaOrigen,
@@ -643,27 +667,27 @@ class AlmacenController extends Controller
                     'idUsuario' => $user->id,
                     'idEmpresa' => $user->idEmpresa,
                     'tipo_movimiento' => 'transferencia',
-                    'cantidad' => $producto['cantidad'],
+                    'cantidad' => $cantidadTransferir,
                     'fecha_movimiento' => now(),
                     'documento' => $documentoPath
                 ]);
 
-                // Actualizar stock en almacén
+                // Actualizar stock en almacén (si es 0, no descuenta nada, lo cual es correcto)
                 $stockAnterior = $productoAlmacen->cantidad;
-                $productoAlmacen->cantidad -= $producto['cantidad'];
+                $productoAlmacen->cantidad -= $cantidadTransferir;
                 $productoAlmacen->save();
 
-                // Registrar en kardex (guardando la ruta corta del documento)
+                // Registrar en kardex
                 Kardex::create([
                     'idProducto' => $productoAlmacen->id,
                     'idUsuario' => $user->id,
-                    'cantidad' => $producto['cantidad'],
+                    'cantidad' => $cantidadTransferir,
                     'tipo_movimiento' => 'salida',
                     'descripcion' => 'Salida por transferencia de almacén a área',
                     'stock_anterior' => $stockAnterior,
                     'stock_actual' => $productoAlmacen->cantidad,
                     'fecha_movimiento' => now(),
-                    'documento' => $documentoPath // <--- AQUÍ VA LA RUTA CORTA
+                    'documento' => $documentoPath
                 ]);
             }
 
