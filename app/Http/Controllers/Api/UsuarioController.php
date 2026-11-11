@@ -182,6 +182,7 @@ class UsuarioController extends Controller
                 'cargo' => 'required|exists:cargos,id',
                 'salario' => 'nullable|numeric',
                 'horario' => 'required|exists:horarios,id',
+                'telefono' => 'nullable|string|max:9',
                 'foto_perfil' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2048',
             ]);
 
@@ -229,6 +230,7 @@ class UsuarioController extends Controller
                 'nombre' => $validatedData['nombres'],
                 'apellidos' => $validatedData['apellidos'],
                 'correo' => $validatedData['correo_electronico'],
+                'telefono' => $validatedData['telefono'] ?? null,
             ]);
 
             DB::commit();
